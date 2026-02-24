@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package channels;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/channels";
+
+import "common.proto";
+
+service ChannelsService {
+  // Channel CRUD
+  rpc ListChannels(WorkspaceRequest) returns (ListChannelsResponse);
+  rpc CreateChannel(CreateChannelRequest) returns (Channel);
+  rpc GetChannel(ChannelRequest) returns (Channel);
+  rpc UpdateChannel(UpdateChannelRequest) returns (Channel);
+  rpc DeleteChannel(ChannelRequest) returns (common.Empty);
+
+  // Routing rules
+  rpc ListRoutingRules(ChannelRequest) returns (ListRoutingRulesResponse);
+  rpc CreateRoutingRule(CreateRoutingRuleRequest) returns (RoutingRule);
+  rpc UpdateRoutingRule(UpdateRoutingRuleRequest) returns (RoutingRule);
+  rpc DeleteRoutingRule(RuleRequest) returns (common.Empty);
+
+  // Webhook ingestion
+  rpc HandleWebhook(WebhookRequest) returns (WebhookResponse);
+
+  // Messages
+  rpc ListChannelMessages(ListChannelMessagesRequest) returns (ListChannelMessagesResponse);
+}
+
+message WorkspaceRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ChannelRequest {
+  string channel_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message RuleRequest {
+  string rule_id = 1;
+  string channel_id = 2;
+  common.UserContext user_context = 3;
+}
+
+message Channel {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string type = 4;
+  string status = 5;
+  string created_at = 6;
+  string updated_at = 7;
+}
+
+message ListChannelsResponse {
+  repeated Channel channels = 1;
+}
+
+message CreateChannelRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string type = 3;
+  string config_json = 4;
+  common.UserContext user_context = 5;
+}
+
+message UpdateChannelRequest {
+  string channel_id = 1;
+  string name = 2;
+  string status = 3;
+  string config_json = 4;
+  common.UserContext user_context = 5;
+}
+
+message RoutingRule {
+  string id = 1;
+  string channel_id = 2;
+  string field = 3;
+  string operator = 4;
+  string value = 5;
+  string target_agent_id = 6;
+  int32 priority = 7;
+  bool enabled = 8;
+}
+
+message ListRoutingRulesResponse {
+  repeated RoutingRule rules = 1;
+}
+
+message CreateRoutingRuleRequest {
+  string channel_id = 1;
+  string field = 2;
+  string operator = 3;
+  string value = 4;
+  string target_agent_id = 5;
+  int32 priority = 6;
+  common.UserContext user_context = 7;
+}
+
+message UpdateRoutingRuleRequest {
+  string rule_id = 1;
+  string field = 2;
+  string operator = 3;
+  string value = 4;
+  string target_agent_id = 5;
+  int32 priority = 6;
+  bool enabled = 7;
+  common.UserContext user_context = 8;
+}
+
+message WebhookRequest {
+  string channel_id = 1;
+  string body = 2;
+  map<string, string> headers = 3;
+}
+
+message WebhookResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message ChannelMessage {
+  string id = 1;
+  string channel_id = 2;
+  string direction = 3;
+  string sender = 4;
+  string content = 5;
+  string status = 6;
+  string created_at = 7;
+}
+
+message ListChannelMessagesRequest {
+  string channel_id = 1;
+  int32 limit = 2;
+  common.UserContext user_context = 3;
+}
+
+message ListChannelMessagesResponse {
+  repeated ChannelMessage messages = 1;
+}

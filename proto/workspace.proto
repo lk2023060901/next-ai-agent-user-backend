@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package workspace;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/workspace";
+
+import "common.proto";
+
+service WorkspaceService {
+  rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace);
+  rpc CreateWorkspace(CreateWorkspaceRequest) returns (Workspace);
+  rpc UpdateWorkspace(UpdateWorkspaceRequest) returns (Workspace);
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (common.Empty);
+}
+
+message GetWorkspaceRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message CreateWorkspaceRequest {
+  string org_id = 1;
+  string name = 2;
+  string emoji = 3;
+  string description = 4;
+  common.UserContext user_context = 5;
+}
+
+message UpdateWorkspaceRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string emoji = 3;
+  string description = 4;
+  common.UserContext user_context = 5;
+}
+
+message DeleteWorkspaceRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message Workspace {
+  string id = 1;
+  string slug = 2;
+  string name = 3;
+  string emoji = 4;
+  string org_id = 5;
+  string description = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}

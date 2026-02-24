@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package org;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/org";
+
+import "common.proto";
+
+service OrgService {
+  rpc GetOrg(GetOrgRequest) returns (Org);
+  rpc UpdateOrg(UpdateOrgRequest) returns (Org);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc GetDashboardStats(GetDashboardStatsRequest) returns (DashboardStats);
+}
+
+message GetOrgRequest {
+  string slug = 1;
+  common.UserContext user_context = 2;
+}
+
+message UpdateOrgRequest {
+  string slug = 1;
+  string name = 2;
+  string avatar_url = 3;
+  common.UserContext user_context = 4;
+}
+
+message ListMembersRequest {
+  string org_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ListWorkspacesRequest {
+  string org_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message GetDashboardStatsRequest {
+  string org_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message Org {
+  string id = 1;
+  string slug = 2;
+  string name = 3;
+  string avatar_url = 4;
+  string plan = 5;
+  string created_at = 6;
+  string updated_at = 7;
+}
+
+message OrgMember {
+  string id = 1;
+  string user_id = 2;
+  string email = 3;
+  string name = 4;
+  string avatar_url = 5;
+  string role = 6;
+  string joined_at = 7;
+}
+
+message ListMembersResponse {
+  repeated OrgMember members = 1;
+}
+
+message Workspace {
+  string id = 1;
+  string slug = 2;
+  string name = 3;
+  string emoji = 4;
+  string org_id = 5;
+  string description = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message ListWorkspacesResponse {
+  repeated Workspace workspaces = 1;
+}
+
+message DashboardStats {
+  int32 total_agents = 1;
+  int32 total_sessions = 2;
+  int32 total_messages = 3;
+  int32 active_channels = 4;
+}

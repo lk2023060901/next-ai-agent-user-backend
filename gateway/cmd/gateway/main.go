@@ -1,0 +1,130 @@
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/rs/cors"
+
+	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/config"
+	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
+	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/handler"
+	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
+	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/stream"
+)
+
+func main() {
+	cfg := config.Load()
+
+	clients, err := grpcclient.New(cfg.GRPCAddr)
+	if err != nil {
+		log.Fatalf("failed to connect to gRPC service: %v", err)
+	}
+	defer clients.Close()
+
+	r := chi.NewRouter()
+
+	r.Use(chimiddleware.RequestID)
+	r.Use(chimiddleware.RealIP)
+	r.Use(chimiddleware.Logger)
+	r.Use(chimiddleware.Recoverer)
+	r.Use(cors.New(cors.Options{
+		AllowedOrigins:   cfg.AllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID"},
+		AllowCredentials: true,
+	}).Handler)
+
+	authHandler := handler.NewAuthHandler(clients)
+	orgHandler := handler.NewOrgHandler(clients)
+	wsHandler := handler.NewWorkspaceHandler(clients)
+	settingsHandler := handler.NewSettingsHandler(clients)
+	toolsHandler := handler.NewToolsHandler(clients)
+	channelsHandler := handler.NewChannelsHandler(clients)
+	schedulerHandler := handler.NewSchedulerHandler(clients)
+
+	// ── Public ────────────────────────────────────────────────────────────────
+	r.Post("/auth/login", authHandler.Login)
+	r.Post("/auth/signup", authHandler.Signup)
+	r.Post("/auth/refresh", authHandler.Refresh)
+
+	// Public webhook endpoint (signature verified in TS)
+	r.Post("/webhooks/{channelId}", channelsHandler.HandleWebhook)
+
+	// ── Protected ─────────────────────────────────────────────────────────────
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Auth(cfg.JWTSecret))
+
+		// Auth
+		r.Post("/auth/logout", authHandler.Logout)
+		r.Get("/auth/me", authHandler.Me)
+
+		// Orgs
+		r.Get("/orgs/{slug}", orgHandler.GetOrg)
+		r.Patch("/orgs/{slug}", orgHandler.UpdateOrg)
+		r.Get("/orgs/{slug}/members", orgHandler.ListMembers)
+		r.Get("/orgs/{slug}/workspaces", orgHandler.ListWorkspaces)
+		r.Get("/orgs/{orgId}/dashboard/stats", orgHandler.GetDashboardStats)
+
+		// Workspaces
+		r.Post("/workspaces", wsHandler.CreateWorkspace)
+		r.Get("/workspaces/{wsId}", wsHandler.GetWorkspace)
+		r.Patch("/workspaces/{wsId}", wsHandler.UpdateWorkspace)
+		r.Delete("/workspaces/{wsId}", wsHandler.DeleteWorkspace)
+
+		// Settings — providers (match frontend: /workspaces/:wsId/providers/*)
+		r.Get("/workspaces/{wsId}/providers", settingsHandler.ListProviders)
+		r.Post("/workspaces/{wsId}/providers", settingsHandler.CreateProvider)
+		r.Patch("/workspaces/{wsId}/providers/{providerId}", settingsHandler.UpdateProvider)
+		r.Delete("/workspaces/{wsId}/providers/{providerId}", settingsHandler.DeleteProvider)
+
+		// Settings — models (match frontend: /workspaces/:wsId/providers/:id/models/*)
+		r.Get("/workspaces/{wsId}/providers/{providerId}/models", settingsHandler.ListModels)
+		r.Post("/workspaces/{wsId}/providers/{providerId}/models", settingsHandler.CreateModel)
+		r.Patch("/workspaces/{wsId}/providers/{providerId}/models/{modelId}", settingsHandler.UpdateModel)
+		r.Delete("/workspaces/{wsId}/providers/{providerId}/models/{modelId}", settingsHandler.DeleteModel)
+		r.Get("/workspaces/{wsId}/all-models", settingsHandler.ListAllModels)
+
+		// Settings — API keys (match frontend: /workspaces/:wsId/api-keys)
+		r.Get("/workspaces/{wsId}/api-keys", settingsHandler.ListApiKeys)
+		r.Post("/workspaces/{wsId}/api-keys", settingsHandler.CreateApiKey)
+		r.Delete("/workspaces/{wsId}/api-keys/{keyId}", settingsHandler.DeleteApiKey)
+
+		// Tools
+		r.Get("/workspaces/{wsId}/tools", toolsHandler.ListTools)
+		r.Get("/workspaces/{wsId}/tool-auth", toolsHandler.ListToolAuthorizations)
+		r.Post("/workspaces/{wsId}/tool-auth", toolsHandler.UpsertToolAuthorization)
+
+		// Channels — workspace-scoped (list + create)
+		r.Get("/workspaces/{wsId}/channels", channelsHandler.ListChannels)
+		r.Post("/workspaces/{wsId}/channels", channelsHandler.CreateChannel)
+
+		// Channels — channel-scoped (match frontend: /channels/:channelId/*)
+		r.Get("/channels/{channelId}", channelsHandler.GetChannel)
+		r.Patch("/channels/{channelId}", channelsHandler.UpdateChannel)
+		r.Delete("/channels/{channelId}", channelsHandler.DeleteChannel)
+		r.Get("/channels/{channelId}/messages", channelsHandler.ListChannelMessages)
+		r.Get("/channels/{channelId}/rules", channelsHandler.ListRoutingRules)
+		r.Post("/channels/{channelId}/rules", channelsHandler.CreateRoutingRule)
+		r.Patch("/channels/{channelId}/rules/{ruleId}", channelsHandler.UpdateRoutingRule)
+		r.Delete("/channels/{channelId}/rules/{ruleId}", channelsHandler.DeleteRoutingRule)
+
+		// Scheduler
+		r.Get("/workspaces/{wsId}/scheduler/tasks", schedulerHandler.ListTasks)
+		r.Post("/workspaces/{wsId}/scheduler/tasks", schedulerHandler.CreateTask)
+		r.Patch("/workspaces/{wsId}/scheduler/tasks/{taskId}", schedulerHandler.UpdateTask)
+		r.Delete("/workspaces/{wsId}/scheduler/tasks/{taskId}", schedulerHandler.DeleteTask)
+		r.Post("/workspaces/{wsId}/scheduler/tasks/{taskId}/run", schedulerHandler.RunTask)
+		r.Get("/workspaces/{wsId}/scheduler/tasks/{taskId}/executions", schedulerHandler.ListExecutions)
+
+		// LLM proxy → Bifrost sidecar
+		r.Handle("/v1/*", stream.BifrostProxy(cfg.BifrostAddr))
+	})
+
+	log.Printf("Gateway listening on :%s (gRPC → %s, Bifrost → %s)", cfg.Port, cfg.GRPCAddr, cfg.BifrostAddr)
+	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
+}

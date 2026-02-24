@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package settings;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/settings";
+
+import "common.proto";
+
+service SettingsService {
+  // AI Providers
+  rpc ListProviders(WorkspaceRequest) returns (ListProvidersResponse);
+  rpc CreateProvider(CreateProviderRequest) returns (Provider);
+  rpc UpdateProvider(UpdateProviderRequest) returns (Provider);
+  rpc DeleteProvider(ResourceRequest) returns (common.Empty);
+
+  // AI Models
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  rpc CreateModel(CreateModelRequest) returns (Model);
+  rpc UpdateModel(UpdateModelRequest) returns (Model);
+  rpc DeleteModel(ResourceRequest) returns (common.Empty);
+  rpc ListAllModels(WorkspaceRequest) returns (ListModelsResponse);
+
+  // API Keys
+  rpc ListApiKeys(WorkspaceRequest) returns (ListApiKeysResponse);
+  rpc CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse);
+  rpc DeleteApiKey(ResourceRequest) returns (common.Empty);
+}
+
+message WorkspaceRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ResourceRequest {
+  string id = 1;
+  string workspace_id = 2;
+  common.UserContext user_context = 3;
+}
+
+message Provider {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string type = 4;
+  string base_url = 5;
+  string status = 6;
+  string created_at = 7;
+}
+
+message ListProvidersResponse {
+  repeated Provider providers = 1;
+}
+
+message CreateProviderRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string type = 3;
+  string api_key = 4;
+  string base_url = 5;
+  common.UserContext user_context = 6;
+}
+
+message UpdateProviderRequest {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string api_key = 4;
+  string base_url = 5;
+  string status = 6;
+  common.UserContext user_context = 7;
+}
+
+message Model {
+  string id = 1;
+  string provider_id = 2;
+  string name = 3;
+  int32 context_window = 4;
+  double cost_per_1k_tokens = 5;
+  bool is_default = 6;
+}
+
+message ListModelsRequest {
+  string provider_id = 1;
+  string workspace_id = 2;
+  common.UserContext user_context = 3;
+}
+
+message ListModelsResponse {
+  repeated Model models = 1;
+}
+
+message CreateModelRequest {
+  string provider_id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  int32 context_window = 4;
+  double cost_per_1k_tokens = 5;
+  bool is_default = 6;
+  common.UserContext user_context = 7;
+}
+
+message UpdateModelRequest {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  int32 context_window = 4;
+  double cost_per_1k_tokens = 5;
+  bool is_default = 6;
+  common.UserContext user_context = 7;
+}
+
+message ApiKey {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string key_prefix = 4;
+  string expires_at = 5;
+  string created_at = 6;
+}
+
+message ListApiKeysResponse {
+  repeated ApiKey api_keys = 1;
+}
+
+message CreateApiKeyRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string expires_at = 3;
+  common.UserContext user_context = 4;
+}
+
+message CreateApiKeyResponse {
+  ApiKey api_key = 1;
+  string raw_key = 2;
+}

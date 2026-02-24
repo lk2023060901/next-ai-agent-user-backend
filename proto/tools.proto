@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package tools;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/tools";
+
+import "common.proto";
+
+service ToolsService {
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  rpc ListToolAuthorizations(WorkspaceRequest) returns (ListToolAuthorizationsResponse);
+  rpc UpsertToolAuthorization(UpsertToolAuthRequest) returns (ToolAuthorization);
+}
+
+message WorkspaceRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ListToolsRequest {
+  string workspace_id = 1;
+  string category = 2;
+  common.UserContext user_context = 3;
+}
+
+message Tool {
+  string id = 1;
+  string name = 2;
+  string category = 3;
+  string description = 4;
+  string risk_level = 5;
+  string platform = 6;
+  bool requires_approval = 7;
+}
+
+message ListToolsResponse {
+  repeated Tool tools = 1;
+}
+
+message ToolAuthorization {
+  string id = 1;
+  string workspace_id = 2;
+  string tool_id = 3;
+  bool authorized = 4;
+  string updated_at = 5;
+  Tool tool = 6;
+}
+
+message ListToolAuthorizationsResponse {
+  repeated ToolAuthorization authorizations = 1;
+}
+
+message UpsertToolAuthRequest {
+  string workspace_id = 1;
+  string tool_id = 2;
+  bool authorized = 3;
+  common.UserContext user_context = 4;
+}

@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package scheduler;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/scheduler";
+
+import "common.proto";
+
+service SchedulerService {
+  rpc ListTasks(WorkspaceRequest) returns (ListTasksResponse);
+  rpc CreateTask(CreateTaskRequest) returns (ScheduledTask);
+  rpc UpdateTask(UpdateTaskRequest) returns (ScheduledTask);
+  rpc DeleteTask(TaskRequest) returns (common.Empty);
+  rpc RunTask(TaskRequest) returns (TaskExecution);
+  rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
+}
+
+message WorkspaceRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message TaskRequest {
+  string task_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ScheduledTask {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string instruction = 4;
+  string schedule_type = 5;   // "cron" | "once"
+  string cron_expression = 6;
+  string run_at = 7;
+  int32 max_runs = 8;         // 0 = unlimited
+  int32 run_count = 9;
+  string target_agent_id = 10;
+  string status = 11;
+  string created_at = 12;
+}
+
+message ListTasksResponse {
+  repeated ScheduledTask tasks = 1;
+}
+
+message CreateTaskRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string instruction = 3;
+  string schedule_type = 4;
+  string cron_expression = 5;
+  string run_at = 6;
+  int32 max_runs = 7;
+  string target_agent_id = 8;
+  common.UserContext user_context = 9;
+}
+
+message UpdateTaskRequest {
+  string task_id = 1;
+  string name = 2;
+  string instruction = 3;
+  string schedule_type = 4;
+  string cron_expression = 5;
+  string run_at = 6;
+  int32 max_runs = 7;
+  string target_agent_id = 8;
+  string status = 9;
+  common.UserContext user_context = 10;
+}
+
+message TaskExecution {
+  string id = 1;
+  string task_id = 2;
+  string status = 3;
+  string started_at = 4;
+  string ended_at = 5;
+  string result = 6;
+}
+
+message ListExecutionsRequest {
+  string task_id = 1;
+  int32 limit = 2;
+  common.UserContext user_context = 3;
+}
+
+message ListExecutionsResponse {
+  repeated TaskExecution executions = 1;
+}

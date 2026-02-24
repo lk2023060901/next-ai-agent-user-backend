@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package auth;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/auth";
+
+import "common.proto";
+
+service AuthService {
+  rpc Login(LoginRequest) returns (AuthResponse);
+  rpc Signup(SignupRequest) returns (AuthResponse);
+  rpc Logout(LogoutRequest) returns (common.Empty);
+  rpc RefreshToken(RefreshTokenRequest) returns (AuthResponse);
+  rpc GetMe(GetMeRequest) returns (UserProfile);
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message SignupRequest {
+  string email = 1;
+  string password = 2;
+  string name = 3;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+  common.UserContext user_context = 2;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message GetMeRequest {
+  common.UserContext user_context = 1;
+}
+
+message AuthResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  UserProfile user = 3;
+}
+
+message UserProfile {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  string avatar_url = 4;
+  string created_at = 5;
+}

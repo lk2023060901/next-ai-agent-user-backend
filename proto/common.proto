@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common";
+
+message Empty {}
+
+// User context passed from gateway after JWT verification
+message UserContext {
+  string user_id = 1;
+  string email = 2;
+  string name = 3;
+}
+
+message PaginationRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message PaginationResponse {
+  int32 total = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int32 total_pages = 4;
+}
