@@ -62,6 +62,7 @@ func main() {
 		r.Get("/auth/me", authHandler.Me)
 
 		// Orgs
+		r.Get("/orgs", orgHandler.ListOrgs)
 		r.Get("/orgs/{slug}", orgHandler.GetOrg)
 		r.Patch("/orgs/{slug}", orgHandler.UpdateOrg)
 		r.Get("/orgs/{slug}/members", orgHandler.ListMembers)

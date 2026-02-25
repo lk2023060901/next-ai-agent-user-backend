@@ -29,7 +29,7 @@ func (h *SchedulerHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Tasks)
 }
 
 func (h *SchedulerHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func (h *SchedulerHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Scheduler.CreateTask(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusCreated, resp)
+	writeData(w, http.StatusCreated, resp)
 }
 
 func (h *SchedulerHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +53,7 @@ func (h *SchedulerHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Scheduler.UpdateTask(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *SchedulerHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +69,7 @@ func (h *SchedulerHandler) RunTask(w http.ResponseWriter, r *http.Request) {
 		TaskId: chi.URLParam(r, "taskId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *SchedulerHandler) ListExecutions(w http.ResponseWriter, r *http.Request) {
@@ -77,5 +77,5 @@ func (h *SchedulerHandler) ListExecutions(w http.ResponseWriter, r *http.Request
 		TaskId: chi.URLParam(r, "taskId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Executions)
 }

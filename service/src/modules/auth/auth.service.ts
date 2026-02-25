@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
-import { users, refreshTokens } from "../../db/schema";
+import { users, refreshTokens, organizations, orgMembers, workspaces } from "../../db/schema";
 import { config } from "../../config";
 
 export interface AuthTokens {
@@ -33,6 +33,14 @@ export async function signup(
   const id = uuidv4();
 
   db.insert(users).values({ id, email, name, passwordHash }).run();
+
+  // Auto-create default org + workspace for new user
+  const orgId = uuidv4();
+  db.insert(organizations).values({ id: orgId, slug: "acme", name: `${name}'s Org` }).run();
+  db.insert(orgMembers).values({ id: uuidv4(), orgId, userId: id, role: "owner" }).run();
+  db.insert(workspaces).values({
+    id: uuidv4(), slug: "default", name: "Default", emoji: "🏠", orgId,
+  }).run();
 
   const user = db.select().from(users).where(eq(users.id, id)).get()!;
   const tokens = await issueTokens(user.id, user.email, user.name);

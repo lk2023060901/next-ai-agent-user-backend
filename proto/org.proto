@@ -7,6 +7,7 @@ option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/intern
 import "common.proto";
 
 service OrgService {
+  rpc ListOrgs(ListOrgsRequest) returns (ListOrgsResponse);
   rpc GetOrg(GetOrgRequest) returns (Org);
   rpc UpdateOrg(UpdateOrgRequest) returns (Org);
   rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
@@ -17,6 +18,14 @@ service OrgService {
 message GetOrgRequest {
   string slug = 1;
   common.UserContext user_context = 2;
+}
+
+message ListOrgsRequest {
+  common.UserContext user_context = 1;
+}
+
+message ListOrgsResponse {
+  repeated Org orgs = 1;
 }
 
 message UpdateOrgRequest {
@@ -81,8 +90,14 @@ message ListWorkspacesResponse {
 }
 
 message DashboardStats {
-  int32 total_agents = 1;
-  int32 total_sessions = 2;
-  int32 total_messages = 3;
-  int32 active_channels = 4;
+  StatMetric active_agents = 1;
+  StatMetric today_sessions = 2;
+  StatMetric token_usage = 3;
+  StatMetric completed_tasks = 4;
+}
+
+message StatMetric {
+  int32 value = 1;
+  double trend = 2;
+  repeated int32 sparkline = 3;
 }

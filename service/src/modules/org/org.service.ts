@@ -3,6 +3,19 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
 import { organizations, orgMembers, workspaces, users, agents, chatSessions, channels } from "../../db/schema";
 
+export function listOrgs(userId: string) {
+  const memberRows = db
+    .select({ orgId: orgMembers.orgId })
+    .from(orgMembers)
+    .where(eq(orgMembers.userId, userId))
+    .all();
+  const orgIds = memberRows.map((r) => r.orgId);
+  if (orgIds.length === 0) return [];
+  return orgIds.flatMap((id) =>
+    db.select().from(organizations).where(eq(organizations.id, id)).all()
+  );
+}
+
 export function getOrg(slug: string) {
   const org = db.select().from(organizations).where(eq(organizations.slug, slug)).get();
   if (!org) throw Object.assign(new Error("Organization not found"), { code: "NOT_FOUND" });
@@ -54,32 +67,31 @@ export function getDashboardStats(orgId: string) {
     .all()
     .map((w) => w.id);
 
+  const zero = { value: 0, trend: 0, sparkline: [0, 0, 0, 0, 0, 0, 0] };
+
   if (wsIds.length === 0) {
-    return { totalAgents: 0, totalSessions: 0, totalMessages: 0, activeChannels: 0 };
+    return { activeAgents: zero, todaySessions: zero, tokenUsage: zero, completedTasks: zero };
   }
 
-  // Count agents across all workspaces
   const totalAgents = wsIds.reduce((sum, wsId) => {
-    const count = db.select().from(agents).where(eq(agents.workspaceId, wsId)).all().length;
-    return sum + count;
+    return sum + db.select().from(agents).where(eq(agents.workspaceId, wsId)).all().length;
   }, 0);
 
   const totalSessions = wsIds.reduce((sum, wsId) => {
-    const count = db.select().from(chatSessions).where(eq(chatSessions.workspaceId, wsId)).all().length;
-    return sum + count;
+    return sum + db.select().from(chatSessions).where(eq(chatSessions.workspaceId, wsId)).all().length;
   }, 0);
 
   const activeChannels = wsIds.reduce((sum, wsId) => {
-    const count = db
-      .select()
-      .from(channels)
-      .where(eq(channels.workspaceId, wsId))
-      .all()
+    return sum + db.select().from(channels).where(eq(channels.workspaceId, wsId)).all()
       .filter((c) => c.status === "active").length;
-    return sum + count;
   }, 0);
 
-  return { totalAgents, totalSessions, totalMessages: 0, activeChannels };
+  return {
+    activeAgents:   { value: totalAgents,   trend: 0, sparkline: [0, 0, 0, 0, 0, 0, totalAgents] },
+    todaySessions:  { value: totalSessions,  trend: 0, sparkline: [0, 0, 0, 0, 0, 0, totalSessions] },
+    tokenUsage:     { value: 0,              trend: 0, sparkline: [0, 0, 0, 0, 0, 0, 0] },
+    completedTasks: { value: activeChannels, trend: 0, sparkline: [0, 0, 0, 0, 0, 0, activeChannels] },
+  };
 }
 
 export function createOrg(slug: string, name: string, userId: string) {

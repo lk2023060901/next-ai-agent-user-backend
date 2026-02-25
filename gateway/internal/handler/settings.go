@@ -36,7 +36,7 @@ func (h *SettingsHandler) wsReq(r *http.Request) *settingspb.WorkspaceRequest {
 func (h *SettingsHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Settings.ListProviders(r.Context(), h.wsReq(r))
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Providers)
 }
 
 func (h *SettingsHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,7 @@ func (h *SettingsHandler) CreateProvider(w http.ResponseWriter, r *http.Request)
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Settings.CreateProvider(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusCreated, resp)
+	writeData(w, http.StatusCreated, resp)
 }
 
 func (h *SettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +61,7 @@ func (h *SettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Request)
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Settings.UpdateProvider(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *SettingsHandler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
@@ -79,13 +79,13 @@ func (h *SettingsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Models)
 }
 
 func (h *SettingsHandler) ListAllModels(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Settings.ListAllModels(r.Context(), h.wsReq(r))
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Models)
 }
 
 func (h *SettingsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func (h *SettingsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Settings.CreateModel(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusCreated, resp)
+	writeData(w, http.StatusCreated, resp)
 }
 
 func (h *SettingsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func (h *SettingsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Settings.UpdateModel(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *SettingsHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,7 @@ func (h *SettingsHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 func (h *SettingsHandler) ListApiKeys(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Settings.ListApiKeys(r.Context(), h.wsReq(r))
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.ApiKeys)
 }
 
 func (h *SettingsHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,10 @@ func (h *SettingsHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Settings.CreateApiKey(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusCreated, resp)
+	writeData(w, http.StatusCreated, map[string]any{
+		"apiKey": resp.ApiKey,
+		"rawKey": resp.RawKey,
+	})
 }
 
 func (h *SettingsHandler) DeleteApiKey(w http.ResponseWriter, r *http.Request) {

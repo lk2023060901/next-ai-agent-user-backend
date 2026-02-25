@@ -30,7 +30,7 @@ func (h *ChannelsHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
 		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Channels)
 }
 
 func (h *ChannelsHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func (h *ChannelsHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Channels.CreateChannel(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusCreated, resp)
+	writeData(w, http.StatusCreated, resp)
 }
 
 func (h *ChannelsHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +50,7 @@ func (h *ChannelsHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *ChannelsHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,7 @@ func (h *ChannelsHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Channels.UpdateChannel(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *ChannelsHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +78,7 @@ func (h *ChannelsHandler) ListRoutingRules(w http.ResponseWriter, r *http.Reques
 		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Rules)
 }
 
 func (h *ChannelsHandler) CreateRoutingRule(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +90,7 @@ func (h *ChannelsHandler) CreateRoutingRule(w http.ResponseWriter, r *http.Reque
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Channels.CreateRoutingRule(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusCreated, resp)
+	writeData(w, http.StatusCreated, resp)
 }
 
 func (h *ChannelsHandler) UpdateRoutingRule(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func (h *ChannelsHandler) UpdateRoutingRule(w http.ResponseWriter, r *http.Reque
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Channels.UpdateRoutingRule(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }
 
 func (h *ChannelsHandler) DeleteRoutingRule(w http.ResponseWriter, r *http.Request) {
@@ -143,5 +143,5 @@ func (h *ChannelsHandler) ListChannelMessages(w http.ResponseWriter, r *http.Req
 		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Messages)
 }

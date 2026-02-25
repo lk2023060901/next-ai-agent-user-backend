@@ -31,7 +31,7 @@ func (h *ToolsHandler) ListTools(w http.ResponseWriter, r *http.Request) {
 		UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Tools)
 }
 
 func (h *ToolsHandler) ListToolAuthorizations(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,7 @@ func (h *ToolsHandler) ListToolAuthorizations(w http.ResponseWriter, r *http.Req
 		UserContext: h.userCtx(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp.Authorizations)
 }
 
 func (h *ToolsHandler) UpsertToolAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -52,5 +52,5 @@ func (h *ToolsHandler) UpsertToolAuthorization(w http.ResponseWriter, r *http.Re
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Tools.UpsertToolAuthorization(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
-	writeJSON(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, resp)
 }

@@ -2,7 +2,7 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import path from "path";
 import { login, signup, logout, refresh, getMe } from "../modules/auth/auth.service";
-import { getOrg, updateOrg, listMembers, listWorkspaces, getDashboardStats } from "../modules/org/org.service";
+import { getOrg, updateOrg, listMembers, listWorkspaces, getDashboardStats, listOrgs } from "../modules/org/org.service";
 import {
   getWorkspace,
   createWorkspace,
@@ -99,6 +99,12 @@ export function startGrpcServer(port: number): grpc.Server {
   // ── Org ───────────────────────────────────────────────────────────────────
   const orgPkg = grpc.loadPackageDefinition(loadProto("org.proto")) as any;
   server.addService(orgPkg.org.OrgService.service, {
+    listOrgs(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const userId = call.request.userContext?.userId;
+        callback(null, { orgs: listOrgs(userId) });
+      } catch (err) { handleError(callback, err); }
+    },
     getOrg(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, getOrg(call.request.slug)); }
       catch (err) { handleError(callback, err); }
@@ -120,10 +126,10 @@ export function startGrpcServer(port: number): grpc.Server {
       try {
         const stats = getDashboardStats(call.request.orgId);
         callback(null, {
-          totalAgents: stats.totalAgents,
-          totalSessions: stats.totalSessions,
-          totalMessages: stats.totalMessages,
-          activeChannels: stats.activeChannels,
+          activeAgents:   { value: stats.activeAgents.value,   trend: stats.activeAgents.trend,   sparkline: stats.activeAgents.sparkline },
+          todaySessions:  { value: stats.todaySessions.value,  trend: stats.todaySessions.trend,  sparkline: stats.todaySessions.sparkline },
+          tokenUsage:     { value: stats.tokenUsage.value,     trend: stats.tokenUsage.trend,     sparkline: stats.tokenUsage.sparkline },
+          completedTasks: { value: stats.completedTasks.value, trend: stats.completedTasks.trend, sparkline: stats.completedTasks.sparkline },
         });
       } catch (err) { handleError(callback, err); }
     },
