@@ -5,4 +5,5 @@ export const config = {
   jwtAccessExpiry: process.env.JWT_ACCESS_EXPIRY ?? "15m",
   jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY ?? "30d",
   dbPath: process.env.DB_PATH ?? "../data/app.db",
+  runtimeAddr: process.env.RUNTIME_ADDR ?? "http://localhost:8082",
 };
