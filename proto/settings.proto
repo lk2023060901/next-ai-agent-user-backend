@@ -12,6 +12,7 @@ service SettingsService {
   rpc CreateProvider(CreateProviderRequest) returns (Provider);
   rpc UpdateProvider(UpdateProviderRequest) returns (Provider);
   rpc DeleteProvider(ResourceRequest) returns (common.Empty);
+  rpc TestProvider(TestProviderRequest) returns (TestProviderResponse);
 
   // AI Models
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
@@ -132,4 +133,15 @@ message CreateApiKeyRequest {
 message CreateApiKeyResponse {
   ApiKey api_key = 1;
   string raw_key = 2;
+}
+
+message TestProviderRequest {
+  string id = 1;
+  string workspace_id = 2;
+  common.UserContext user_context = 3;
+}
+
+message TestProviderResponse {
+  bool success = 1;
+  string message = 2;
 }

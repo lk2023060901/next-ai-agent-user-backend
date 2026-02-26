@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
+import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createMistral } from "@ai-sdk/mistral";
 import { db } from "../../db";
 import { aiProviders, aiModels, apiKeys } from "../../db/schema";
 
@@ -9,6 +14,10 @@ import { aiProviders, aiModels, apiKeys } from "../../db/schema";
 function encryptKey(key: string): string {
   // Simple XOR-based obfuscation for local dev; replace with proper encryption in prod
   return Buffer.from(key).toString("base64");
+}
+
+function decryptKey(encrypted: string): string {
+  return Buffer.from(encrypted, "base64").toString("utf-8");
 }
 
 export function listProviders(workspaceId: string) {
@@ -65,6 +74,55 @@ export function deleteProvider(id: string) {
   const provider = db.select().from(aiProviders).where(eq(aiProviders.id, id)).get();
   if (!provider) throw Object.assign(new Error("Provider not found"), { code: "NOT_FOUND" });
   db.delete(aiProviders).where(eq(aiProviders.id, id)).run();
+}
+
+// Default test model per provider type
+const DEFAULT_TEST_MODELS: Record<string, string> = {
+  openai: "gpt-4o-mini",
+  anthropic: "claude-haiku-4-5-20251001",
+  google: "gemini-1.5-flash",
+  mistral: "mistral-small-latest",
+};
+
+export async function testProvider(id: string): Promise<{ success: boolean; message: string }> {
+  const provider = db.select().from(aiProviders).where(eq(aiProviders.id, id)).get();
+  if (!provider) throw Object.assign(new Error("Provider not found"), { code: "NOT_FOUND" });
+
+  const apiKey = provider.apiKeyEncrypted ? decryptKey(provider.apiKeyEncrypted) : "";
+
+  // Resolve test model: prefer first configured model, fall back to known defaults
+  const firstModel = db.select({ name: aiModels.name }).from(aiModels)
+    .where(eq(aiModels.providerId, id)).get();
+  const modelName = firstModel?.name ?? DEFAULT_TEST_MODELS[provider.type] ?? "gpt-4o-mini";
+
+  try {
+    let model;
+    const type = provider.type.toLowerCase();
+
+    if (type === "anthropic") {
+      const anthropic = createAnthropic({ apiKey });
+      model = anthropic(modelName);
+    } else if (type === "google") {
+      const google = createGoogleGenerativeAI({ apiKey });
+      model = google(modelName);
+    } else if (type === "mistral") {
+      const mistral = createMistral({ apiKey });
+      model = mistral(modelName);
+    } else {
+      // openai-compatible (openai, azure, custom)
+      const openai = createOpenAI({
+        apiKey,
+        ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+      });
+      model = openai(modelName);
+    }
+
+    await generateText({ model, prompt: "Reply with one word: ok", maxTokens: 5 });
+    return { success: true, message: `Connected successfully (model: ${modelName})` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, message: msg };
+  }
 }
 
 // ─── Models ──────────────────────────────────────────────────────────────────

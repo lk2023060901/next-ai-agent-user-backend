@@ -152,3 +152,16 @@ func (h *SettingsHandler) DeleteApiKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil { writeGRPCError(w, err); return }
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// ── Test Provider ──────────────────────────────────────────────────────────────
+
+func (h *SettingsHandler) TestProvider(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.clients.Settings.TestProvider(r.Context(), &settingspb.TestProviderRequest{
+		Id: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+	})
+	if err != nil { writeGRPCError(w, err); return }
+	writeData(w, http.StatusOK, map[string]any{
+		"success": resp.Success,
+		"message": resp.Message,
+	})
+}
