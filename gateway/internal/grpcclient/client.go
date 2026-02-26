@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	authpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/auth"
+	chatpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/chat"
 	orgpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/org"
 	channelspb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/channels"
 	schedulerpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/scheduler"
@@ -16,6 +17,7 @@ import (
 
 type Clients struct {
 	Auth      authpb.AuthServiceClient
+	Chat      chatpb.ChatServiceClient
 	Org       orgpb.OrgServiceClient
 	Workspace workspacepb.WorkspaceServiceClient
 	Settings  settingspb.SettingsServiceClient
@@ -40,6 +42,7 @@ func New(addr string) (*Clients, error) {
 		}
 		instance = &Clients{
 			Auth:      authpb.NewAuthServiceClient(conn),
+			Chat:      chatpb.NewChatServiceClient(conn),
 			Org:       orgpb.NewOrgServiceClient(conn),
 			Workspace: workspacepb.NewWorkspaceServiceClient(conn),
 			Settings:  settingspb.NewSettingsServiceClient(conn),
