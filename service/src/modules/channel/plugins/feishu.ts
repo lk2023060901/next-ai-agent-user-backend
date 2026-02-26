@@ -98,7 +98,7 @@ export const feishuPlugin: ChannelPlugin = {
         content,
         sender: senderId,
         chatId: String(message?.chat_id ?? ''),
-        threadId: String(event.root_id ?? ''),
+        threadId: (event.root_id as string | undefined) || undefined,
         messageId: String(message?.message_id ?? ''),
       }
     } catch { return null }
@@ -131,7 +131,7 @@ export const feishuPlugin: ChannelPlugin = {
     }
   },
 
-  async sendMessage(chatId, text, config, _threadId): Promise<void> {
+  async sendMessage(chatId, text, config, threadId): Promise<void> {
     const { appId, appSecret } = config
     if (!appId || !appSecret) throw new Error('缺少 appId / appSecret')
     const client = getLarkClient(appId, appSecret)
@@ -141,6 +141,7 @@ export const feishuPlugin: ChannelPlugin = {
         receive_id: chatId,
         msg_type: 'text',
         content: JSON.stringify({ text }),
+        ...(threadId ? { root_id: threadId } : {}),
       },
     })
   },
