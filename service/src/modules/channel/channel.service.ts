@@ -175,38 +175,36 @@ export function handleWebhook(
   if (matchedRule?.targetAgentId) {
     const agentId = matchedRule.targetAgentId
 
-    // Upsert channel session (key: channelId + chatId + senderId)
-    let session = db.select().from(channelSessions)
-      .where(eq(channelSessions.channelId, channelId))
-      .all()
-      .find((s) => s.senderId === parsed.sender && s.chatId === (parsed.chatId ?? ''))
+    // Upsert channel session — atomic, handles concurrent webhook delivery
+    const sid = uuidv4()
+    db.insert(channelSessions).values({
+      id: sid,
+      channelId,
+      workspaceId: ch.workspaceId,
+      senderId: parsed.sender,
+      chatId: parsed.chatId ?? '',
+      agentId,
+      lastActiveAt: new Date().toISOString(),
+    }).onConflictDoUpdate({
+      target: [channelSessions.channelId, channelSessions.senderId, channelSessions.chatId],
+      set: { agentId, lastActiveAt: new Date().toISOString() },
+    }).run()
+    const session = db.select().from(channelSessions).where(eq(channelSessions.id, sid)).get()
+      ?? db.select().from(channelSessions)
+        .where(eq(channelSessions.channelId, channelId))
+        .all()
+        .find((s) => s.senderId === parsed.sender && s.chatId === (parsed.chatId ?? ''))!
 
-    if (!session) {
-      const sid = uuidv4()
-      db.insert(channelSessions).values({
-        id: sid,
-        channelId,
-        workspaceId: ch.workspaceId,
-        senderId: parsed.sender,
-        chatId: parsed.chatId ?? '',
-        agentId,
-        lastActiveAt: new Date().toISOString(),
-      }).run()
-      session = db.select().from(channelSessions).where(eq(channelSessions.id, sid)).get()!
-    } else {
-      db.update(channelSessions)
-        .set({ lastActiveAt: new Date().toISOString() })
-        .where(eq(channelSessions.id, session.id)).run()
-    }
-
-    // Fire-and-forget：发给 runtime，不等结果，立刻返回 200 给飞书
+    // Fire-and-forget: dispatch to runtime without blocking Feishu webhook response
     fetch(`${config.runtimeAddr}/channel-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(5000),
       body: JSON.stringify({
         sessionId: session.id,
         channelId,
         agentId,
+        workspaceId: ch.workspaceId,
         message: parsed.content,
         sender: parsed.sender,
         chatId: parsed.chatId ?? '',
