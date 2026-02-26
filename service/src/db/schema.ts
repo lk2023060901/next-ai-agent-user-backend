@@ -175,6 +175,45 @@ export const toolCalls = sqliteTable("tool_calls", {
   endedAt: text("ended_at"),
 });
 
+// ─── Agent Runs ──────────────────────────────────────────────────────────────
+
+export const agentRuns = sqliteTable("agent_runs", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  coordinatorAgentId: text("coordinator_agent_id"),
+  userRequest: text("user_request").notNull(),
+  status: text("status").notNull().default("pending"),
+  // pending | running | completed | failed | cancelled
+  startedAt: text("started_at"),
+  endedAt: text("ended_at"),
+  ...timestamps,
+});
+
+export const agentTasks = sqliteTable("agent_tasks", {
+  id: text("id").primaryKey(),
+  runId: text("run_id")
+    .notNull()
+    .references(() => agentRuns.id, { onDelete: "cascade" }),
+  agentId: text("agent_id")
+    .notNull()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  instruction: text("instruction").notNull(),
+  status: text("status").notNull().default("pending"),
+  // pending | running | completed | failed | blocked
+  progress: integer("progress").notNull().default(0),
+  result: text("result"),
+  depth: integer("depth").notNull().default(1),
+  parentTaskId: text("parent_task_id"),
+  startedAt: text("started_at"),
+  endedAt: text("ended_at"),
+  ...timestamps,
+});
+
 // ─── Tools ───────────────────────────────────────────────────────────────────
 
 export const tools = sqliteTable("tools", {
@@ -269,6 +308,21 @@ export const routingRules = sqliteTable("routing_rules", {
   targetAgentId: text("target_agent_id"),
   priority: integer("priority").notNull().default(0),
   enabled: integer("enabled", { mode: "boolean" }).default(true),
+});
+
+export const channelSessions = sqliteTable("channel_sessions", {
+  id: text("id").primaryKey(),
+  channelId: text("channel_id")
+    .notNull()
+    .references(() => channels.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id").notNull(),
+  senderId: text("sender_id").notNull(),    // 平台用户 ID（飞书 open_id）
+  chatId: text("chat_id").notNull(),        // 平台会话 ID（用于回复）
+  agentId: text("agent_id"),               // 由路由规则决定
+  lastActiveAt: text("last_active_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  ...timestamps,
 });
 
 // ─── Plugins ─────────────────────────────────────────────────────────────────
