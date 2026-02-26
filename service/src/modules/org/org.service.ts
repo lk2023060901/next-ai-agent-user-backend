@@ -38,7 +38,9 @@ export function updateOrg(slug: string, data: { name?: string; avatarUrl?: strin
   return db.select().from(organizations).where(eq(organizations.slug, slug)).get()!;
 }
 
-export function listMembers(orgId: string) {
+export function listMembers(orgSlug: string) {
+  const org = db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, orgSlug)).get();
+  if (!org) return [];
   return db
     .select({
       id: orgMembers.id,
@@ -51,12 +53,14 @@ export function listMembers(orgId: string) {
     })
     .from(orgMembers)
     .innerJoin(users, eq(orgMembers.userId, users.id))
-    .where(eq(orgMembers.orgId, orgId))
+    .where(eq(orgMembers.orgId, org.id))
     .all();
 }
 
-export function listWorkspaces(orgId: string) {
-  return db.select().from(workspaces).where(eq(workspaces.orgId, orgId)).all();
+export function listWorkspaces(orgSlug: string) {
+  const org = db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, orgSlug)).get();
+  if (!org) return [];
+  return db.select().from(workspaces).where(eq(workspaces.orgId, org.id)).all();
 }
 
 export function getDashboardStats(orgId: string) {

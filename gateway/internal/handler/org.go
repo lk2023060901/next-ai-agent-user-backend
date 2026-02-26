@@ -56,7 +56,7 @@ func (h *OrgHandler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrgHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	orgID := chi.URLParam(r, "orgId")
+	orgID := chi.URLParam(r, "slug")
 	resp, err := h.clients.Org.ListMembers(r.Context(), &orgpb.ListMembersRequest{
 		OrgId: orgID, UserContext: h.userCtx(r),
 	})
@@ -65,7 +65,7 @@ func (h *OrgHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrgHandler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
-	orgID := chi.URLParam(r, "orgId")
+	orgID := chi.URLParam(r, "slug")
 	resp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
 		OrgId: orgID, UserContext: h.userCtx(r),
 	})
