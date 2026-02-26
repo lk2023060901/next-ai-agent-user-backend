@@ -248,7 +248,7 @@ export async function sendChannelMessage(data: {
   threadId?: string
 }): Promise<void> {
   const ch = db.select().from(channels).where(eq(channels.id, data.channelId)).get()
-  if (!ch) throw Object.assign(new Error('Channel not found'), { code: 'NOT_FOUND' })
+  if (!ch || ch.status !== 'active') throw Object.assign(new Error('Channel not found or inactive'), { code: 'NOT_FOUND' })
 
   let channelConfig: Record<string, string> = {}
   try { channelConfig = JSON.parse(ch.configJson ?? '{}') } catch { /* ignore */ }

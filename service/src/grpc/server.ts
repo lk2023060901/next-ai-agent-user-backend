@@ -57,6 +57,8 @@ function mapErrorCode(code?: string): grpc.status {
     case "ALREADY_EXISTS": return grpc.status.ALREADY_EXISTS;
     case "UNAUTHENTICATED": return grpc.status.UNAUTHENTICATED;
     case "NOT_FOUND": return grpc.status.NOT_FOUND;
+    case "UNIMPLEMENTED": return grpc.status.UNIMPLEMENTED;
+    case "INVALID_ARGUMENT": return grpc.status.INVALID_ARGUMENT;
     default: return grpc.status.INTERNAL;
   }
 }

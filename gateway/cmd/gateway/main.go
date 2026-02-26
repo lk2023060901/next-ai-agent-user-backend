@@ -43,7 +43,7 @@ func main() {
 	wsHandler := handler.NewWorkspaceHandler(clients)
 	settingsHandler := handler.NewSettingsHandler(clients)
 	toolsHandler := handler.NewToolsHandler(clients)
-	channelsHandler := handler.NewChannelsHandler(clients)
+	channelsHandler := handler.NewChannelsHandler(clients, cfg.RuntimeSecret)
 	schedulerHandler := handler.NewSchedulerHandler(clients)
 
 	// ── Public ────────────────────────────────────────────────────────────────
@@ -53,6 +53,9 @@ func main() {
 
 	// Public webhook endpoint (signature verified in TS)
 	r.Post("/webhooks/{channelId}", channelsHandler.HandleWebhook)
+
+	// Public runtime endpoint (X-Runtime-Secret auth, no user JWT)
+	r.Post("/channels/{channelId}/send", channelsHandler.SendChannelMessage)
 
 	// ── Protected ─────────────────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
@@ -120,7 +123,6 @@ func main() {
 		r.Get("/channels/{channelId}", channelsHandler.GetChannel)
 		r.Patch("/channels/{channelId}", channelsHandler.UpdateChannel)
 		r.Delete("/channels/{channelId}", channelsHandler.DeleteChannel)
-		r.Post("/channels/{channelId}/send", channelsHandler.SendChannelMessage)
 		r.Get("/channels/{channelId}/messages", channelsHandler.ListChannelMessages)
 		r.Get("/channels/{channelId}/rules", channelsHandler.ListRoutingRules)
 		r.Post("/channels/{channelId}/rules", channelsHandler.CreateRoutingRule)

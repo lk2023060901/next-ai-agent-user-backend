@@ -13,11 +13,12 @@ import (
 )
 
 type ChannelsHandler struct {
-	clients *grpcclient.Clients
+	clients       *grpcclient.Clients
+	runtimeSecret string
 }
 
-func NewChannelsHandler(clients *grpcclient.Clients) *ChannelsHandler {
-	return &ChannelsHandler{clients: clients}
+func NewChannelsHandler(clients *grpcclient.Clients, runtimeSecret string) *ChannelsHandler {
+	return &ChannelsHandler{clients: clients, runtimeSecret: runtimeSecret}
 }
 
 func (h *ChannelsHandler) userCtx(r *http.Request) *commonpb.UserContext {
@@ -171,12 +172,24 @@ func (h *ChannelsHandler) TestConnection(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *ChannelsHandler) SendChannelMessage(w http.ResponseWriter, r *http.Request) {
-	var body channelspb.SendChannelMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if r.Header.Get("X-Runtime-Secret") != h.runtimeSecret {
+		writeError(w, http.StatusUnauthorized, "invalid runtime secret"); return
+	}
+	var req struct {
+		ChatId   string `json:"chatId"`
+		Text     string `json:"text"`
+		ThreadId string `json:"threadId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body"); return
 	}
-	body.ChannelId = chi.URLParam(r, "channelId")
-	body.UserContext = h.userCtx(r)
+	body := channelspb.SendChannelMessageRequest{
+		ChannelId:   chi.URLParam(r, "channelId"),
+		ChatId:      req.ChatId,
+		Text:        req.Text,
+		ThreadId:    req.ThreadId,
+		UserContext: h.userCtx(r),
+	}
 	_, err := h.clients.Channels.SendChannelMessage(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
 	w.WriteHeader(http.StatusNoContent)

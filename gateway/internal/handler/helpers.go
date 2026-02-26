@@ -69,6 +69,8 @@ func grpcCodeToHTTP(code codes.Code) int {
 		return http.StatusForbidden
 	case codes.ResourceExhausted:
 		return http.StatusTooManyRequests
+	case codes.Unimplemented:
+		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
 	}

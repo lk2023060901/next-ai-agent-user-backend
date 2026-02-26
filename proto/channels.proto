@@ -29,7 +29,7 @@ service ChannelsService {
   // Test connection (before channel is created)
   rpc TestConnection(TestConnectionRequest) returns (TestConnectionResponse);
 
-  // Agent 回复推回渠道
+  // Push agent reply back to the channel platform
   rpc SendChannelMessage(SendChannelMessageRequest) returns (common.Empty);
 }
 
