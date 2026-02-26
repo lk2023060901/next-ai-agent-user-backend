@@ -240,3 +240,36 @@ export function listChannelMessages(channelId: string, limit = 50) {
     .all()
     .slice(-limit)
 }
+
+export async function sendChannelMessage(data: {
+  channelId: string
+  chatId: string
+  text: string
+  threadId?: string
+}): Promise<void> {
+  const ch = db.select().from(channels).where(eq(channels.id, data.channelId)).get()
+  if (!ch) throw Object.assign(new Error('Channel not found'), { code: 'NOT_FOUND' })
+
+  let channelConfig: Record<string, string> = {}
+  try { channelConfig = JSON.parse(ch.configJson ?? '{}') } catch { /* ignore */ }
+
+  const plugin = getPlugin(ch.type)
+  if (!plugin.sendMessage) {
+    throw Object.assign(
+      new Error(`Plugin ${ch.type} does not support sendMessage`),
+      { code: 'UNIMPLEMENTED' }
+    )
+  }
+
+  await plugin.sendMessage(data.chatId, data.text, channelConfig, data.threadId)
+
+  // 存储出站消息
+  db.insert(channelMessages).values({
+    id: uuidv4(),
+    channelId: data.channelId,
+    direction: 'outbound',
+    sender: 'agent',
+    content: data.text,
+    status: 'sent',
+  }).run()
+}

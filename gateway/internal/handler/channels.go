@@ -135,6 +135,10 @@ func (h *ChannelsHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) 
 	if !resp.Accepted {
 		writeError(w, http.StatusUnauthorized, resp.Message); return
 	}
+	// Return challenge string for platform URL verification handshakes
+	if resp.Challenge != "" {
+		writeJSON(w, http.StatusOK, map[string]string{"challenge": resp.Challenge}); return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -144,4 +148,36 @@ func (h *ChannelsHandler) ListChannelMessages(w http.ResponseWriter, r *http.Req
 	})
 	if err != nil { writeGRPCError(w, err); return }
 	writeData(w, http.StatusOK, resp.Messages)
+}
+
+func (h *ChannelsHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Type      string            `json:"type"`
+		Config    map[string]string `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body"); return
+	}
+	configBytes, _ := json.Marshal(body.Config)
+	resp, err := h.clients.Channels.TestConnection(r.Context(), &channelspb.TestConnectionRequest{
+		Type: body.Type, ConfigJson: string(configBytes), UserContext: h.userCtx(r),
+	})
+	if err != nil { writeGRPCError(w, err); return }
+	writeData(w, http.StatusOK, map[string]any{
+		"success": resp.Success,
+		"botName": resp.BotName,
+		"error":   resp.Error,
+	})
+}
+
+func (h *ChannelsHandler) SendChannelMessage(w http.ResponseWriter, r *http.Request) {
+	var body channelspb.SendChannelMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body"); return
+	}
+	body.ChannelId = chi.URLParam(r, "channelId")
+	body.UserContext = h.userCtx(r)
+	_, err := h.clients.Channels.SendChannelMessage(r.Context(), &body)
+	if err != nil { writeGRPCError(w, err); return }
+	w.WriteHeader(http.StatusNoContent)
 }

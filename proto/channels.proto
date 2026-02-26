@@ -25,6 +25,12 @@ service ChannelsService {
 
   // Messages
   rpc ListChannelMessages(ListChannelMessagesRequest) returns (ListChannelMessagesResponse);
+
+  // Test connection (before channel is created)
+  rpc TestConnection(TestConnectionRequest) returns (TestConnectionResponse);
+
+  // Agent 回复推回渠道
+  rpc SendChannelMessage(SendChannelMessageRequest) returns (common.Empty);
 }
 
 message WorkspaceRequest {
@@ -118,6 +124,7 @@ message WebhookRequest {
 message WebhookResponse {
   bool accepted = 1;
   string message = 2;
+  string challenge = 3;  // non-empty when platform sends a URL verification challenge
 }
 
 message ChannelMessage {
@@ -138,4 +145,24 @@ message ListChannelMessagesRequest {
 
 message ListChannelMessagesResponse {
   repeated ChannelMessage messages = 1;
+}
+
+message TestConnectionRequest {
+  string type = 1;
+  string config_json = 2;
+  common.UserContext user_context = 3;
+}
+
+message TestConnectionResponse {
+  bool success = 1;
+  string bot_name = 2;
+  string error = 3;
+}
+
+message SendChannelMessageRequest {
+  string channel_id = 1;
+  string chat_id = 2;
+  string text = 3;
+  string thread_id = 4;
+  common.UserContext user_context = 5;
 }

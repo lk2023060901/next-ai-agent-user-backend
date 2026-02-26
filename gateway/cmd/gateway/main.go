@@ -38,6 +38,7 @@ func main() {
 	}).Handler)
 
 	authHandler := handler.NewAuthHandler(clients)
+	chatHandler := handler.NewChatHandler(clients)
 	orgHandler := handler.NewOrgHandler(clients)
 	wsHandler := handler.NewWorkspaceHandler(clients)
 	settingsHandler := handler.NewSettingsHandler(clients)
@@ -80,6 +81,7 @@ func main() {
 		r.Post("/workspaces/{wsId}/providers", settingsHandler.CreateProvider)
 		r.Patch("/workspaces/{wsId}/providers/{providerId}", settingsHandler.UpdateProvider)
 		r.Delete("/workspaces/{wsId}/providers/{providerId}", settingsHandler.DeleteProvider)
+		r.Post("/workspaces/{wsId}/providers/{providerId}/test", settingsHandler.TestProvider)
 
 		// Settings — models (match frontend: /workspaces/:wsId/providers/:id/models/*)
 		r.Get("/workspaces/{wsId}/providers/{providerId}/models", settingsHandler.ListModels)
@@ -93,6 +95,17 @@ func main() {
 		r.Post("/workspaces/{wsId}/api-keys", settingsHandler.CreateApiKey)
 		r.Delete("/workspaces/{wsId}/api-keys/{keyId}", settingsHandler.DeleteApiKey)
 
+		// Chat — sessions
+		r.Get("/workspaces/{wsId}/sessions", chatHandler.ListSessions)
+		r.Post("/workspaces/{wsId}/sessions", chatHandler.CreateSession)
+
+		// Chat — messages
+		r.Get("/sessions/{sessionId}/messages", chatHandler.ListMessages)
+
+		// Chat — agents
+		r.Get("/workspaces/{wsId}/agents", chatHandler.ListAgents)
+		r.Post("/workspaces/{wsId}/agents", chatHandler.CreateAgent)
+
 		// Tools
 		r.Get("/workspaces/{wsId}/tools", toolsHandler.ListTools)
 		r.Get("/workspaces/{wsId}/tool-auth", toolsHandler.ListToolAuthorizations)
@@ -101,11 +114,13 @@ func main() {
 		// Channels — workspace-scoped (list + create)
 		r.Get("/workspaces/{wsId}/channels", channelsHandler.ListChannels)
 		r.Post("/workspaces/{wsId}/channels", channelsHandler.CreateChannel)
+		r.Post("/channels/test", channelsHandler.TestConnection)
 
 		// Channels — channel-scoped (match frontend: /channels/:channelId/*)
 		r.Get("/channels/{channelId}", channelsHandler.GetChannel)
 		r.Patch("/channels/{channelId}", channelsHandler.UpdateChannel)
 		r.Delete("/channels/{channelId}", channelsHandler.DeleteChannel)
+		r.Post("/channels/{channelId}/send", channelsHandler.SendChannelMessage)
 		r.Get("/channels/{channelId}/messages", channelsHandler.ListChannelMessages)
 		r.Get("/channels/{channelId}/rules", channelsHandler.ListRoutingRules)
 		r.Post("/channels/{channelId}/rules", channelsHandler.CreateRoutingRule)
@@ -122,9 +137,12 @@ func main() {
 
 		// LLM proxy → Bifrost sidecar
 		r.Handle("/v1/*", stream.BifrostProxy(cfg.BifrostAddr))
+
+		// Agent Runtime proxy → Runtime process (:8082)
+		r.Handle("/runtime/*", stream.RuntimeProxy(cfg.RuntimeAddr))
 	})
 
-	log.Printf("Gateway listening on :%s (gRPC → %s, Bifrost → %s)", cfg.Port, cfg.GRPCAddr, cfg.BifrostAddr)
+	log.Printf("Gateway listening on :%s (gRPC → %s, Bifrost → %s, Runtime → %s)", cfg.Port, cfg.GRPCAddr, cfg.BifrostAddr, cfg.RuntimeAddr)
 	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

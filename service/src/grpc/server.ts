@@ -10,7 +10,7 @@ import {
   deleteWorkspace,
 } from "../modules/workspace/workspace.service";
 import {
-  listProviders, createProvider, updateProvider, deleteProvider,
+  listProviders, createProvider, updateProvider, deleteProvider, testProvider,
   listModels, listAllModels, createModel, updateModel, deleteModel,
   listApiKeys, createApiKey, deleteApiKey,
 } from "../modules/settings/settings.service";
@@ -20,11 +20,18 @@ import {
 import {
   listChannels, getChannel, createChannel, updateChannel, deleteChannel,
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
-  handleWebhook, listChannelMessages,
+  handleWebhook, listChannelMessages, sendChannelMessage,
 } from "../modules/channel/channel.service";
+import { getPlugin } from "../modules/channel/plugins";
 import {
   listTasks, createTask, updateTask, deleteTask, runTask, listExecutions, bootstrapScheduler,
 } from "../modules/scheduler/scheduler.service";
+import {
+  getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
+} from "../modules/agent-run/agent-run.service";
+import {
+  listSessions, createSession, listMessages, saveUserMessage, listAgents, createAgent,
+} from "../modules/chat/chat.service";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
 
@@ -194,6 +201,12 @@ export function startGrpcServer(port: number): grpc.Server {
       try { deleteProvider(call.request.id); callback(null, {}); }
       catch (err) { handleError(callback, err); }
     },
+    async testProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = await testProvider(call.request.id);
+        callback(null, { success: result.success, message: result.message });
+      } catch (err) { handleError(callback, err); }
+    },
     listModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, { models: listModels(call.request.providerId) }); }
       catch (err) { handleError(callback, err); }
@@ -330,6 +343,24 @@ export function startGrpcServer(port: number): grpc.Server {
         callback(null, { messages: listChannelMessages(call.request.channelId, call.request.limit || 50) });
       } catch (err) { handleError(callback, err); }
     },
+    async testConnection(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const config = JSON.parse(call.request.configJson || '{}') as Record<string, string>;
+        const result = await getPlugin(call.request.type).testConnection(config);
+        callback(null, { success: result.success, botName: result.botName ?? '', error: result.error ?? '' });
+      } catch (err) { handleError(callback, err); }
+    },
+    async sendChannelMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        await sendChannelMessage({
+          channelId: call.request.channelId,
+          chatId: call.request.chatId,
+          text: call.request.text,
+          threadId: call.request.threadId || undefined,
+        })
+        callback(null, {})
+      } catch (err) { handleError(callback, err) }
+    },
   });
 
   server.bindAsync(
@@ -388,6 +419,123 @@ export function startGrpcServer(port: number): grpc.Server {
     listExecutions(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, { executions: listExecutions(call.request.taskId, call.request.limit || 20) }); }
       catch (err) { handleError(callback, err); }
+    },
+  });
+
+  // ── AgentRun ──────────────────────────────────────────────────────────────
+  const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto")) as any;
+  server.addService(agentRunPkg.agent_run.AgentRunService.service, {
+    getAgentConfig(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = getAgentConfig(call.request.agentId);
+        callback(null, {
+          id: result.id,
+          name: result.name,
+          role: result.role,
+          model: result.model,
+          systemPrompt: result.systemPrompt,
+          temperature: result.temperature,
+          maxTokens: result.maxTokens,
+          toolIds: result.toolIds,
+          toolAllowJson: result.toolAllowJson,
+          toolDenyJson: result.toolDenyJson,
+          fsAllowedPathsJson: result.fsAllowedPathsJson,
+          execAllowedCommandsJson: result.execAllowedCommandsJson,
+          maxTurns: result.maxTurns,
+          maxSpawnDepth: result.maxSpawnDepth,
+          timeoutMs: result.timeoutMs,
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    createRun(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const { runId } = createRun({
+          sessionId: call.request.sessionId,
+          workspaceId: call.request.workspaceId,
+          userRequest: call.request.userRequest,
+          coordinatorAgentId: call.request.coordinatorAgentId,
+        });
+        callback(null, { runId });
+      } catch (err) { handleError(callback, err); }
+    },
+    appendMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const { messageId } = appendMessage({
+          runId: call.request.runId,
+          role: call.request.role,
+          content: call.request.content,
+          agentId: call.request.agentId,
+          parentId: call.request.parentId,
+        });
+        callback(null, { messageId });
+      } catch (err) { handleError(callback, err); }
+    },
+    updateRunStatus(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        updateRunStatus(call.request.runId, call.request.status);
+        callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+    createTask(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const { taskId } = createAgentTask({
+          runId: call.request.runId,
+          agentId: call.request.agentId,
+          instruction: call.request.instruction,
+          depth: call.request.depth,
+          parentTaskId: call.request.parentTaskId,
+        });
+        callback(null, { taskId });
+      } catch (err) { handleError(callback, err); }
+    },
+    updateTask(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        updateAgentTask({
+          taskId: call.request.taskId,
+          status: call.request.status,
+          progress: call.request.progress,
+          result: call.request.result,
+        });
+        callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+  });
+
+  // ── Chat (Sessions / Messages / Agents) ───────────────────────────────────
+  const chatPkg = grpc.loadPackageDefinition(loadProto("chat.proto")) as any;
+  server.addService(chatPkg.chat.ChatService.service, {
+    listSessions(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, { sessions: listSessions(call.request.workspaceId) }); }
+      catch (err) { handleError(callback, err); }
+    },
+    createSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, createSession(call.request.workspaceId, call.request.title)); }
+      catch (err) { handleError(callback, err); }
+    },
+    listMessages(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, { messages: listMessages(call.request.sessionId) }); }
+      catch (err) { handleError(callback, err); }
+    },
+    saveUserMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, saveUserMessage(call.request.sessionId, call.request.content)); }
+      catch (err) { handleError(callback, err); }
+    },
+    listAgents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, { agents: listAgents(call.request.workspaceId) }); }
+      catch (err) { handleError(callback, err); }
+    },
+    createAgent(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, createAgent({
+          workspaceId: call.request.workspaceId,
+          name: call.request.name,
+          role: call.request.role,
+          model: call.request.model,
+          color: call.request.color,
+          description: call.request.description,
+          systemPrompt: call.request.systemPrompt,
+        }));
+      } catch (err) { handleError(callback, err); }
     },
   });
 
