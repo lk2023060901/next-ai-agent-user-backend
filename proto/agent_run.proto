@@ -1,0 +1,71 @@
+syntax = "proto3";
+package agent_run;
+
+option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/agent_run";
+
+message GetAgentConfigRequest { string agent_id = 1; }
+message AgentConfig {
+  string id = 1;
+  string name = 2;
+  string role = 3;
+  string model = 4;
+  string system_prompt = 5;
+  float temperature = 6;
+  int32 max_tokens = 7;
+  repeated string tool_ids = 8;
+  string tool_allow_json = 9;
+  string tool_deny_json = 10;
+  string fs_allowed_paths_json = 11;
+  string exec_allowed_commands_json = 12;
+  int32 max_turns = 13;
+  int32 max_spawn_depth = 14;
+  int32 timeout_ms = 15;
+}
+
+message CreateRunRequest {
+  string session_id = 1;
+  string workspace_id = 2;
+  string user_request = 3;
+  string coordinator_agent_id = 4;
+}
+message CreateRunResponse { string run_id = 1; }
+
+message AppendMessageRequest {
+  string run_id = 1;
+  string role = 2;
+  string content = 3;
+  string agent_id = 4;
+  string parent_id = 5;
+}
+message AppendMessageResponse { string message_id = 1; }
+
+message UpdateRunStatusRequest {
+  string run_id = 1;
+  string status = 2;
+}
+message Empty {}
+
+message CreateTaskRequest {
+  string run_id = 1;
+  string agent_id = 2;
+  string instruction = 3;
+  int32 depth = 4;
+  string parent_task_id = 5;
+}
+message CreateTaskResponse { string task_id = 1; }
+
+message UpdateTaskRequest {
+  string task_id = 1;
+  string status = 2;
+  int32 progress = 3;
+  string result = 4;
+}
+
+service AgentRunService {
+  rpc GetAgentConfig  (GetAgentConfigRequest)  returns (AgentConfig);
+  rpc CreateRun       (CreateRunRequest)        returns (CreateRunResponse);
+  rpc AppendMessage   (AppendMessageRequest)    returns (AppendMessageResponse);
+  rpc UpdateRunStatus (UpdateRunStatusRequest)  returns (Empty);
+  rpc CreateTask      (CreateTaskRequest)       returns (CreateTaskResponse);
+  rpc UpdateTask      (UpdateTaskRequest)       returns (Empty);
+}
