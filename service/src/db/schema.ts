@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const timestamps = {
@@ -323,7 +323,10 @@ export const channelSessions = sqliteTable("channel_sessions", {
     .notNull()
     .default(sql`(datetime('now'))`),
   ...timestamps,
-});
+}, (t) => ({
+  uniqSession: uniqueIndex("channel_sessions_channel_sender_chat_uniq")
+    .on(t.channelId, t.senderId, t.chatId),
+}));
 
 // ─── Plugins ─────────────────────────────────────────────────────────────────
 
