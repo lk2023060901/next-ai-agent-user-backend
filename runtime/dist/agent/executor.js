@@ -1,7 +1,6 @@
-import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
-import { config } from "../config.js";
 import { buildToolset } from "../tools/registry.js";
+import { buildModelForAgent } from "../llm/model-factory.js";
 export async function runExecutor(params) {
     const agentCfg = await params.grpc.getAgentConfig(params.agentId);
     await params.grpc.updateTask({
@@ -10,10 +9,6 @@ export async function runExecutor(params) {
         progress: 0,
     });
     params.emit({ type: "message-start", agentId: params.agentId });
-    const llm = createOpenAI({
-        baseURL: `${config.bifrostAddr}/v1`,
-        apiKey: "runtime",
-    });
     const tools = buildToolset({
         runId: params.runId,
         taskId: params.taskId,
@@ -26,7 +21,7 @@ export async function runExecutor(params) {
     let fullText = "";
     try {
         const result = streamText({
-            model: llm(agentCfg.model),
+            model: buildModelForAgent(agentCfg),
             system: agentCfg.systemPrompt || undefined,
             messages: [{ role: "user", content: params.instruction }],
             tools: Object.keys(tools).length > 0 ? tools : undefined,
@@ -37,6 +32,16 @@ export async function runExecutor(params) {
             if (c.type === "text-delta" && c.textDelta !== undefined) {
                 fullText += c.textDelta;
                 params.emit({ type: "text-delta", text: c.textDelta });
+            }
+            else if (c.type === "reasoning-delta") {
+                const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
+                if (text)
+                    params.emit({ type: "reasoning-delta", text });
+            }
+            else if (c.type === "reasoning") {
+                const text = c.text ?? c.reasoning ?? "";
+                if (text)
+                    params.emit({ type: "reasoning", text });
             }
             else if (c.type === "tool-call") {
                 params.emit({ type: "tool-call", toolName: c.toolName, args: c.args });
@@ -51,6 +56,14 @@ export async function runExecutor(params) {
             progress: 100,
             result: fullText,
         });
+        if (fullText.trim().length > 0) {
+            await params.grpc.appendMessage({
+                runId: params.runId,
+                role: "assistant",
+                content: fullText,
+                agentId: params.agentId,
+            });
+        }
         params.emit({ type: "task-complete", taskId: params.taskId, result: fullText });
         return { result: fullText };
     }
