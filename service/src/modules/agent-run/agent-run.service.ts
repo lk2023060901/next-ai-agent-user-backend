@@ -1,7 +1,16 @@
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
-import { agents, agentTools, agentRuns, agentTasks, messages, chatSessions } from "../../db/schema";
+import {
+  agents,
+  agentTools,
+  agentRuns,
+  agentTasks,
+  messages,
+  chatSessions,
+  aiModels,
+  aiProviders,
+} from "../../db/schema";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +30,9 @@ export interface AgentConfigResult {
   maxTurns: number;
   maxSpawnDepth: number;
   timeoutMs: number;
+  llmProviderType: string;
+  llmBaseUrl: string;
+  llmApiKey: string;
 }
 
 export interface CreateRunParams {
@@ -53,6 +65,55 @@ export interface UpdateTaskParams {
   result?: string;
 }
 
+interface ResolvedLlmConfig {
+  model: string;
+  llmProviderType: string;
+  llmBaseUrl: string;
+  llmApiKey: string;
+}
+
+function decryptKey(encrypted: string): string {
+  return Buffer.from(encrypted, "base64").toString("utf-8");
+}
+
+function resolveLlmConfigForAgent(workspaceId: string, modelId: string | null): ResolvedLlmConfig {
+  if (!modelId) {
+    throw Object.assign(new Error("Agent modelId is required"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const selectedModel = db.select().from(aiModels).where(eq(aiModels.id, modelId)).get();
+  if (!selectedModel) {
+    throw Object.assign(new Error("Agent model not found"), { code: "NOT_FOUND" });
+  }
+
+  const provider = db.select().from(aiProviders).where(eq(aiProviders.id, selectedModel.providerId)).get();
+  if (!provider || provider.workspaceId !== workspaceId) {
+    throw Object.assign(
+      new Error(`Model "${selectedModel.name}" does not belong to workspace`),
+      { code: "INVALID_ARGUMENT" }
+    );
+  }
+  if ((provider.status ?? "active") !== "active") {
+    throw Object.assign(
+      new Error(`Model provider "${provider.name}" is not active`),
+      { code: "INVALID_ARGUMENT" }
+    );
+  }
+  if (!provider.apiKeyEncrypted) {
+    throw Object.assign(
+      new Error(`Model provider "${provider.name}" has no API key configured`),
+      { code: "INVALID_ARGUMENT" }
+    );
+  }
+
+  return {
+    model: selectedModel.name,
+    llmProviderType: provider.type.toLowerCase(),
+    llmBaseUrl: provider.baseUrl ?? "",
+    llmApiKey: decryptKey(provider.apiKeyEncrypted),
+  };
+}
+
 // ─── Functions ────────────────────────────────────────────────────────────────
 
 export function getAgentConfig(agentId: string): AgentConfigResult {
@@ -63,12 +124,13 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
 
   const tools = db.select().from(agentTools).where(eq(agentTools.agentId, agentId)).all();
   const toolIds = tools.map((t) => t.toolId);
+  const llm = resolveLlmConfigForAgent(agent.workspaceId, agent.modelId ?? null);
 
   return {
     id: agent.id,
     name: agent.name,
     role: agent.role ?? "",
-    model: agent.model ?? "claude-sonnet-4-6",
+    model: llm.model,
     systemPrompt: agent.systemPrompt ?? "",
     temperature: agent.temperature ?? 0.7,
     maxTokens: agent.maxTokens ?? 4096,
@@ -80,6 +142,9 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
     maxTurns: 20,
     maxSpawnDepth: 3,
     timeoutMs: 300000,
+    llmProviderType: llm.llmProviderType,
+    llmBaseUrl: llm.llmBaseUrl,
+    llmApiKey: llm.llmApiKey,
   };
 }
 
@@ -115,6 +180,11 @@ export function appendMessage(params: AppendMessageParams): { messageId: string 
     throw Object.assign(new Error("Agent run not found"), { code: "NOT_FOUND" });
   }
 
+  const session = db.select().from(chatSessions).where(eq(chatSessions.id, run.sessionId)).get();
+  if (!session) {
+    throw Object.assign(new Error("Chat session not found"), { code: "NOT_FOUND" });
+  }
+
   const messageId = uuidv4();
   db.insert(messages)
     .values({
@@ -125,7 +195,16 @@ export function appendMessage(params: AppendMessageParams): { messageId: string 
       agentId: params.agentId ?? null,
       parentId: params.parentId ?? null,
       status: "done",
+      createdAt: new Date().toISOString(),
     })
+    .run();
+
+  db.update(chatSessions)
+    .set({
+      messageCount: (session.messageCount ?? 0) + 1,
+      lastMessageAt: new Date().toISOString(),
+    })
+    .where(eq(chatSessions.id, run.sessionId))
     .run();
 
   return { messageId };

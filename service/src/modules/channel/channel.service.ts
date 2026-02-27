@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
 import { db } from '../../db'
-import { channels, channelMessages, channelSessions, routingRules } from '../../db/schema'
+import { channels, channelMessages, channelSessions, chatSessions, routingRules } from '../../db/schema'
 import { config } from '../../config'
 import { getPlugin } from './plugins'
 import './plugins' // ensure all plugins are registered on import
@@ -194,6 +194,21 @@ export function handleWebhook(
         .where(eq(channelSessions.channelId, channelId))
         .all()
         .find((s) => s.senderId === parsed.sender && s.chatId === (parsed.chatId ?? ''))!
+
+    // Ensure a matching chat session exists for agent_runs.session_id FK.
+    // Reuse channel session id as chat session id for a 1:1 binding.
+    db.insert(chatSessions).values({
+      id: session.id,
+      workspaceId: ch.workspaceId,
+      title: `${ch.name} / ${parsed.sender}`,
+      status: 'active',
+      messageCount: 0,
+      lastMessageAt: new Date().toISOString(),
+    }).onConflictDoNothing().run()
+    db.update(chatSessions)
+      .set({ lastMessageAt: new Date().toISOString() })
+      .where(eq(chatSessions.id, session.id))
+      .run()
 
     // Fire-and-forget: dispatch to runtime without blocking Feishu webhook response
     fetch(`${config.runtimeAddr}/channel-run`, {

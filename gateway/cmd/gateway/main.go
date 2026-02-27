@@ -101,13 +101,19 @@ func main() {
 		// Chat — sessions
 		r.Get("/workspaces/{wsId}/sessions", chatHandler.ListSessions)
 		r.Post("/workspaces/{wsId}/sessions", chatHandler.CreateSession)
+		r.Patch("/sessions/{sessionId}", chatHandler.UpdateSession)
+		r.Delete("/sessions/{sessionId}", chatHandler.DeleteSession)
 
 		// Chat — messages
 		r.Get("/sessions/{sessionId}/messages", chatHandler.ListMessages)
+		r.Post("/sessions/{sessionId}/messages", chatHandler.SaveUserMessage)
 
 		// Chat — agents
 		r.Get("/workspaces/{wsId}/agents", chatHandler.ListAgents)
 		r.Post("/workspaces/{wsId}/agents", chatHandler.CreateAgent)
+		r.Get("/agents/{agentId}", chatHandler.GetAgent)
+		r.Patch("/agents/{agentId}", chatHandler.UpdateAgent)
+		r.Delete("/agents/{agentId}", chatHandler.DeleteAgent)
 
 		// Tools
 		r.Get("/workspaces/{wsId}/tools", toolsHandler.ListTools)

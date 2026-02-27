@@ -1,12 +1,11 @@
-import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, type ToolSet } from "ai";
 import { v4 as uuidv4 } from "uuid";
 import type { SandboxPolicy } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import type { grpcClient as GrpcClientType } from "../grpc/client.js";
-import { config } from "../config.js";
 import { makeDelegateTool } from "../tools/delegate.js";
 import { isToolAllowed } from "../policy/tool-policy.js";
+import { buildModelForAgent } from "../llm/model-factory.js";
 
 export interface CoordinatorParams {
   runId: string;
@@ -19,16 +18,9 @@ export interface CoordinatorParams {
 
 export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId);
+  let fullText = "";
 
   params.emit({ type: "message-start", agentId: params.coordinatorAgentId });
-
-  // If LLM_BASE_URL + LLM_API_KEY are set, call the provider directly (e.g. BigModel).
-  // Otherwise route through Bifrost sidecar.
-  const llm = createOpenAI({
-    baseURL: config.llmBaseUrl || `${config.bifrostAddr}/v1`,
-    apiKey: config.llmApiKey || "runtime",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  }) as any;
 
   const rootTaskId = uuidv4();
 
@@ -47,7 +39,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   const result = streamText({
-    model: llm(agentCfg.model) as any,
+    model: buildModelForAgent(agentCfg) as any,
     system: agentCfg.systemPrompt || undefined,
     messages: [{ role: "user", content: params.userMessage }],
     tools: Object.keys(tools).length > 0 ? tools : undefined,
@@ -56,9 +48,25 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
 
   try {
     for await (const chunk of result.fullStream) {
-      const c = chunk as { type: string; textDelta?: string; toolName?: string; args?: unknown; result?: unknown; error?: unknown };
+      const c = chunk as {
+        type: string;
+        textDelta?: string;
+        text?: string;
+        reasoning?: string;
+        toolName?: string;
+        args?: unknown;
+        result?: unknown;
+        error?: unknown;
+      };
       if (c.type === "text-delta" && c.textDelta !== undefined) {
+        fullText += c.textDelta;
         params.emit({ type: "text-delta", text: c.textDelta });
+      } else if (c.type === "reasoning-delta") {
+        const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
+        if (text) params.emit({ type: "reasoning-delta", text });
+      } else if (c.type === "reasoning") {
+        const text = c.text ?? c.reasoning ?? "";
+        if (text) params.emit({ type: "reasoning", text });
       } else if (c.type === "tool-call") {
         params.emit({ type: "tool-call", toolName: c.toolName!, args: c.args });
       } else if (c.type === "tool-result") {
@@ -72,6 +80,15 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     params.emit({ type: "task-failed", taskId: params.runId, error: msg });
     params.emit({ type: "message-end", runId: params.runId });
     throw err;
+  }
+
+  if (fullText.trim().length > 0) {
+    await params.grpc.appendMessage({
+      runId: params.runId,
+      role: "assistant",
+      content: fullText,
+      agentId: params.coordinatorAgentId,
+    });
   }
 
   params.emit({ type: "message-end", runId: params.runId });

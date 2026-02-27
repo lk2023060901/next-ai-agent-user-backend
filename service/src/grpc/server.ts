@@ -30,7 +30,8 @@ import {
   getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
 } from "../modules/agent-run/agent-run.service";
 import {
-  listSessions, createSession, listMessages, saveUserMessage, listAgents, createAgent,
+  listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage,
+  listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
@@ -66,6 +67,31 @@ function mapErrorCode(code?: string): grpc.status {
 function handleError(callback: grpc.sendUnaryData<any>, err: unknown) {
   const e = err as any;
   callback(grpcError(mapErrorCode(e.code), e.message ?? "internal error"));
+}
+
+function readNumberField(input: Record<string, unknown>, keys: string[]): number | undefined {
+  const parse = (raw: unknown): number | undefined => {
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "string" && raw.trim().length > 0) {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+  };
+
+  for (const key of keys) {
+    const parsed = parse(input[key]);
+    if (parsed !== undefined) return parsed;
+  }
+
+  const normalizedTargets = new Set(keys.map((k) => k.toLowerCase().replaceAll("_", "")));
+  for (const [key, raw] of Object.entries(input)) {
+    const normalizedKey = key.toLowerCase().replaceAll("_", "");
+    if (!normalizedTargets.has(normalizedKey)) continue;
+    const parsed = parse(raw);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
 }
 
 export function startGrpcServer(port: number): grpc.Server {
@@ -219,18 +245,30 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     createModel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        const costPer1kTokens = readNumberField(call.request as Record<string, unknown>, [
+          "costPer1kTokens",
+          "costPer1KTokens",
+          "costPer_1KTokens",
+          "cost_per_1k_tokens",
+        ]);
         callback(null, createModel({
           providerId: call.request.providerId, name: call.request.name,
-          contextWindow: call.request.contextWindow, costPer1kTokens: call.request.costPer1kTokens,
+          contextWindow: call.request.contextWindow, costPer1kTokens,
           isDefault: call.request.isDefault,
         }));
       } catch (err) { handleError(callback, err); }
     },
     updateModel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        const costPer1kTokens = readNumberField(call.request as Record<string, unknown>, [
+          "costPer1kTokens",
+          "costPer1KTokens",
+          "costPer_1KTokens",
+          "cost_per_1k_tokens",
+        ]);
         callback(null, updateModel(call.request.id, {
           name: call.request.name, contextWindow: call.request.contextWindow,
-          costPer1kTokens: call.request.costPer1kTokens, isDefault: call.request.isDefault,
+          costPer1kTokens, isDefault: call.request.isDefault,
         }));
       } catch (err) { handleError(callback, err); }
     },
@@ -446,6 +484,9 @@ export function startGrpcServer(port: number): grpc.Server {
           maxTurns: result.maxTurns,
           maxSpawnDepth: result.maxSpawnDepth,
           timeoutMs: result.timeoutMs,
+          llmProviderType: result.llmProviderType,
+          llmBaseUrl: result.llmBaseUrl,
+          llmApiKey: result.llmApiKey,
         });
       } catch (err) { handleError(callback, err); }
     },
@@ -514,8 +555,33 @@ export function startGrpcServer(port: number): grpc.Server {
       try { callback(null, createSession(call.request.workspaceId, call.request.title)); }
       catch (err) { handleError(callback, err); }
     },
+    updateSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, updateSession({
+          sessionId: call.request.sessionId,
+          title: call.request.title,
+          isPinned: call.request.isPinned,
+          updateTitle: call.request.updateTitle,
+          updateIsPinned: call.request.updateIsPinned,
+        }));
+      } catch (err) { handleError(callback, err); }
+    },
+    deleteSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { deleteSession(call.request.sessionId); callback(null, {}); }
+      catch (err) { handleError(callback, err); }
+    },
     listMessages(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { messages: listMessages(call.request.sessionId) }); }
+      try {
+        const page = listMessages(call.request.sessionId, {
+          limit: call.request.limit,
+          beforeMessageId: call.request.beforeMessageId,
+        });
+        callback(null, {
+          messages: page.messages,
+          hasMore: page.hasMore,
+          nextBeforeMessageId: page.nextBeforeMessageId,
+        });
+      }
       catch (err) { handleError(callback, err); }
     },
     saveUserMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -532,12 +598,41 @@ export function startGrpcServer(port: number): grpc.Server {
           workspaceId: call.request.workspaceId,
           name: call.request.name,
           role: call.request.role,
-          model: call.request.model,
+          modelId: call.request.modelId,
           color: call.request.color,
           description: call.request.description,
           systemPrompt: call.request.systemPrompt,
+          temperature: call.request.temperature,
+          outputFormat: call.request.outputFormat,
+          tools: call.request.tools,
+          knowledgeBases: call.request.knowledgeBases,
         }));
       } catch (err) { handleError(callback, err); }
+    },
+    getAgent(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, getAgent(call.request.id)); }
+      catch (err) { handleError(callback, err); }
+    },
+    updateAgent(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, updateAgent({
+          id: call.request.id,
+          name: call.request.name,
+          role: call.request.role,
+          modelId: call.request.modelId,
+          color: call.request.color,
+          description: call.request.description,
+          systemPrompt: call.request.systemPrompt,
+          temperature: call.request.temperature,
+          outputFormat: call.request.outputFormat,
+          tools: call.request.tools,
+          knowledgeBases: call.request.knowledgeBases,
+        }));
+      } catch (err) { handleError(callback, err); }
+    },
+    deleteAgent(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { deleteAgent(call.request.id); callback(null, {}); }
+      catch (err) { handleError(callback, err); }
     },
   });
 

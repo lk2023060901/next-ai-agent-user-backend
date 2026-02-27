@@ -83,6 +83,10 @@ export const agents = sqliteTable("agents", {
   role: text("role"),
   color: text("color"),
   status: text("status").notNull().default("active"),
+  // Source of truth for agent model selection.
+  modelId: text("model_id")
+    .references(() => aiModels.id, { onDelete: "set null" }),
+  // Legacy denormalized display value; kept for backward compatibility.
   model: text("model"),
   systemPrompt: text("system_prompt"),
   temperature: real("temperature").default(0.7),
@@ -139,6 +143,8 @@ export const chatSessions = sqliteTable("chat_sessions", {
     .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   title: text("title"),
+  isPinned: integer("is_pinned", { mode: "boolean" }).notNull().default(false),
+  pinnedAt: text("pinned_at"),
   status: text("status").notNull().default("active"),
   messageCount: integer("message_count").notNull().default(0),
   lastMessageAt: text("last_message_at"),

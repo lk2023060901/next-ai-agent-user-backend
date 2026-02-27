@@ -48,6 +48,9 @@ export interface AgentConfig {
   maxTurns: number;
   maxSpawnDepth: number;
   timeoutMs: number;
+  llmProviderType: string;
+  llmBaseUrl: string;
+  llmApiKey: string;
 }
 
 export const grpcClient = {

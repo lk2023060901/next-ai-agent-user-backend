@@ -1,10 +1,9 @@
-import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 import type { SandboxPolicy } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import type { grpcClient as GrpcClientType } from "../grpc/client.js";
-import { config } from "../config.js";
 import { buildToolset } from "../tools/registry.js";
+import { buildModelForAgent } from "../llm/model-factory.js";
 
 export interface ExecutorParams {
   agentId: string;
@@ -28,11 +27,6 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
 
   params.emit({ type: "message-start", agentId: params.agentId });
 
-  const llm = createOpenAI({
-    baseURL: `${config.bifrostAddr}/v1`,
-    apiKey: "runtime",
-  });
-
   const tools = buildToolset({
     runId: params.runId,
     taskId: params.taskId,
@@ -47,7 +41,7 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
 
   try {
     const result = streamText({
-      model: llm(agentCfg.model),
+      model: buildModelForAgent(agentCfg),
       system: agentCfg.systemPrompt || undefined,
       messages: [{ role: "user", content: params.instruction }],
       tools: Object.keys(tools).length > 0 ? tools : undefined,
@@ -55,10 +49,24 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
     });
 
     for await (const chunk of result.fullStream) {
-      const c = chunk as { type: string; textDelta?: string; toolName?: string; args?: unknown; result?: unknown };
+      const c = chunk as {
+        type: string;
+        textDelta?: string;
+        text?: string;
+        reasoning?: string;
+        toolName?: string;
+        args?: unknown;
+        result?: unknown;
+      };
       if (c.type === "text-delta" && c.textDelta !== undefined) {
         fullText += c.textDelta;
         params.emit({ type: "text-delta", text: c.textDelta });
+      } else if (c.type === "reasoning-delta") {
+        const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
+        if (text) params.emit({ type: "reasoning-delta", text });
+      } else if (c.type === "reasoning") {
+        const text = c.text ?? c.reasoning ?? "";
+        if (text) params.emit({ type: "reasoning", text });
       } else if (c.type === "tool-call") {
         params.emit({ type: "tool-call", toolName: c.toolName!, args: c.args });
       } else if (c.type === "tool-result") {
@@ -72,6 +80,15 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
       progress: 100,
       result: fullText,
     });
+
+    if (fullText.trim().length > 0) {
+      await params.grpc.appendMessage({
+        runId: params.runId,
+        role: "assistant",
+        content: fullText,
+        agentId: params.agentId,
+      });
+    }
 
     params.emit({ type: "task-complete", taskId: params.taskId, result: fullText });
 

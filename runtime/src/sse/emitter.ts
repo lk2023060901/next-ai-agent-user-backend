@@ -2,6 +2,8 @@
 export type SseEvent =
   | { type: "message-start"; agentId: string }
   | { type: "text-delta"; text: string }
+  | { type: "reasoning-delta"; text: string }
+  | { type: "reasoning"; text: string }
   | { type: "tool-call"; toolName: string; args: unknown }
   | { type: "tool-result"; toolName: string; result: unknown }
   | { type: "agent-switch"; agentId: string; taskId?: string }

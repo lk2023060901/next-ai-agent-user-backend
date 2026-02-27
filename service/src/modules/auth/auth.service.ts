@@ -36,7 +36,8 @@ export async function signup(
 
   // Auto-create default org + workspace for new user
   const orgId = uuidv4();
-  db.insert(organizations).values({ id: orgId, slug: "acme", name: `${name}'s Org` }).run();
+  const orgSlug = `org-${id.slice(0, 8)}`;
+  db.insert(organizations).values({ id: orgId, slug: orgSlug, name: `${name}'s Org` }).run();
   db.insert(orgMembers).values({ id: uuidv4(), orgId, userId: id, role: "owner" }).run();
   db.insert(workspaces).values({
     id: uuidv4(), slug: "default", name: "Default", emoji: "🏠", orgId,

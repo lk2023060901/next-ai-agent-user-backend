@@ -16,6 +16,14 @@ func RuntimeProxy(runtimeAddr string) http.Handler {
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		// CORS is handled by Gateway middleware. Strip upstream CORS headers
+		// from Runtime responses to avoid duplicate ACAO/credentials headers.
+		resp.Header.Del("Access-Control-Allow-Origin")
+		resp.Header.Del("Access-Control-Allow-Credentials")
+		resp.Header.Del("Access-Control-Allow-Headers")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Expose-Headers")
+
 		resp.Header.Del("Content-Length")
 		return nil
 	}

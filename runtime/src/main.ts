@@ -4,14 +4,66 @@ import { config } from "./config.js";
 import { grpcClient } from "./grpc/client.js";
 import { registerChannel, removeChannel, formatSseData, type SseEvent } from "./sse/emitter.js";
 import { startRun } from "./agent/runner.js";
+import { runChannelRequest } from "./agent/channel-runner.js";
 
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true });
 
+interface ChannelRunBody {
+  sessionId: string;
+  channelId: string;
+  agentId: string;
+  workspaceId: string;
+  message: string;
+  sender?: string;
+  chatId: string;
+  threadId?: string;
+  messageId?: string;
+}
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 app.get("/health", async () => ({ status: "ok" }));
+
+// ─── Channel run (async, no SSE) ──────────────────────────────────────────────
+// POST /channel-run
+// Body: { sessionId, channelId, agentId, workspaceId, message, chatId, threadId? }
+// Returns immediately (202); actual agent run continues in background and pushes
+// the final reply back to Gateway /channels/:channelId/send.
+
+app.post<{ Body: ChannelRunBody }>("/channel-run", async (request, reply) => {
+  const body = request.body;
+
+  if (
+    !body?.sessionId ||
+    !body?.channelId ||
+    !body?.agentId ||
+    !body?.workspaceId ||
+    !body?.message ||
+    !body?.chatId
+  ) {
+    return reply.status(400).send({
+      error: "sessionId, channelId, agentId, workspaceId, message, chatId required",
+    });
+  }
+
+  setImmediate(() => {
+    processChannelRun(body).catch((err) => {
+      app.log.error(
+        {
+          err,
+          sessionId: body.sessionId,
+          channelId: body.channelId,
+          agentId: body.agentId,
+        },
+        "Channel run failed"
+      );
+    });
+  });
+
+  return reply.status(202).send({ accepted: true });
+});
 
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs
@@ -100,6 +152,70 @@ app.post<{ Params: { runId: string } }>("/runtime/runs/:runId/cancel", async (re
   removeChannel(runId);
   return reply.send({ ok: true });
 });
+
+async function processChannelRun(body: ChannelRunBody): Promise<void> {
+  const { runId, replyText } = await runChannelRequest({
+    sessionId: body.sessionId,
+    workspaceId: body.workspaceId,
+    agentId: body.agentId,
+    message: body.message,
+  });
+
+  if (!replyText) {
+    app.log.warn(
+      { runId, channelId: body.channelId, agentId: body.agentId },
+      "Channel run produced empty reply; skip send"
+    );
+    return;
+  }
+
+  await sendReplyToChannel({
+    channelId: body.channelId,
+    chatId: body.chatId,
+    text: replyText,
+    threadId: body.threadId,
+  });
+
+  app.log.info({ runId, channelId: body.channelId }, "Channel reply sent");
+}
+
+async function sendReplyToChannel(params: {
+  channelId: string;
+  chatId: string;
+  text: string;
+  threadId?: string;
+}): Promise<void> {
+  const payload: { chatId: string; text: string; threadId?: string } = {
+    chatId: params.chatId,
+    text: params.text,
+  };
+  if (params.threadId) {
+    payload.threadId = params.threadId;
+  }
+
+  const response = await fetch(
+    `${config.gatewayAddr}/channels/${encodeURIComponent(params.channelId)}/send`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Runtime-Secret": config.runtimeSecret,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(config.channelSendTimeoutMs),
+    }
+  );
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = (await response.text()).trim();
+    } catch {
+      // ignore body parse failures
+    }
+    throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
+  }
+}
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 

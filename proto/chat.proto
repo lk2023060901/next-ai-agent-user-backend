@@ -16,6 +16,8 @@ message Session {
   int32 message_count = 5;
   string last_message_at = 6;
   string created_at = 7;
+  bool is_pinned = 8;
+  string pinned_at = 9;
 }
 
 message ListSessionsRequest {
@@ -33,6 +35,20 @@ message CreateSessionRequest {
   common.UserContext user_context = 3;
 }
 
+message UpdateSessionRequest {
+  string session_id = 1;
+  string title = 2;
+  bool is_pinned = 3;
+  bool update_title = 4;
+  bool update_is_pinned = 5;
+  common.UserContext user_context = 6;
+}
+
+message DeleteSessionRequest {
+  string session_id = 1;
+  common.UserContext user_context = 2;
+}
+
 // ─── Message ─────────────────────────────────────────────────────────────────
 
 message ChatMessage {
@@ -48,10 +64,14 @@ message ChatMessage {
 message ListMessagesRequest {
   string session_id = 1;
   common.UserContext user_context = 2;
+  int32 limit = 3;
+  string before_message_id = 4;
 }
 
 message ListMessagesResponse {
   repeated ChatMessage messages = 1;
+  bool has_more = 2;
+  string next_before_message_id = 3;
 }
 
 message SaveUserMessageRequest {
@@ -73,6 +93,12 @@ message AgentItem {
   string description = 8;
   string created_at = 9;
   string updated_at = 10;
+  string model_id = 11;
+  string system_prompt = 12;
+  double temperature = 13;
+  string output_format = 14;
+  repeated string tools = 15;
+  repeated string knowledge_bases = 16;
 }
 
 message ListAgentsRequest {
@@ -93,6 +119,37 @@ message CreateAgentRequest {
   string description = 6;
   string system_prompt = 7;
   common.UserContext user_context = 8;
+  string model_id = 9;
+  double temperature = 10;
+  string output_format = 11;
+  repeated string tools = 12;
+  repeated string knowledge_bases = 13;
+}
+
+message GetAgentRequest {
+  string id = 1;
+  common.UserContext user_context = 2;
+}
+
+message UpdateAgentRequest {
+  string id = 1;
+  string name = 2;
+  string role = 3;
+  string model = 4;
+  string model_id = 5;
+  string color = 6;
+  string description = 7;
+  string system_prompt = 8;
+  double temperature = 9;
+  string output_format = 10;
+  repeated string tools = 11;
+  repeated string knowledge_bases = 12;
+  common.UserContext user_context = 13;
+}
+
+message DeleteAgentRequest {
+  string id = 1;
+  common.UserContext user_context = 2;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -100,8 +157,13 @@ message CreateAgentRequest {
 service ChatService {
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
   rpc CreateSession(CreateSessionRequest) returns (Session);
+  rpc UpdateSession(UpdateSessionRequest) returns (Session);
+  rpc DeleteSession(DeleteSessionRequest) returns (common.Empty);
   rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
   rpc SaveUserMessage(SaveUserMessageRequest) returns (ChatMessage);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc CreateAgent(CreateAgentRequest) returns (AgentItem);
+  rpc GetAgent(GetAgentRequest) returns (AgentItem);
+  rpc UpdateAgent(UpdateAgentRequest) returns (AgentItem);
+  rpc DeleteAgent(DeleteAgentRequest) returns (common.Empty);
 }
