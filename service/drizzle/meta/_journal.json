@@ -71,6 +71,13 @@
       "when": 1772264117178,
       "tag": "0009_stale_ares",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1772365200000,
+      "tag": "0010_plugin_integrity_hardening",
+      "breakpoints": true
     }
   ]
 }

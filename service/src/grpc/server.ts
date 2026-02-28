@@ -36,6 +36,20 @@ import {
   reportWorkspacePluginUsageEvents,
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
+import {
+  getMarketplacePlugin,
+  installWorkspacePlugin,
+  listMarketplacePlugins,
+  listPluginReviews,
+  listWorkspaceInstalledPlugins,
+  uninstallWorkspacePlugin,
+  updateWorkspacePluginConfig,
+  updateWorkspacePluginStatus,
+  type InstalledPluginItem,
+  type PluginConfigField,
+  type PluginMarketplaceItem,
+  type PluginReviewItem,
+} from "../modules/plugins/plugin.service";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
 
@@ -95,6 +109,76 @@ function readNumberField(input: Record<string, unknown>, keys: string[]): number
     if (parsed !== undefined) return parsed;
   }
   return undefined;
+}
+
+function pluginConfigFieldToProto(field: PluginConfigField): Record<string, unknown> {
+  return {
+    key: field.key,
+    label: field.label,
+    type: field.type,
+    required: field.required,
+    placeholder: field.placeholder ?? "",
+    description: field.description ?? "",
+    options: field.options.map((option) => ({
+      value: option.value,
+      label: option.label,
+    })),
+    defaultValueJson: field.defaultValueJson ?? "",
+  };
+}
+
+function pluginItemToProto(item: PluginMarketplaceItem): Record<string, unknown> {
+  return {
+    id: item.id,
+    name: item.name,
+    displayName: item.displayName,
+    description: item.description,
+    longDescription: item.longDescription,
+    author: item.author,
+    authorAvatar: item.authorAvatar,
+    icon: item.icon,
+    type: item.type,
+    version: item.version,
+    pricingModel: item.pricingModel,
+    price: item.price,
+    monthlyPrice: item.monthlyPrice,
+    trialDays: item.trialDays,
+    rating: item.rating,
+    reviewCount: item.reviewCount,
+    installCount: item.installCount,
+    tags: item.tags,
+    permissions: item.permissions,
+    configSchema: item.configSchema.map(pluginConfigFieldToProto),
+    screenshots: item.screenshots,
+    publishedAt: item.publishedAt,
+    updatedAt: item.updatedAt,
+    sourceType: item.sourceType ?? "",
+    sourceSpec: item.sourceSpec ?? "",
+  };
+}
+
+function installedPluginToProto(item: InstalledPluginItem): Record<string, unknown> {
+  return {
+    id: item.id,
+    workspaceId: item.workspaceId,
+    pluginId: item.pluginId,
+    plugin: pluginItemToProto(item.plugin),
+    status: item.status,
+    configJson: JSON.stringify(item.config ?? {}),
+    installedAt: item.installedAt,
+    installedBy: item.installedBy,
+  };
+}
+
+function pluginReviewToProto(item: PluginReviewItem): Record<string, unknown> {
+  return {
+    id: item.id,
+    pluginId: item.pluginId,
+    authorName: item.authorName,
+    rating: item.rating,
+    content: item.content,
+    createdAt: item.createdAt,
+  };
 }
 
 export function startGrpcServer(port: number): grpc.Server {
@@ -734,6 +818,91 @@ export function startGrpcServer(port: number): grpc.Server {
           : [];
         const result = reportWorkspacePluginUsageEvents(workspaceId, events);
         callback(null, { accepted: result.accepted });
+      } catch (err) { handleError(callback, err); }
+    },
+    async listMarketplacePlugins(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = await listMarketplacePlugins({
+          type: call.request.type,
+          pricingModel: call.request.pricingModel,
+          search: call.request.search,
+          sort: call.request.sort,
+          page: call.request.page,
+          pageSize: call.request.pageSize,
+        });
+
+        callback(null, {
+          data: result.data.map(pluginItemToProto),
+          total: result.total,
+          page: result.page,
+          pageSize: result.pageSize,
+          totalPages: result.totalPages,
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    async getMarketplacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const plugin = await getMarketplacePlugin(call.request.pluginId);
+        callback(null, pluginItemToProto(plugin));
+      } catch (err) { handleError(callback, err); }
+    },
+    listPluginReviews(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const reviews = listPluginReviews(call.request.pluginId);
+        callback(null, { reviews: reviews.map(pluginReviewToProto) });
+      } catch (err) { handleError(callback, err); }
+    },
+    async listWorkspacePlugins(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const items = await listWorkspaceInstalledPlugins(call.request.workspaceId);
+        callback(null, { plugins: items.map(installedPluginToProto) });
+      } catch (err) { handleError(callback, err); }
+    },
+    async installWorkspacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const installed = await installWorkspacePlugin({
+          workspaceId: String(call.request.workspaceId ?? ""),
+          pluginId: String(call.request.pluginId ?? ""),
+          configJson: String(call.request.configJson ?? ""),
+          sourceType: String(call.request.sourceType ?? ""),
+          sourceSpec: String(call.request.sourceSpec ?? ""),
+          sourceIntegrity: String(call.request.sourceIntegrity ?? ""),
+          sourcePin: Boolean(call.request.sourcePin),
+          installedBy: String(call.request.userContext?.userId ?? "system"),
+        });
+        callback(null, installedPluginToProto(installed));
+      } catch (err) { handleError(callback, err); }
+    },
+    async updateWorkspacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const updated = await updateWorkspacePluginStatus({
+          workspaceId: String(call.request.workspaceId ?? ""),
+          pluginKey: String(call.request.pluginId ?? ""),
+          status: String(call.request.status ?? ""),
+          actorUserId: String(call.request.userContext?.userId ?? "system"),
+        });
+        callback(null, installedPluginToProto(updated));
+      } catch (err) { handleError(callback, err); }
+    },
+    async updateWorkspacePluginConfig(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const updated = await updateWorkspacePluginConfig({
+          workspaceId: String(call.request.workspaceId ?? ""),
+          pluginKey: String(call.request.pluginId ?? ""),
+          configJson: String(call.request.configJson ?? ""),
+          actorUserId: String(call.request.userContext?.userId ?? "system"),
+        });
+        callback(null, installedPluginToProto(updated));
+      } catch (err) { handleError(callback, err); }
+    },
+    async uninstallWorkspacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        await uninstallWorkspacePlugin(
+          String(call.request.workspaceId ?? ""),
+          String(call.request.pluginId ?? ""),
+          String(call.request.userContext?.userId ?? "system"),
+        );
+        callback(null, {});
       } catch (err) { handleError(callback, err); }
     },
     listAgents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {

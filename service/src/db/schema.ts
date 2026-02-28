@@ -379,6 +379,64 @@ export const installedPlugins = sqliteTable("installed_plugins", {
     .default(sql`(datetime('now'))`),
 });
 
+export const pluginInstallRecords = sqliteTable("plugin_install_records", {
+  id: text("id").primaryKey(),
+  installedPluginId: text("installed_plugin_id")
+    .notNull()
+    .references(() => installedPlugins.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  pluginId: text("plugin_id")
+    .notNull()
+    .references(() => plugins.id, { onDelete: "cascade" }),
+  sourceType: text("source_type").notNull(),
+  sourceSpec: text("source_spec").notNull(),
+  resolvedSpec: text("resolved_spec"),
+  resolvedVersion: text("resolved_version"),
+  expectedIntegrity: text("expected_integrity"),
+  resolvedIntegrity: text("resolved_integrity"),
+  shasum: text("shasum"),
+  artifactSha256: text("artifact_sha256").notNull(),
+  artifactSha512: text("artifact_sha512").notNull(),
+  installPath: text("install_path"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  uniqInstalledPlugin: uniqueIndex("plugin_install_records_installed_plugin_id_uniq").on(t.installedPluginId),
+  byWorkspacePlugin: index("plugin_install_records_workspace_plugin_idx").on(t.workspaceId, t.pluginId),
+}));
+
+export const pluginInstallAudits = sqliteTable("plugin_install_audits", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  pluginId: text("plugin_id").notNull(),
+  installedPluginId: text("installed_plugin_id"),
+  actorUserId: text("actor_user_id"),
+  action: text("action").notNull(),
+  status: text("status").notNull(),
+  sourceType: text("source_type"),
+  sourceSpec: text("source_spec"),
+  expectedIntegrity: text("expected_integrity"),
+  resolvedIntegrity: text("resolved_integrity"),
+  artifactSha256: text("artifact_sha256"),
+  artifactSha512: text("artifact_sha512"),
+  message: text("message"),
+  detailJson: text("detail_json").notNull().default("{}"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  byWorkspaceTime: index("plugin_install_audits_workspace_created_idx").on(t.workspaceId, t.createdAt),
+  byPluginTime: index("plugin_install_audits_plugin_created_idx").on(t.pluginId, t.createdAt),
+}));
+
 // ─── Scheduler ───────────────────────────────────────────────────────────────
 
 export const scheduledTasks = sqliteTable("scheduled_tasks", {

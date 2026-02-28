@@ -43,6 +43,7 @@ func main() {
 	wsHandler := handler.NewWorkspaceHandler(clients)
 	settingsHandler := handler.NewSettingsHandler(clients)
 	toolsHandler := handler.NewToolsHandler(clients)
+	pluginHandler := handler.NewPluginHandler(clients)
 	channelsHandler := handler.NewChannelsHandler(clients, cfg.RuntimeSecret)
 	runtimeToolsHandler := handler.NewRuntimeToolsHandler(handler.RuntimeToolsHandlerOptions{
 		RuntimeSecret:      cfg.RuntimeSecret,
@@ -100,6 +101,16 @@ func main() {
 		r.Get("/workspaces/{wsId}", wsHandler.GetWorkspace)
 		r.Patch("/workspaces/{wsId}", wsHandler.UpdateWorkspace)
 		r.Delete("/workspaces/{wsId}", wsHandler.DeleteWorkspace)
+
+		// Plugins — marketplace + installed
+		r.Get("/plugins/marketplace", pluginHandler.ListMarketplace)
+		r.Get("/plugins/marketplace/{pluginId}", pluginHandler.GetMarketplacePlugin)
+		r.Get("/plugins/marketplace/{pluginId}/reviews", pluginHandler.ListPluginReviews)
+		r.Get("/workspaces/{wsId}/plugins", pluginHandler.ListWorkspacePlugins)
+		r.Post("/workspaces/{wsId}/plugins", pluginHandler.InstallWorkspacePlugin)
+		r.Patch("/workspaces/{wsId}/plugins/{pluginId}", pluginHandler.UpdateWorkspacePlugin)
+		r.Patch("/workspaces/{wsId}/plugins/{pluginId}/config", pluginHandler.UpdateWorkspacePluginConfig)
+		r.Delete("/workspaces/{wsId}/plugins/{pluginId}", pluginHandler.UninstallWorkspacePlugin)
 
 		// Settings — providers (match frontend: /workspaces/:wsId/providers/*)
 		r.Get("/workspaces/{wsId}/providers", settingsHandler.ListProviders)

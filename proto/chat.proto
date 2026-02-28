@@ -211,6 +211,142 @@ message ReportPluginUsageEventsResponse {
   int32 accepted = 1;
 }
 
+message PluginConfigOption {
+  string value = 1;
+  string label = 2;
+}
+
+message PluginConfigField {
+  string key = 1;
+  string label = 2;
+  string type = 3;
+  bool required = 4;
+  string placeholder = 5;
+  string description = 6;
+  repeated PluginConfigOption options = 7;
+  string default_value_json = 8;
+}
+
+message PluginItem {
+  string id = 1;
+  string name = 2;
+  string display_name = 3;
+  string description = 4;
+  string long_description = 5;
+  string author = 6;
+  string author_avatar = 7;
+  string icon = 8;
+  string type = 9;
+  string version = 10;
+  string pricing_model = 11;
+  double price = 12;
+  double monthly_price = 13;
+  int32 trial_days = 14;
+  double rating = 15;
+  int32 review_count = 16;
+  int32 install_count = 17;
+  repeated string tags = 18;
+  repeated string permissions = 19;
+  repeated PluginConfigField config_schema = 20;
+  repeated string screenshots = 21;
+  string published_at = 22;
+  string updated_at = 23;
+  string source_type = 24;
+  string source_spec = 25;
+}
+
+message PluginReview {
+  string id = 1;
+  string plugin_id = 2;
+  string author_name = 3;
+  double rating = 4;
+  string content = 5;
+  string created_at = 6;
+}
+
+message WorkspaceInstalledPlugin {
+  string id = 1;
+  string workspace_id = 2;
+  string plugin_id = 3;
+  PluginItem plugin = 4;
+  string status = 5;
+  string config_json = 6;
+  string installed_at = 7;
+  string installed_by = 8;
+}
+
+message ListMarketplacePluginsRequest {
+  string type = 1;
+  string pricing_model = 2;
+  string search = 3;
+  string sort = 4;
+  int32 page = 5;
+  int32 page_size = 6;
+  common.UserContext user_context = 7;
+}
+
+message ListMarketplacePluginsResponse {
+  repeated PluginItem data = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  int32 total_pages = 5;
+}
+
+message GetMarketplacePluginRequest {
+  string plugin_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ListPluginReviewsRequest {
+  string plugin_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ListPluginReviewsResponse {
+  repeated PluginReview reviews = 1;
+}
+
+message ListWorkspacePluginsRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ListWorkspacePluginsResponse {
+  repeated WorkspaceInstalledPlugin plugins = 1;
+}
+
+message InstallWorkspacePluginRequest {
+  string workspace_id = 1;
+  string plugin_id = 2;
+  string config_json = 3;
+  string source_type = 4;
+  string source_spec = 5;
+  bool source_pin = 6;
+  common.UserContext user_context = 7;
+  string source_integrity = 8;
+}
+
+message UpdateWorkspacePluginRequest {
+  string workspace_id = 1;
+  string plugin_id = 2;
+  string status = 3;
+  common.UserContext user_context = 4;
+}
+
+message UpdateWorkspacePluginConfigRequest {
+  string workspace_id = 1;
+  string plugin_id = 2;
+  string config_json = 3;
+  common.UserContext user_context = 4;
+}
+
+message UninstallWorkspacePluginRequest {
+  string workspace_id = 1;
+  string plugin_id = 2;
+  common.UserContext user_context = 3;
+}
+
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 message AgentItem {
@@ -296,6 +432,14 @@ service ChatService {
   rpc GetRuntimeMetrics(GetRuntimeMetricsRequest) returns (GetRuntimeMetricsResponse);
   rpc ListUsageRecords(ListUsageRecordsRequest) returns (ListUsageRecordsResponse);
   rpc ReportPluginUsageEvents(ReportPluginUsageEventsRequest) returns (ReportPluginUsageEventsResponse);
+  rpc ListMarketplacePlugins(ListMarketplacePluginsRequest) returns (ListMarketplacePluginsResponse);
+  rpc GetMarketplacePlugin(GetMarketplacePluginRequest) returns (PluginItem);
+  rpc ListPluginReviews(ListPluginReviewsRequest) returns (ListPluginReviewsResponse);
+  rpc ListWorkspacePlugins(ListWorkspacePluginsRequest) returns (ListWorkspacePluginsResponse);
+  rpc InstallWorkspacePlugin(InstallWorkspacePluginRequest) returns (WorkspaceInstalledPlugin);
+  rpc UpdateWorkspacePlugin(UpdateWorkspacePluginRequest) returns (WorkspaceInstalledPlugin);
+  rpc UpdateWorkspacePluginConfig(UpdateWorkspacePluginConfigRequest) returns (WorkspaceInstalledPlugin);
+  rpc UninstallWorkspacePlugin(UninstallWorkspacePluginRequest) returns (common.Empty);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc CreateAgent(CreateAgentRequest) returns (AgentItem);
   rpc GetAgent(GetAgentRequest) returns (AgentItem);
