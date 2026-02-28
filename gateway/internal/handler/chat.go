@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
@@ -320,6 +323,129 @@ func (h *ChatHandler) GetRuntimeMetrics(w http.ResponseWriter, r *http.Request) 
 		"failedTasks":             resp.FailedTasks,
 		"daily":                   daily,
 		"agents":                  agents,
+	})
+}
+
+func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
+	limit := int32(200)
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 2000 {
+			limit = int32(n)
+		}
+	}
+
+	offset := int32(0)
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			offset = int32(n)
+		}
+	}
+
+	resp, err := h.clients.Chat.ListUsageRecords(r.Context(), &chatpb.ListUsageRecordsRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		Limit:       limit,
+		Offset:      offset,
+		StartDate:   r.URL.Query().Get("startDate"),
+		EndDate:     r.URL.Query().Get("endDate"),
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	format := r.URL.Query().Get("format")
+	if format == "csv" {
+		fileName := fmt.Sprintf(
+			"usage-records-%s-%s.csv",
+			chi.URLParam(r, "wsId"),
+			time.Now().UTC().Format("20060102-150405"),
+		)
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+		w.WriteHeader(http.StatusOK)
+
+		writer := csv.NewWriter(w)
+		_ = writer.Write([]string{
+			"id", "workspaceId", "orgId", "sessionId", "runId", "taskId",
+			"recordType", "scope", "status",
+			"agentId", "agentName", "agentRole",
+			"providerId", "providerName", "modelId", "modelName",
+			"inputTokens", "outputTokens", "totalTokens",
+			"successCount", "failureCount",
+			"startedAt", "endedAt", "recordedAt",
+		})
+
+		for _, item := range resp.Records {
+			_ = writer.Write([]string{
+				item.Id,
+				item.WorkspaceId,
+				item.OrgId,
+				item.SessionId,
+				item.RunId,
+				item.TaskId,
+				item.RecordType,
+				item.Scope,
+				item.Status,
+				item.AgentId,
+				item.AgentName,
+				item.AgentRole,
+				item.ProviderId,
+				item.ProviderName,
+				item.ModelId,
+				item.ModelName,
+				strconv.Itoa(int(item.InputTokens)),
+				strconv.Itoa(int(item.OutputTokens)),
+				strconv.Itoa(int(item.TotalTokens)),
+				strconv.Itoa(int(item.SuccessCount)),
+				strconv.Itoa(int(item.FailureCount)),
+				item.StartedAt,
+				item.EndedAt,
+				item.RecordedAt,
+			})
+		}
+		writer.Flush()
+		return
+	}
+
+	records := make([]map[string]any, len(resp.Records))
+	for i, item := range resp.Records {
+		records[i] = map[string]any{
+			"id":           item.Id,
+			"workspaceId":  item.WorkspaceId,
+			"orgId":        item.OrgId,
+			"sessionId":    item.SessionId,
+			"runId":        item.RunId,
+			"taskId":       item.TaskId,
+			"recordType":   item.RecordType,
+			"scope":        item.Scope,
+			"status":       item.Status,
+			"agentId":      item.AgentId,
+			"agentName":    item.AgentName,
+			"agentRole":    item.AgentRole,
+			"providerId":   item.ProviderId,
+			"providerName": item.ProviderName,
+			"modelId":      item.ModelId,
+			"modelName":    item.ModelName,
+			"inputTokens":  item.InputTokens,
+			"outputTokens": item.OutputTokens,
+			"totalTokens":  item.TotalTokens,
+			"successCount": item.SuccessCount,
+			"failureCount": item.FailureCount,
+			"startedAt":    item.StartedAt,
+			"endedAt":      item.EndedAt,
+			"recordedAt":   item.RecordedAt,
+		}
+	}
+
+	writeData(w, http.StatusOK, map[string]any{
+		"records":         records,
+		"total":           resp.Total,
+		"sumInputTokens":  resp.SumInputTokens,
+		"sumOutputTokens": resp.SumOutputTokens,
+		"sumTotalTokens":  resp.SumTotalTokens,
+		"sumSuccessCount": resp.SumSuccessCount,
+		"sumFailureCount": resp.SumFailureCount,
 	})
 }
 

@@ -102,6 +102,7 @@ func main() {
 		// Chat — sessions
 		r.Get("/workspaces/{wsId}/sessions", chatHandler.ListSessions)
 		r.Get("/workspaces/{wsId}/runtime/metrics", chatHandler.GetRuntimeMetrics)
+		r.Get("/workspaces/{wsId}/usage/records", chatHandler.ListUsageRecords)
 		r.Post("/workspaces/{wsId}/sessions", chatHandler.CreateSession)
 		r.Patch("/sessions/{sessionId}", chatHandler.UpdateSession)
 		r.Delete("/sessions/{sessionId}", chatHandler.DeleteSession)

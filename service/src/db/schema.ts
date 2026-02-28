@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 const timestamps = {
@@ -536,3 +536,42 @@ export const usageAlerts = sqliteTable("usage_alerts", {
   notifyEmail: text("notify_email"),
   notifyWebhook: text("notify_webhook"),
 });
+
+// ─── Usage Records (Runtime Ledger) ─────────────────────────────────────────
+
+export const usageRecords = sqliteTable("usage_records", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  orgId: text("org_id").notNull(),
+  sessionId: text("session_id"),
+  runId: text("run_id"),
+  taskId: text("task_id"),
+  recordType: text("record_type").notNull(), // run | task
+  scope: text("scope").notNull(), // coordinator | sub_agent
+  status: text("status").notNull(), // completed | failed | cancelled | blocked
+  agentId: text("agent_id"),
+  agentName: text("agent_name").notNull().default(""),
+  agentRole: text("agent_role").notNull().default(""),
+  providerId: text("provider_id"),
+  providerName: text("provider_name").notNull().default(""),
+  modelId: text("model_id"),
+  modelName: text("model_name").notNull().default(""),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  totalTokens: integer("total_tokens").notNull().default(0),
+  successCount: integer("success_count").notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  startedAt: text("started_at"),
+  endedAt: text("ended_at"),
+  recordedAt: text("recorded_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  metadataJson: text("metadata_json"),
+}, (t) => ({
+  idxWorkspaceRecordedAt: index("usage_records_ws_recorded_at_idx").on(t.workspaceId, t.recordedAt),
+  idxOrgRecordedAt: index("usage_records_org_recorded_at_idx").on(t.orgId, t.recordedAt),
+  idxRun: index("usage_records_run_id_idx").on(t.runId),
+  idxTask: index("usage_records_task_id_idx").on(t.taskId),
+  idxAgent: index("usage_records_agent_id_idx").on(t.agentId),
+  uniqTask: uniqueIndex("usage_records_task_uniq").on(t.taskId, t.recordType),
+}));

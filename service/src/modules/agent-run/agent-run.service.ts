@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
 import {
@@ -10,6 +10,8 @@ import {
   chatSessions,
   aiModels,
   aiProviders,
+  usageRecords,
+  workspaces,
 } from "../../db/schema";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -121,6 +123,51 @@ export interface WorkspaceRuntimeMetrics {
   agents: RuntimeAgentMetrics[];
 }
 
+export interface UsageRecordRow {
+  id: string;
+  workspaceId: string;
+  orgId: string;
+  sessionId: string;
+  runId: string;
+  taskId: string;
+  recordType: string;
+  scope: string;
+  status: string;
+  agentId: string;
+  agentName: string;
+  agentRole: string;
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  successCount: number;
+  failureCount: number;
+  startedAt: string;
+  endedAt: string;
+  recordedAt: string;
+}
+
+export interface ListUsageRecordsParams {
+  workspaceId: string;
+  limit?: number;
+  offset?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface ListUsageRecordsResult {
+  records: UsageRecordRow[];
+  total: number;
+  sumInputTokens: number;
+  sumOutputTokens: number;
+  sumTotalTokens: number;
+  sumSuccessCount: number;
+  sumFailureCount: number;
+}
+
 interface ResolvedLlmConfig {
   model: string;
   llmProviderType: string;
@@ -199,6 +246,248 @@ function resolveLlmConfigForAgent(workspaceId: string, modelId: string | null): 
     llmProviderType: provider.type.toLowerCase(),
     llmBaseUrl: provider.baseUrl ?? "",
     llmApiKey: decryptKey(provider.apiKeyEncrypted),
+  };
+}
+
+interface AgentUsageIdentity {
+  agentId: string;
+  agentName: string;
+  agentRole: string;
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+}
+
+function resolveAgentUsageIdentity(agentId?: string | null): AgentUsageIdentity {
+  if (!agentId) {
+    return {
+      agentId: "",
+      agentName: "",
+      agentRole: "",
+      providerId: "",
+      providerName: "",
+      modelId: "",
+      modelName: "",
+    };
+  }
+
+  const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
+  if (!agent) {
+    return {
+      agentId,
+      agentName: "",
+      agentRole: "",
+      providerId: "",
+      providerName: "",
+      modelId: "",
+      modelName: "",
+    };
+  }
+
+  const modelId = agent.modelId ?? "";
+  const model = modelId
+    ? db.select().from(aiModels).where(eq(aiModels.id, modelId)).get()
+    : undefined;
+  const providerId = model?.providerId ?? "";
+  const provider = providerId
+    ? db.select().from(aiProviders).where(eq(aiProviders.id, providerId)).get()
+    : undefined;
+
+  return {
+    agentId: agent.id,
+    agentName: agent.name ?? "",
+    agentRole: agent.role ?? "",
+    providerId,
+    providerName: provider?.name ?? "",
+    modelId: model?.id ?? modelId,
+    modelName: model?.name ?? agent.model ?? "",
+  };
+}
+
+function upsertRunUsageLedgerRecord(runId: string, status: string): void {
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get();
+  if (!run) return;
+
+  const workspace = db
+    .select({ orgId: workspaces.orgId })
+    .from(workspaces)
+    .where(eq(workspaces.id, run.workspaceId))
+    .get();
+  const identity = resolveAgentUsageIdentity(run.coordinatorAgentId);
+
+  const successCount = status === "completed" ? 1 : 0;
+  const failureCount = status === "failed" || status === "cancelled" ? 1 : 0;
+  const now = new Date().toISOString();
+
+  const payload: Omit<typeof usageRecords.$inferInsert, "id"> = {
+    workspaceId: run.workspaceId,
+    orgId: workspace?.orgId ?? "",
+    sessionId: run.sessionId,
+    runId: run.id,
+    taskId: null,
+    recordType: "run",
+    scope: "coordinator",
+    status,
+    agentId: identity.agentId || null,
+    agentName: identity.agentName,
+    agentRole: identity.agentRole,
+    providerId: identity.providerId || null,
+    providerName: identity.providerName,
+    modelId: identity.modelId || null,
+    modelName: identity.modelName,
+    inputTokens: run.coordinatorInputTokens ?? 0,
+    outputTokens: run.coordinatorOutputTokens ?? 0,
+    totalTokens: run.coordinatorTotalTokens ?? 0,
+    successCount,
+    failureCount,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    recordedAt: now,
+    metadataJson: JSON.stringify({
+      runStatus: status,
+      taskSuccessCount: run.taskSuccessCount ?? 0,
+      taskFailureCount: run.taskFailureCount ?? 0,
+    }),
+  };
+
+  const existing = db
+    .select({ id: usageRecords.id })
+    .from(usageRecords)
+    .where(and(
+      eq(usageRecords.runId, runId),
+      eq(usageRecords.recordType, "run"),
+      eq(usageRecords.scope, "coordinator"),
+    ))
+    .get();
+
+  if (existing) {
+    db.update(usageRecords)
+      .set(payload)
+      .where(eq(usageRecords.id, existing.id))
+      .run();
+    return;
+  }
+
+  db.insert(usageRecords)
+    .values({
+      id: uuidv4(),
+      ...payload,
+    })
+    .run();
+}
+
+function upsertTaskUsageLedgerRecord(taskId: string, status: string): void {
+  const task = db.select().from(agentTasks).where(eq(agentTasks.id, taskId)).get();
+  if (!task) return;
+
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, task.runId)).get();
+  if (!run) return;
+
+  const workspace = db
+    .select({ orgId: workspaces.orgId })
+    .from(workspaces)
+    .where(eq(workspaces.id, run.workspaceId))
+    .get();
+  const identity = resolveAgentUsageIdentity(task.agentId);
+
+  const successCount = status === "completed" ? 1 : 0;
+  const failureCount = status === "failed" || status === "blocked" ? 1 : 0;
+  const now = new Date().toISOString();
+
+  const payload: Omit<typeof usageRecords.$inferInsert, "id"> = {
+    workspaceId: run.workspaceId,
+    orgId: workspace?.orgId ?? "",
+    sessionId: run.sessionId,
+    runId: run.id,
+    taskId: task.id,
+    recordType: "task",
+    scope: "sub_agent",
+    status,
+    agentId: identity.agentId || null,
+    agentName: identity.agentName,
+    agentRole: identity.agentRole,
+    providerId: identity.providerId || null,
+    providerName: identity.providerName,
+    modelId: identity.modelId || null,
+    modelName: identity.modelName,
+    inputTokens: task.inputTokens ?? 0,
+    outputTokens: task.outputTokens ?? 0,
+    totalTokens: task.totalTokens ?? 0,
+    successCount,
+    failureCount,
+    startedAt: task.startedAt,
+    endedAt: task.endedAt,
+    recordedAt: now,
+    metadataJson: JSON.stringify({ taskStatus: status }),
+  };
+
+  const existing = db
+    .select({ id: usageRecords.id })
+    .from(usageRecords)
+    .where(and(
+      eq(usageRecords.taskId, taskId),
+      eq(usageRecords.recordType, "task"),
+    ))
+    .get();
+
+  if (existing) {
+    db.update(usageRecords)
+      .set(payload)
+      .where(eq(usageRecords.id, existing.id))
+      .run();
+    return;
+  }
+
+  db.insert(usageRecords)
+    .values({
+      id: uuidv4(),
+      ...payload,
+    })
+    .run();
+}
+
+function buildUsageRecordsWhere(params: ListUsageRecordsParams): SQL<unknown> {
+  const clauses: SQL<unknown>[] = [eq(usageRecords.workspaceId, params.workspaceId)];
+  const startDate = (params.startDate ?? "").trim();
+  const endDate = (params.endDate ?? "").trim();
+
+  if (startDate) {
+    clauses.push(gte(usageRecords.recordedAt, `${startDate} 00:00:00`));
+  }
+  if (endDate) {
+    clauses.push(lte(usageRecords.recordedAt, `${endDate} 23:59:59`));
+  }
+  if (clauses.length === 1) return clauses[0]!;
+  return and(...clauses)!;
+}
+
+function mapUsageRecordRow(row: typeof usageRecords.$inferSelect): UsageRecordRow {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    orgId: row.orgId,
+    sessionId: row.sessionId ?? "",
+    runId: row.runId ?? "",
+    taskId: row.taskId ?? "",
+    recordType: row.recordType,
+    scope: row.scope,
+    status: row.status,
+    agentId: row.agentId ?? "",
+    agentName: row.agentName ?? "",
+    agentRole: row.agentRole ?? "",
+    providerId: row.providerId ?? "",
+    providerName: row.providerName ?? "",
+    modelId: row.modelId ?? "",
+    modelName: row.modelName ?? "",
+    inputTokens: row.inputTokens ?? 0,
+    outputTokens: row.outputTokens ?? 0,
+    totalTokens: row.totalTokens ?? 0,
+    successCount: row.successCount ?? 0,
+    failureCount: row.failureCount ?? 0,
+    startedAt: row.startedAt ?? "",
+    endedAt: row.endedAt ?? "",
+    recordedAt: row.recordedAt,
   };
 }
 
@@ -339,6 +628,10 @@ export function updateRunStatus(runId: string, status: string): void {
     .set(patch)
     .where(eq(agentRuns.id, runId))
     .run();
+
+  if (["completed", "failed", "cancelled"].includes(status)) {
+    upsertRunUsageLedgerRecord(runId, status);
+  }
 }
 
 export function recordRunUsage(params: RecordRunUsageParams): void {
@@ -420,6 +713,53 @@ export function updateAgentTask(params: UpdateTaskParams): void {
     })
     .where(eq(agentTasks.id, params.taskId))
     .run();
+
+  if (["completed", "failed", "blocked"].includes(params.status)) {
+    upsertTaskUsageLedgerRecord(params.taskId, params.status);
+  }
+}
+
+export function listWorkspaceUsageRecords(params: ListUsageRecordsParams): ListUsageRecordsResult {
+  const limit = Math.max(1, Math.min(2000, Math.floor(params.limit ?? 200)));
+  const offset = Math.max(0, Math.floor(params.offset ?? 0));
+  const whereExpr = buildUsageRecordsWhere(params);
+
+  const totalRow = db
+    .select({ count: sql<number>`count(*)` })
+    .from(usageRecords)
+    .where(whereExpr)
+    .get();
+
+  const sumsRow = db
+    .select({
+      sumInputTokens: sql<number>`coalesce(sum(${usageRecords.inputTokens}), 0)`,
+      sumOutputTokens: sql<number>`coalesce(sum(${usageRecords.outputTokens}), 0)`,
+      sumTotalTokens: sql<number>`coalesce(sum(${usageRecords.totalTokens}), 0)`,
+      sumSuccessCount: sql<number>`coalesce(sum(${usageRecords.successCount}), 0)`,
+      sumFailureCount: sql<number>`coalesce(sum(${usageRecords.failureCount}), 0)`,
+    })
+    .from(usageRecords)
+    .where(whereExpr)
+    .get();
+
+  const rows = db
+    .select()
+    .from(usageRecords)
+    .where(whereExpr)
+    .orderBy(desc(usageRecords.recordedAt), desc(usageRecords.id))
+    .limit(limit)
+    .offset(offset)
+    .all();
+
+  return {
+    records: rows.map(mapUsageRecordRow),
+    total: totalRow?.count ?? 0,
+    sumInputTokens: sumsRow?.sumInputTokens ?? 0,
+    sumOutputTokens: sumsRow?.sumOutputTokens ?? 0,
+    sumTotalTokens: sumsRow?.sumTotalTokens ?? 0,
+    sumSuccessCount: sumsRow?.sumSuccessCount ?? 0,
+    sumFailureCount: sumsRow?.sumFailureCount ?? 0,
+  };
 }
 
 export function getWorkspaceRuntimeMetrics(workspaceId: string, days = 7): WorkspaceRuntimeMetrics {

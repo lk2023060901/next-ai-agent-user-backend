@@ -32,7 +32,7 @@ import {
 } from "../modules/agent-run/agent-run.service";
 import {
   listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
-  getRuntimeMetrics,
+  getRuntimeMetrics, listUsageRecords,
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
 
@@ -665,6 +665,50 @@ export function startGrpcServer(port: number): grpc.Server {
             successfulTasks: item.successfulTasks,
             failedTasks: item.failedTasks,
           })),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    listUsageRecords(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = listUsageRecords(call.request.workspaceId, {
+          limit: call.request.limit,
+          offset: call.request.offset,
+          startDate: call.request.startDate,
+          endDate: call.request.endDate,
+        });
+        callback(null, {
+          records: result.records.map((item) => ({
+            id: item.id,
+            workspaceId: item.workspaceId,
+            orgId: item.orgId,
+            sessionId: item.sessionId,
+            runId: item.runId,
+            taskId: item.taskId,
+            recordType: item.recordType,
+            scope: item.scope,
+            status: item.status,
+            agentId: item.agentId,
+            agentName: item.agentName,
+            agentRole: item.agentRole,
+            providerId: item.providerId,
+            providerName: item.providerName,
+            modelId: item.modelId,
+            modelName: item.modelName,
+            inputTokens: item.inputTokens,
+            outputTokens: item.outputTokens,
+            totalTokens: item.totalTokens,
+            successCount: item.successCount,
+            failureCount: item.failureCount,
+            startedAt: item.startedAt,
+            endedAt: item.endedAt,
+            recordedAt: item.recordedAt,
+          })),
+          total: result.total,
+          sumInputTokens: result.sumInputTokens,
+          sumOutputTokens: result.sumOutputTokens,
+          sumTotalTokens: result.sumTotalTokens,
+          sumSuccessCount: result.sumSuccessCount,
+          sumFailureCount: result.sumFailureCount,
         });
       } catch (err) { handleError(callback, err); }
     },
