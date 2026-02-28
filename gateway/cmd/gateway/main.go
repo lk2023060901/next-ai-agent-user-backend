@@ -73,6 +73,11 @@ func main() {
 		r.Get("/orgs/{slug}/workspaces", orgHandler.ListWorkspaces)
 		r.Get("/orgs/{orgId}/dashboard/stats", orgHandler.GetDashboardStats)
 		r.Get("/orgs/{orgId}/dashboard/token-stats", orgHandler.GetDashboardTokenStats)
+		r.Get("/orgs/{orgId}/usage/overview", orgHandler.GetUsageOverview)
+		r.Get("/orgs/{orgId}/usage/token-trend", orgHandler.GetUsageTokenTrend)
+		r.Get("/orgs/{orgId}/usage/providers", orgHandler.GetUsageProviders)
+		r.Get("/orgs/{orgId}/usage/agent-ranking", orgHandler.GetUsageAgentRanking)
+		r.Get("/orgs/{orgId}/usage/records", orgHandler.ListUsageRecords)
 
 		// Workspaces
 		r.Post("/workspaces", wsHandler.CreateWorkspace)
