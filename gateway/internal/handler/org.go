@@ -259,9 +259,6 @@ func normalizeDateRange(startDateRaw, endDateRaw string) (string, string) {
 	if endAt.Before(startAt) {
 		startAt, endAt = endAt, startAt
 	}
-	if endAt.Sub(startAt).Hours()/24 > 180 {
-		startAt = endAt.AddDate(0, 0, -180)
-	}
 	return startAt.Format("2006-01-02"), endAt.Format("2006-01-02")
 }
 
