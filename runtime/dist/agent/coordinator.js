@@ -115,6 +115,16 @@ export async function runCoordinator(params) {
     }
     catch (err) {
         const usage = await resolveUsage();
+        params.emit({
+            type: "usage",
+            runId: params.runId,
+            messageId,
+            agentId: params.coordinatorAgentId,
+            scope: "coordinator",
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            totalTokens: usage.totalTokens,
+        });
         try {
             await params.grpc.recordRunUsage({
                 runId: params.runId,
@@ -132,6 +142,16 @@ export async function runCoordinator(params) {
         throw err;
     }
     const usage = await resolveUsage();
+    params.emit({
+        type: "usage",
+        runId: params.runId,
+        messageId,
+        agentId: params.coordinatorAgentId,
+        scope: "coordinator",
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+    });
     try {
         await params.grpc.recordRunUsage({
             runId: params.runId,

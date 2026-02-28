@@ -534,6 +534,37 @@ export function createRun(params: CreateRunParams): { runId: string } {
   if (!session) {
     throw Object.assign(new Error("Chat session not found"), { code: "NOT_FOUND" });
   }
+  if (session.workspaceId !== params.workspaceId) {
+    throw Object.assign(
+      new Error("Chat session does not belong to the provided workspace"),
+      { code: "INVALID_ARGUMENT" }
+    );
+  }
+
+  if (params.coordinatorAgentId) {
+    const coordinator = db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, params.coordinatorAgentId))
+      .get();
+    if (!coordinator) {
+      throw Object.assign(new Error("Coordinator agent not found"), { code: "NOT_FOUND" });
+    }
+    if (coordinator.workspaceId !== params.workspaceId) {
+      throw Object.assign(
+        new Error("Coordinator agent does not belong to the provided workspace"),
+        { code: "INVALID_ARGUMENT" }
+      );
+    }
+    if ((coordinator.status ?? "active") !== "active") {
+      throw Object.assign(
+        new Error("Coordinator agent is not active"),
+        { code: "INVALID_ARGUMENT" }
+      );
+    }
+    // Fail fast before creating the run when model/provider configuration is invalid.
+    resolveLlmConfigForAgent(params.workspaceId, coordinator.modelId ?? null);
+  }
 
   const runId = uuidv4();
   db.insert(agentRuns)

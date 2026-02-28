@@ -26,6 +26,17 @@ export type SseEvent =
   | { type: "task-complete"; runId?: string; messageId?: string; taskId: string; result: string }
   | { type: "task-failed"; runId?: string; messageId?: string; taskId: string; error: string }
   | { type: "approval-request"; runId?: string; messageId?: string; message: string; taskId: string }
+  | {
+      type: "usage";
+      runId?: string;
+      messageId?: string;
+      taskId?: string;
+      agentId?: string;
+      scope: "coordinator" | "sub_agent";
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    }
   | { type: "message-end"; runId: string; messageId?: string }
   | { type: "done"; runId: string }
   | { type: "error"; runId: string; message: string };

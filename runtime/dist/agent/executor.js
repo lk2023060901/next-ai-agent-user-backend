@@ -112,6 +112,17 @@ export async function runExecutor(params) {
             }
         }
         const usage = await resolveUsage();
+        params.emit({
+            type: "usage",
+            runId: params.runId,
+            messageId,
+            taskId: params.taskId,
+            agentId: params.agentId,
+            scope: "sub_agent",
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            totalTokens: usage.totalTokens,
+        });
         try {
             await params.grpc.recordTaskUsage({
                 taskId: params.taskId,
@@ -148,6 +159,17 @@ export async function runExecutor(params) {
     }
     catch (err) {
         const usage = await resolveUsage();
+        params.emit({
+            type: "usage",
+            runId: params.runId,
+            messageId,
+            taskId: params.taskId,
+            agentId: params.agentId,
+            scope: "sub_agent",
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            totalTokens: usage.totalTokens,
+        });
         try {
             await params.grpc.recordTaskUsage({
                 taskId: params.taskId,
