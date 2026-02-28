@@ -76,6 +76,7 @@ func main() {
 		r.Get("/orgs/{orgId}/dashboard/workload", orgHandler.GetDashboardWorkload)
 		r.Get("/orgs/{orgId}/dashboard/activities", orgHandler.GetDashboardActivities)
 		r.Get("/orgs/{orgId}/usage/overview", orgHandler.GetUsageOverview)
+		r.Get("/orgs/{orgId}/usage/metrics", orgHandler.GetUsageMetrics)
 		r.Get("/orgs/{orgId}/usage/token-trend", orgHandler.GetUsageTokenTrend)
 		r.Get("/orgs/{orgId}/usage/providers", orgHandler.GetUsageProviders)
 		r.Get("/orgs/{orgId}/usage/agent-ranking", orgHandler.GetUsageAgentRanking)

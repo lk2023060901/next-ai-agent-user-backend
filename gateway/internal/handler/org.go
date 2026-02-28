@@ -1306,6 +1306,256 @@ func (h *OrgHandler) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *OrgHandler) GetUsageMetrics(w http.ResponseWriter, r *http.Request) {
+	params := parseUsageQueryParams(r)
+	orgRef := chi.URLParam(r, "orgId")
+	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	if !matchedWorkspace {
+		writeError(w, http.StatusBadRequest, "workspaceId does not belong to organization")
+		return
+	}
+
+	summary := summarizeUsageViews(views)
+	dateKeys := buildDateRangeKeys(params.startDate, params.endDate)
+
+	type dayAgg struct {
+		recordCount             int64
+		inputTokens             int64
+		outputTokens            int64
+		totalTokens             int64
+		successCount            int64
+		failureCount            int64
+		coordinatorInputTokens  int64
+		coordinatorOutputTokens int64
+		coordinatorTotalTokens  int64
+		subAgentInputTokens     int64
+		subAgentOutputTokens    int64
+		subAgentTotalTokens     int64
+	}
+	daily := make(map[string]*dayAgg, len(dateKeys))
+	for _, d := range dateKeys {
+		daily[d] = &dayAgg{}
+	}
+
+	type providerAgg struct {
+		provider                string
+		recordCount             int64
+		inputTokens             int64
+		outputTokens            int64
+		totalTokens             int64
+		successCount            int64
+		failureCount            int64
+		coordinatorInputTokens  int64
+		coordinatorOutputTokens int64
+		coordinatorTotalTokens  int64
+		subAgentInputTokens     int64
+		subAgentOutputTokens    int64
+		subAgentTotalTokens     int64
+	}
+	providerTotals := map[string]*providerAgg{}
+
+	type agentAgg struct {
+		agentID                 string
+		agentName               string
+		agentRole               string
+		recordCount             int64
+		inputTokens             int64
+		outputTokens            int64
+		totalTokens             int64
+		successCount            int64
+		failureCount            int64
+		coordinatorInputTokens  int64
+		coordinatorOutputTokens int64
+		coordinatorTotalTokens  int64
+		subAgentInputTokens     int64
+		subAgentOutputTokens    int64
+		subAgentTotalTokens     int64
+	}
+	agentTotals := map[string]*agentAgg{}
+
+	overallRecordCount := int64(0)
+	for _, item := range views {
+		overallRecordCount += 1
+		if day := daily[item.day]; day != nil {
+			day.recordCount += 1
+			day.inputTokens += item.inputTokens
+			day.outputTokens += item.outputTokens
+			day.totalTokens += item.totalTokens
+			day.successCount += item.successCount
+			day.failureCount += item.failureCount
+			if item.scope == "sub_agent" {
+				day.subAgentInputTokens += item.inputTokens
+				day.subAgentOutputTokens += item.outputTokens
+				day.subAgentTotalTokens += item.totalTokens
+			} else {
+				day.coordinatorInputTokens += item.inputTokens
+				day.coordinatorOutputTokens += item.outputTokens
+				day.coordinatorTotalTokens += item.totalTokens
+			}
+		}
+
+		providerName := strings.TrimSpace(item.provider)
+		if providerName == "" {
+			providerName = "Unknown"
+		}
+		providerItem, ok := providerTotals[providerName]
+		if !ok {
+			providerItem = &providerAgg{provider: providerName}
+			providerTotals[providerName] = providerItem
+		}
+		providerItem.recordCount += 1
+		providerItem.inputTokens += item.inputTokens
+		providerItem.outputTokens += item.outputTokens
+		providerItem.totalTokens += item.totalTokens
+		providerItem.successCount += item.successCount
+		providerItem.failureCount += item.failureCount
+		if item.scope == "sub_agent" {
+			providerItem.subAgentInputTokens += item.inputTokens
+			providerItem.subAgentOutputTokens += item.outputTokens
+			providerItem.subAgentTotalTokens += item.totalTokens
+		} else {
+			providerItem.coordinatorInputTokens += item.inputTokens
+			providerItem.coordinatorOutputTokens += item.outputTokens
+			providerItem.coordinatorTotalTokens += item.totalTokens
+		}
+
+		agentID := strings.TrimSpace(item.agentID)
+		if agentID == "" {
+			agentID = "unknown"
+		}
+		agentItem, ok := agentTotals[agentID]
+		if !ok {
+			agentItem = &agentAgg{
+				agentID:   agentID,
+				agentName: item.agentName,
+				agentRole: item.agentRole,
+			}
+			agentTotals[agentID] = agentItem
+		}
+		agentItem.recordCount += 1
+		agentItem.inputTokens += item.inputTokens
+		agentItem.outputTokens += item.outputTokens
+		agentItem.totalTokens += item.totalTokens
+		agentItem.successCount += item.successCount
+		agentItem.failureCount += item.failureCount
+		if item.scope == "sub_agent" {
+			agentItem.subAgentInputTokens += item.inputTokens
+			agentItem.subAgentOutputTokens += item.outputTokens
+			agentItem.subAgentTotalTokens += item.totalTokens
+		} else {
+			agentItem.coordinatorInputTokens += item.inputTokens
+			agentItem.coordinatorOutputTokens += item.outputTokens
+			agentItem.coordinatorTotalTokens += item.totalTokens
+		}
+	}
+
+	trend := make([]map[string]any, 0, len(dateKeys))
+	for _, d := range dateKeys {
+		item := daily[d]
+		if item == nil {
+			item = &dayAgg{}
+		}
+		trend = append(trend, map[string]any{
+			"date":                    d,
+			"recordCount":             item.recordCount,
+			"inputTokens":             item.inputTokens,
+			"outputTokens":            item.outputTokens,
+			"totalTokens":             item.totalTokens,
+			"successCount":            item.successCount,
+			"failureCount":            item.failureCount,
+			"coordinatorInputTokens":  item.coordinatorInputTokens,
+			"coordinatorOutputTokens": item.coordinatorOutputTokens,
+			"coordinatorTotalTokens":  item.coordinatorTotalTokens,
+			"subAgentInputTokens":     item.subAgentInputTokens,
+			"subAgentOutputTokens":    item.subAgentOutputTokens,
+			"subAgentTotalTokens":     item.subAgentTotalTokens,
+		})
+	}
+
+	providers := make([]map[string]any, 0, len(providerTotals))
+	for _, p := range providerTotals {
+		providers = append(providers, map[string]any{
+			"provider":                p.provider,
+			"recordCount":             p.recordCount,
+			"inputTokens":             p.inputTokens,
+			"outputTokens":            p.outputTokens,
+			"totalTokens":             p.totalTokens,
+			"successCount":            p.successCount,
+			"failureCount":            p.failureCount,
+			"coordinatorInputTokens":  p.coordinatorInputTokens,
+			"coordinatorOutputTokens": p.coordinatorOutputTokens,
+			"coordinatorTotalTokens":  p.coordinatorTotalTokens,
+			"subAgentInputTokens":     p.subAgentInputTokens,
+			"subAgentOutputTokens":    p.subAgentOutputTokens,
+			"subAgentTotalTokens":     p.subAgentTotalTokens,
+		})
+	}
+	sort.Slice(providers, func(i, j int) bool {
+		return providers[i]["totalTokens"].(int64) > providers[j]["totalTokens"].(int64)
+	})
+
+	agents := make([]map[string]any, 0, len(agentTotals))
+	for _, a := range agentTotals {
+		agentName := strings.TrimSpace(a.agentName)
+		if agentName == "" {
+			agentName = "Unknown Agent"
+		}
+		role := strings.TrimSpace(a.agentRole)
+		if role == "" {
+			role = "coordinator"
+		}
+
+		agents = append(agents, map[string]any{
+			"agentId":                 a.agentID,
+			"agentName":               agentName,
+			"agentRole":               role,
+			"recordCount":             a.recordCount,
+			"inputTokens":             a.inputTokens,
+			"outputTokens":            a.outputTokens,
+			"totalTokens":             a.totalTokens,
+			"successCount":            a.successCount,
+			"failureCount":            a.failureCount,
+			"coordinatorInputTokens":  a.coordinatorInputTokens,
+			"coordinatorOutputTokens": a.coordinatorOutputTokens,
+			"coordinatorTotalTokens":  a.coordinatorTotalTokens,
+			"subAgentInputTokens":     a.subAgentInputTokens,
+			"subAgentOutputTokens":    a.subAgentOutputTokens,
+			"subAgentTotalTokens":     a.subAgentTotalTokens,
+		})
+	}
+	sort.Slice(agents, func(i, j int) bool {
+		return agents[i]["totalTokens"].(int64) > agents[j]["totalTokens"].(int64)
+	})
+
+	writeData(w, http.StatusOK, map[string]any{
+		"filters": map[string]any{
+			"startDate":   params.startDate,
+			"endDate":     params.endDate,
+			"workspaceId": params.workspaceID,
+			"agentId":     params.agentID,
+		},
+		"summary": summary.toMap(),
+		"totals": map[string]any{
+			"recordCount":  overallRecordCount,
+			"inputTokens":  summary.overall.inputTokens,
+			"outputTokens": summary.overall.outputTokens,
+			"totalTokens":  summary.overall.totalTokens,
+			"successCount": summary.overall.successCount,
+			"failureCount": summary.overall.failureCount,
+		},
+		"trend":       trend,
+		"providers":   providers,
+		"agents":      agents,
+		"generatedAt": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 func (h *OrgHandler) GetUsageTokenTrend(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
 	orgRef := chi.URLParam(r, "orgId")
