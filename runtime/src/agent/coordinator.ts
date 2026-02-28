@@ -127,7 +127,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   if (shouldForceWebSearch) {
     const toolCallId = uuidv4();
     const query = searchPlan!.query.trim();
-    const args = { query, maxResults: 5 };
+    const args = { query, count: 5, provider: "auto" };
     params.emit({
       type: "tool-call",
       runId: params.runId,

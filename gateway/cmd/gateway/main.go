@@ -44,12 +44,18 @@ func main() {
 	settingsHandler := handler.NewSettingsHandler(clients)
 	toolsHandler := handler.NewToolsHandler(clients)
 	channelsHandler := handler.NewChannelsHandler(clients, cfg.RuntimeSecret)
-	runtimeToolsHandler := handler.NewRuntimeToolsHandler(
-		cfg.RuntimeSecret,
-		cfg.WebSearchProvider,
-		cfg.WebSearchEndpoint,
-		cfg.WebSearchTimeoutMs,
-	)
+	runtimeToolsHandler := handler.NewRuntimeToolsHandler(handler.RuntimeToolsHandlerOptions{
+		RuntimeSecret:      cfg.RuntimeSecret,
+		DefaultProvider:    cfg.WebSearchProvider,
+		TimeoutMs:          cfg.WebSearchTimeoutMs,
+		DuckDuckGoEndpoint: cfg.WebSearchDuckEndpoint,
+		BraveEndpoint:      cfg.WebSearchBraveEndpoint,
+		BraveAPIKey:        cfg.WebSearchBraveAPIKey,
+		SearxngEndpoint:    cfg.WebSearchSearxngEndpoint,
+		SearxngAPIKey:      cfg.WebSearchSearxngAPIKey,
+		SerpAPIEndpoint:    cfg.WebSearchSerpAPIEndpoint,
+		SerpAPIKey:         cfg.WebSearchSerpAPIKey,
+	})
 	schedulerHandler := handler.NewSchedulerHandler(clients)
 
 	// ── Public ────────────────────────────────────────────────────────────────

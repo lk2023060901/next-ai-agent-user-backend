@@ -6,11 +6,14 @@ interface WebSearchItem {
   title: string;
   snippet: string;
   url: string;
+  published?: string;
+  siteName?: string;
 }
 
 interface GatewayWebSearchResponse {
   query?: unknown;
-  engine?: unknown;
+  provider?: unknown;
+  engine?: unknown; // backward compatibility
   results?: unknown;
   total?: unknown;
   note?: unknown;
@@ -30,13 +33,23 @@ function parseItems(raw: unknown, limit: number): WebSearchItem[] {
     if (!row || typeof row !== "object") continue;
     const item = row as Record<string, unknown>;
     const title = typeof item.title === "string" ? item.title.trim() : "";
-    const snippet = typeof item.snippet === "string" ? item.snippet.trim() : "";
+    const snippetRaw =
+      typeof item.snippet === "string"
+        ? item.snippet
+        : typeof item.description === "string"
+          ? item.description
+          : "";
+    const snippet = snippetRaw.trim();
     const url = typeof item.url === "string" ? item.url.trim() : "";
+    const published = typeof item.published === "string" ? item.published.trim() : "";
+    const siteName = typeof item.siteName === "string" ? item.siteName.trim() : "";
     if (!title && !snippet && !url) continue;
     normalized.push({
       title: title || snippet || "(untitled)",
       snippet: snippet || title || "",
       url,
+      ...(published ? { published } : {}),
+      ...(siteName ? { siteName } : {}),
     });
     if (normalized.length >= limit) break;
   }
@@ -65,15 +78,26 @@ export function makeWebSearchTool() {
       "Search the public web for up-to-date information. Prefer concise, source-linked results.",
     parameters: z.object({
       query: z.string().describe("Search query"),
-      maxResults: z.number().optional().default(5).describe("Maximum number of results"),
+      count: z.number().optional().default(5).describe("Maximum number of results"),
+      maxResults: z.number().optional().describe("Deprecated alias for count"),
+      provider: z
+        .enum(["auto", "duckduckgo", "brave", "searxng", "serpapi"])
+        .optional()
+        .describe("Search provider selection"),
+      country: z.string().optional().describe("Optional country code (e.g. us, cn)"),
+      search_lang: z.string().optional().describe("Optional search language code (e.g. en, zh)"),
+      freshness: z
+        .enum(["pd", "pw", "pm", "py"])
+        .optional()
+        .describe("Optional freshness window: day/week/month/year"),
     }),
-    execute: async ({ query, maxResults }) => {
+    execute: async ({ query, count, maxResults, provider, country, search_lang, freshness }) => {
       const safeQuery = query.trim();
-      const limit = clampResults(maxResults);
+      const limit = clampResults(count ?? maxResults);
       if (!safeQuery) {
         return {
           query: safeQuery,
-          engine: "gateway",
+          provider: "gateway",
           results: [],
           total: 0,
           note: "Empty query",
@@ -82,7 +106,14 @@ export function makeWebSearchTool() {
       }
 
       const url = `${config.gatewayAddr.replace(/\/+$/, "")}/internal/tools/web-search`;
-      const payload = JSON.stringify({ query: safeQuery, maxResults: limit });
+      const payload = JSON.stringify({
+        query: safeQuery,
+        count: limit,
+        provider: provider ?? "auto",
+        ...(country ? { country } : {}),
+        ...(search_lang ? { search_lang } : {}),
+        ...(freshness ? { freshness } : {}),
+      });
 
       try {
         const response = await fetch(url, {
@@ -107,7 +138,7 @@ export function makeWebSearchTool() {
           const detail = bodyText.trim() || response.statusText || "Gateway web search failed";
           return {
             query: safeQuery,
-            engine: "gateway",
+            provider: "gateway",
             results: [],
             total: 0,
             note: `Gateway web search HTTP ${response.status}: ${detail}`,
@@ -118,11 +149,17 @@ export function makeWebSearchTool() {
         const results = parseItems(parsed.results, limit);
         const note = typeof parsed.note === "string" ? parsed.note : undefined;
         const errorType = typeof parsed.errorType === "string" ? parsed.errorType : undefined;
-        const engine = typeof parsed.engine === "string" && parsed.engine.trim() ? parsed.engine : "gateway";
+        const resolvedProvider =
+          typeof parsed.provider === "string" && parsed.provider.trim()
+            ? parsed.provider
+            : typeof parsed.engine === "string" && parsed.engine.trim()
+              ? parsed.engine
+              : "gateway";
 
         return {
           query: safeQuery,
-          engine,
+          provider: resolvedProvider,
+          engine: resolvedProvider,
           results,
           total: typeof parsed.total === "number" ? parsed.total : results.length,
           note: results.length === 0 ? note || "No public web results found" : note,
@@ -132,7 +169,7 @@ export function makeWebSearchTool() {
         const msg = err instanceof Error ? err.message : String(err);
         return {
           query: safeQuery,
-          engine: "gateway",
+          provider: "gateway",
           results: [],
           total: 0,
           note: `Gateway web search request failed: ${msg}`,

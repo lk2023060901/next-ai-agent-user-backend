@@ -1,36 +1,48 @@
 package config
 
 import (
-	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	Port               string
-	GRPCAddr           string
-	BifrostAddr        string
-	RuntimeAddr        string
-	JWTSecret          string
-	RuntimeSecret      string
-	WebSearchProvider  string
-	WebSearchEndpoint  string
-	WebSearchTimeoutMs int
-	AllowedOrigins     []string
+	Port                     string
+	GRPCAddr                 string
+	BifrostAddr              string
+	RuntimeAddr              string
+	JWTSecret                string
+	RuntimeSecret            string
+	WebSearchProvider        string
+	WebSearchTimeoutMs       int
+	WebSearchDuckEndpoint    string
+	WebSearchBraveEndpoint   string
+	WebSearchBraveAPIKey     string
+	WebSearchSearxngEndpoint string
+	WebSearchSearxngAPIKey   string
+	WebSearchSerpAPIEndpoint string
+	WebSearchSerpAPIKey      string
+	AllowedOrigins           []string
 }
 
 func Load() *Config {
 	return &Config{
-		Port:               getEnv("PORT", "8080"),
-		GRPCAddr:           getEnv("GRPC_ADDR", "localhost:50051"),
-		BifrostAddr:        getEnv("BIFROST_ADDR", "http://localhost:8081"),
-		RuntimeAddr:        getEnv("RUNTIME_ADDR", "http://localhost:8082"),
-		JWTSecret:          getEnv("JWT_SECRET", "dev-secret-change-in-production"),
-		RuntimeSecret:      getEnv("RUNTIME_SECRET", "dev-runtime-secret"),
-		WebSearchProvider:  getEnv("WEB_SEARCH_PROVIDER", "duckduckgo"),
-		WebSearchEndpoint:  getEnv("WEB_SEARCH_ENDPOINT", "https://api.duckduckgo.com/"),
-		WebSearchTimeoutMs: getIntEnv("WEB_SEARCH_TIMEOUT_MS", 12000),
-		AllowedOrigins:     buildAllowedOrigins(getEnv("FRONTEND_URL", "")),
+		Port:                     getEnv("PORT", "8080"),
+		GRPCAddr:                 getEnv("GRPC_ADDR", "localhost:50051"),
+		BifrostAddr:              getEnv("BIFROST_ADDR", "http://localhost:8081"),
+		RuntimeAddr:              getEnv("RUNTIME_ADDR", "http://localhost:8082"),
+		JWTSecret:                getEnv("JWT_SECRET", "dev-secret-change-in-production"),
+		RuntimeSecret:            getEnv("RUNTIME_SECRET", "dev-runtime-secret"),
+		WebSearchProvider:        getEnv("WEB_SEARCH_PROVIDER", "auto"),
+		WebSearchTimeoutMs:       getIntEnv("WEB_SEARCH_TIMEOUT_MS", 12000),
+		WebSearchDuckEndpoint:    getEnv("WEB_SEARCH_DUCKDUCKGO_ENDPOINT", "https://api.duckduckgo.com/"),
+		WebSearchBraveEndpoint:   getEnv("WEB_SEARCH_BRAVE_ENDPOINT", "https://api.search.brave.com/res/v1/web/search"),
+		WebSearchBraveAPIKey:     getEnv("BRAVE_SEARCH_API_KEY", ""),
+		WebSearchSearxngEndpoint: getEnv("WEB_SEARCH_SEARXNG_ENDPOINT", ""),
+		WebSearchSearxngAPIKey:   getEnv("WEB_SEARCH_SEARXNG_API_KEY", ""),
+		WebSearchSerpAPIEndpoint: getEnv("WEB_SEARCH_SERPAPI_ENDPOINT", "https://serpapi.com/search.json"),
+		WebSearchSerpAPIKey:      getEnv("SERPAPI_API_KEY", ""),
+		AllowedOrigins:           buildAllowedOrigins(getEnv("FRONTEND_URL", "")),
 	}
 }
 
@@ -67,14 +79,9 @@ func getIntEnv(key string, fallback int) int {
 	if raw == "" {
 		return fallback
 	}
-	v := strings.TrimSpace(raw)
-	if v == "" {
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
-	var out int
-	_, err := fmt.Sscanf(v, "%d", &out)
-	if err != nil || out <= 0 {
-		return fallback
-	}
-	return out
+	return parsed
 }
