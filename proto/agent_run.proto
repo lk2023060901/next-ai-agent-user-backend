@@ -103,6 +103,7 @@ message ReportRuntimePluginLoadRequest {
   string status = 4;
   string message = 5;
   string actor_user_id = 6;
+  string operation = 7;
 }
 message ReportRuntimePluginLoadResponse {
   bool updated = 1;

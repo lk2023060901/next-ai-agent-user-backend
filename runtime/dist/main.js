@@ -6,7 +6,7 @@ import { formatSseData } from "./sse/emitter.js";
 import { IdempotencyConflictError, RunStore } from "./sse/run-store.js";
 import { startRun } from "./agent/runner.js";
 import { runChannelRequest } from "./agent/channel-runner.js";
-import { initializeRuntimePlugins } from "./plugins/runtime-loader.js";
+import { initializeRuntimePlugins, syncRuntimePlugin } from "./plugins/runtime-loader.js";
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 // ─── Health ───────────────────────────────────────────────────────────────────
@@ -52,6 +52,45 @@ app.post("/channel-run", async (request, reply) => {
         });
     });
     return reply.status(202).send({ accepted: true });
+});
+// ─── Runtime plugin sync (hot load/reload/unload) ────────────────────────────
+app.post("/runtime/plugins/sync", async (request, reply) => {
+    const runtimeSecretHeader = request.headers["x-runtime-secret"];
+    const providedSecret = Array.isArray(runtimeSecretHeader)
+        ? (runtimeSecretHeader[0] ?? "")
+        : (runtimeSecretHeader ?? "");
+    if (providedSecret !== config.runtimeSecret) {
+        return reply.status(401).send({ error: "invalid runtime secret" });
+    }
+    const body = request.body;
+    if (!body?.installedPluginId || !body?.workspaceId || !body?.pluginId || !body?.installPath) {
+        return reply
+            .status(400)
+            .send({ error: "installedPluginId, workspaceId, pluginId, installPath required" });
+    }
+    const result = await syncRuntimePlugin({
+        grpc: grpcClient,
+        logger: app.log,
+        request: {
+            action: body.action,
+            installedPluginId: body.installedPluginId,
+            workspaceId: body.workspaceId,
+            pluginId: body.pluginId,
+            pluginName: body.pluginName ?? body.pluginId,
+            pluginVersion: body.pluginVersion ?? "0.0.0",
+            pluginType: body.pluginType ?? "tool",
+            status: body.status ?? "enabled",
+            configJson: body.configJson ?? "{}",
+            installPath: body.installPath,
+            sourceType: body.sourceType ?? "",
+            sourceSpec: body.sourceSpec ?? "",
+            actorUserId: body.actorUserId ?? "runtime",
+        },
+    });
+    if (!result.ok) {
+        return reply.status(500).send(result);
+    }
+    return reply.send(result);
 });
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs

@@ -5,6 +5,8 @@ import { type RuntimePluginLoadCandidate, grpcClient } from "../grpc/client.js";
 
 const MANIFEST_FILE = "openclaw.plugin.json";
 
+type RuntimePluginSyncAction = "load" | "reload" | "unload" | "bootstrap";
+
 interface RuntimePluginManifest {
   id: string;
   kind?: string;
@@ -31,7 +33,29 @@ export interface RuntimePluginLoadSummary {
   failed: number;
 }
 
+export interface RuntimePluginSyncRequest extends RuntimePluginLoadCandidate {
+  action: string;
+  actorUserId?: string;
+}
+
+export interface RuntimePluginSyncResult {
+  ok: boolean;
+  action: RuntimePluginSyncAction;
+  pluginId: string;
+  installedPluginId: string;
+  message: string;
+}
+
 const loadedPlugins = new Map<string, LoadedRuntimePlugin>();
+const pluginOperationChains = new Map<string, Promise<void>>();
+
+function normalizeSyncAction(raw: string): RuntimePluginSyncAction {
+  const action = (raw ?? "").trim().toLowerCase();
+  if (action === "reload") return "reload";
+  if (action === "unload") return "unload";
+  if (action === "bootstrap") return "bootstrap";
+  return "load";
+}
 
 function readManifestString(input: Record<string, unknown>, key: string): string | undefined {
   const raw = input[key];
@@ -104,6 +128,53 @@ async function validateAndLoadPlugin(candidate: RuntimePluginLoadCandidate): Pro
   };
 }
 
+async function runSerializedForPlugin<T>(installedPluginId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = pluginOperationChains.get(installedPluginId) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chain = previous.then(() => gate);
+  pluginOperationChains.set(installedPluginId, chain);
+
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (pluginOperationChains.get(installedPluginId) === chain) {
+      pluginOperationChains.delete(installedPluginId);
+    }
+  }
+}
+
+function isSamePluginPath(a: LoadedRuntimePlugin | undefined, b: RuntimePluginLoadCandidate): boolean {
+  if (!a) return false;
+  const nextPath = path.resolve((b.installPath ?? "").trim());
+  return a.installPath === nextPath;
+}
+
+async function applyRuntimePluginAction(
+  candidate: RuntimePluginLoadCandidate,
+  action: RuntimePluginSyncAction,
+): Promise<string> {
+  if (action === "unload") {
+    const hadPlugin = loadedPlugins.delete(candidate.installedPluginId);
+    return hadPlugin ? "runtime plugin unloaded" : "runtime plugin was not loaded";
+  }
+
+  if (action === "load") {
+    const existing = loadedPlugins.get(candidate.installedPluginId);
+    if (isSamePluginPath(existing, candidate)) {
+      return "runtime plugin already loaded";
+    }
+  }
+
+  const plugin = await validateAndLoadPlugin(candidate);
+  loadedPlugins.set(plugin.installedPluginId, plugin);
+  return action === "reload" ? "runtime plugin reloaded" : "runtime plugin loaded";
+}
+
 export function listLoadedRuntimePlugins(): LoadedRuntimePlugin[] {
   return Array.from(loadedPlugins.values());
 }
@@ -115,7 +186,9 @@ async function reportLoadStatusBestEffort(params: {
   workspaceId: string;
   pluginId: string;
   status: "success" | "failure";
+  operation: RuntimePluginSyncAction;
   message: string;
+  actorUserId?: string;
 }): Promise<void> {
   try {
     await params.grpc.reportRuntimePluginLoad({
@@ -123,14 +196,75 @@ async function reportLoadStatusBestEffort(params: {
       workspaceId: params.workspaceId,
       pluginId: params.pluginId,
       status: params.status,
+      operation: params.operation,
       message: params.message,
+      actorUserId: params.actorUserId ?? "runtime",
     });
   } catch (err) {
     params.logger.error(
-      { err, pluginId: params.pluginId, workspaceId: params.workspaceId, status: params.status },
+      {
+        err,
+        pluginId: params.pluginId,
+        workspaceId: params.workspaceId,
+        status: params.status,
+        operation: params.operation,
+      },
       "Runtime plugin load status report failed",
     );
   }
+}
+
+export async function syncRuntimePlugin(params: {
+  grpc: typeof grpcClient;
+  logger: FastifyBaseLogger;
+  request: RuntimePluginSyncRequest;
+}): Promise<RuntimePluginSyncResult> {
+  const action = normalizeSyncAction(params.request.action);
+  const actorUserId = params.request.actorUserId?.trim() || "runtime";
+
+  return runSerializedForPlugin(params.request.installedPluginId, async () => {
+    try {
+      const message = await applyRuntimePluginAction(params.request, action);
+      await reportLoadStatusBestEffort({
+        grpc: params.grpc,
+        logger: params.logger,
+        installedPluginId: params.request.installedPluginId,
+        workspaceId: params.request.workspaceId,
+        pluginId: params.request.pluginId,
+        status: "success",
+        operation: action,
+        message,
+        actorUserId,
+      });
+      return {
+        ok: true,
+        action,
+        pluginId: params.request.pluginId,
+        installedPluginId: params.request.installedPluginId,
+        message,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await reportLoadStatusBestEffort({
+        grpc: params.grpc,
+        logger: params.logger,
+        installedPluginId: params.request.installedPluginId,
+        workspaceId: params.request.workspaceId,
+        pluginId: params.request.pluginId,
+        status: "failure",
+        operation: action,
+        message,
+        actorUserId,
+      });
+      return {
+        ok: false,
+        action,
+        pluginId: params.request.pluginId,
+        installedPluginId: params.request.installedPluginId,
+        message,
+      };
+    }
+  });
 }
 
 export async function initializeRuntimePlugins(params: {
@@ -144,37 +278,26 @@ export async function initializeRuntimePlugins(params: {
   let failed = 0;
 
   for (const candidate of plugins ?? []) {
-    try {
-      const plugin = await validateAndLoadPlugin(candidate);
-      loadedPlugins.set(plugin.installedPluginId, plugin);
+    const result = await syncRuntimePlugin({
+      grpc: params.grpc,
+      logger: params.logger,
+      request: {
+        ...candidate,
+        action: "bootstrap",
+        actorUserId: "runtime",
+      },
+    });
+
+    if (result.ok) {
       loaded += 1;
-      await reportLoadStatusBestEffort({
-        grpc: params.grpc,
-        logger: params.logger,
-        installedPluginId: candidate.installedPluginId,
-        workspaceId: candidate.workspaceId,
-        pluginId: candidate.pluginId,
-        status: "success",
-        message: `runtime plugin loaded from ${plugin.installPath}`,
-      });
       params.logger.info(
-        { pluginId: candidate.pluginId, workspaceId: candidate.workspaceId, installPath: plugin.installPath },
+        { pluginId: candidate.pluginId, workspaceId: candidate.workspaceId, installPath: candidate.installPath, action: result.action },
         "Runtime plugin loaded",
       );
-    } catch (err) {
+    } else {
       failed += 1;
-      const message = err instanceof Error ? err.message : String(err);
-      await reportLoadStatusBestEffort({
-        grpc: params.grpc,
-        logger: params.logger,
-        installedPluginId: candidate.installedPluginId,
-        workspaceId: candidate.workspaceId,
-        pluginId: candidate.pluginId,
-        status: "failure",
-        message,
-      });
       params.logger.error(
-        { err, pluginId: candidate.pluginId, workspaceId: candidate.workspaceId, installPath: candidate.installPath },
+        { pluginId: candidate.pluginId, workspaceId: candidate.workspaceId, installPath: candidate.installPath, action: result.action, message: result.message },
         "Runtime plugin load failed",
       );
     }

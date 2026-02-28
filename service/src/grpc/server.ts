@@ -685,6 +685,7 @@ export function startGrpcServer(port: number): grpc.Server {
           workspaceId: String(call.request.workspaceId ?? ""),
           pluginId: String(call.request.pluginId ?? ""),
           status: String(call.request.status ?? ""),
+          operation: String(call.request.operation ?? ""),
           message: String(call.request.message ?? ""),
           actorUserId: String(call.request.actorUserId ?? "runtime"),
         });

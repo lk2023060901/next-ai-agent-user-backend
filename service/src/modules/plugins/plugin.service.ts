@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { config } from "../../config";
 import { db } from "../../db";
 import {
   installedPlugins,
@@ -132,9 +133,12 @@ export interface ReportRuntimePluginLoadParams {
   workspaceId: string;
   pluginId: string;
   status: string;
+  operation?: string;
   message?: string;
   actorUserId?: string;
 }
+
+type RuntimePluginSyncOperation = "load" | "reload" | "unload";
 
 type OpenClawManifest = {
   id: string;
@@ -1347,6 +1351,99 @@ async function cleanupInstalledPath(installedSource: InstalledSourcePackage | nu
   }
 }
 
+function normalizeRuntimeSyncOperation(raw: string | undefined): RuntimePluginSyncOperation {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (value === "reload") return "reload";
+  if (value === "unload") return "unload";
+  return "load";
+}
+
+async function dispatchRuntimePluginSync(params: {
+  operation: RuntimePluginSyncOperation;
+  installedPluginId: string;
+  workspaceId: string;
+  pluginId: string;
+  installPath: string;
+  sourceType?: string;
+  sourceSpec?: string;
+  actorUserId?: string;
+  configJson?: string;
+}): Promise<void> {
+  const runtimeBase = (config.runtimeAddr ?? "").trim().replace(/\/+$/, "");
+  if (!runtimeBase) {
+    throw new Error("runtimeAddr is not configured");
+  }
+
+  const response = await fetch(`${runtimeBase}/runtime/plugins/sync`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Runtime-Secret": config.runtimeSecret,
+    },
+    signal: AbortSignal.timeout(8_000),
+    body: JSON.stringify({
+      action: params.operation,
+      installedPluginId: params.installedPluginId,
+      workspaceId: params.workspaceId,
+      pluginId: params.pluginId,
+      installPath: params.installPath,
+      sourceType: params.sourceType ?? "",
+      sourceSpec: params.sourceSpec ?? "",
+      actorUserId: params.actorUserId ?? "service",
+      configJson: params.configJson ?? "{}",
+    }),
+  });
+
+  if (response.ok) return;
+  let detail = "";
+  try {
+    detail = (await response.text()).trim();
+  } catch {
+    // ignore
+  }
+  throw new Error(`runtime sync failed (${response.status}): ${detail || response.statusText}`);
+}
+
+async function triggerRuntimePluginSync(params: {
+  operation: RuntimePluginSyncOperation;
+  installedPluginId: string;
+  workspaceId: string;
+  pluginId: string;
+  installPath: string;
+  sourceType?: string;
+  sourceSpec?: string;
+  expectedIntegrity?: string;
+  resolvedIntegrity?: string;
+  artifactSha256?: string;
+  artifactSha512?: string;
+  actorUserId?: string;
+  configJson?: string;
+}): Promise<void> {
+  try {
+    await dispatchRuntimePluginSync(params);
+  } catch (err) {
+    writePluginInstallAudit({
+      workspaceId: params.workspaceId,
+      pluginId: params.pluginId,
+      installedPluginId: params.installedPluginId,
+      actorUserId: params.actorUserId ?? "service",
+      action: "runtime_load",
+      status: "failure",
+      sourceType: params.sourceType,
+      sourceSpec: params.sourceSpec,
+      expectedIntegrity: params.expectedIntegrity,
+      resolvedIntegrity: params.resolvedIntegrity,
+      artifactSha256: params.artifactSha256,
+      artifactSha512: params.artifactSha512,
+      message: err instanceof Error ? err.message : "runtime sync failed",
+      detail: {
+        operation: params.operation,
+        stage: "dispatch",
+      },
+    });
+  }
+}
+
 async function findInstalledRow(workspaceId: string, pluginKey: string) {
   const byId = db
     .select()
@@ -1724,6 +1821,24 @@ export async function installWorkspacePlugin(params: InstallWorkspacePluginParam
     },
   });
 
+  if (normalizePluginType(pluginRow.type) === "tool" && installedSource?.installPath) {
+    await triggerRuntimePluginSync({
+      operation: "load",
+      installedPluginId,
+      workspaceId,
+      pluginId,
+      installPath: installedSource.installPath,
+      sourceType: sourceAudit.sourceType,
+      sourceSpec: sourceAudit.sourceSpec,
+      expectedIntegrity: sourceAudit.expectedIntegrity,
+      resolvedIntegrity: sourceAudit.resolvedIntegrity,
+      artifactSha256: sourceAudit.artifactSha256,
+      artifactSha512: sourceAudit.artifactSha512,
+      actorUserId: installedBy,
+      configJson: normalizedConfig,
+    });
+  }
+
   return item;
 }
 
@@ -1747,17 +1862,36 @@ export async function uninstallWorkspacePlugin(
   const resolvedIntegrity = installRecord?.resolvedIntegrity ?? undefined;
   const artifactSha256 = installRecord?.artifactSha256 ?? undefined;
   const artifactSha512 = installRecord?.artifactSha512 ?? undefined;
+  const pluginRow = db.select().from(plugins).where(eq(plugins.id, row.pluginId)).get();
+
+  if (normalizePluginType(pluginRow?.type) === "tool" && installRecord?.installPath) {
+    await triggerRuntimePluginSync({
+      operation: "unload",
+      installedPluginId: row.id,
+      workspaceId,
+      pluginId: row.pluginId,
+      installPath: installRecord.installPath,
+      sourceType,
+      sourceSpec,
+      expectedIntegrity,
+      resolvedIntegrity,
+      artifactSha256,
+      artifactSha512,
+      actorUserId: actor,
+      configJson: row.configJson ?? "{}",
+    });
+  }
 
   try {
     db.transaction((tx) => {
       tx.delete(installedPlugins).where(eq(installedPlugins.id, row.id)).run();
 
-      const pluginRow = tx.select().from(plugins).where(eq(plugins.id, row.pluginId)).get();
-      if (pluginRow) {
-        const nextInstallCount = Math.max(0, Number(pluginRow.installCount ?? 0) - 1);
+      const currentPluginRow = tx.select().from(plugins).where(eq(plugins.id, row.pluginId)).get();
+      if (currentPluginRow) {
+        const nextInstallCount = Math.max(0, Number(currentPluginRow.installCount ?? 0) - 1);
         tx.update(plugins)
           .set({ installCount: nextInstallCount })
-          .where(eq(plugins.id, pluginRow.id))
+          .where(eq(plugins.id, currentPluginRow.id))
           .run();
       }
     });
@@ -1812,7 +1946,9 @@ export async function updateWorkspacePluginStatus(params: {
   if (!row) {
     throw Object.assign(new Error("Installed plugin not found"), { code: "NOT_FOUND" });
   }
+  const previousStatus = normalizeInstalledStatus(row.status);
   const installRecord = findInstallRecordByInstalledPluginId(row.id);
+  const pluginRow = db.select().from(plugins).where(eq(plugins.id, row.pluginId)).get();
 
   let updated: typeof installedPlugins.$inferSelect | undefined;
   try {
@@ -1858,6 +1994,43 @@ export async function updateWorkspacePluginStatus(params: {
     },
   });
 
+  const isToolPlugin = normalizePluginType(pluginRow?.type) === "tool";
+  if (isToolPlugin && installRecord?.installPath) {
+    if (status === "enabled" && previousStatus !== "enabled") {
+      await triggerRuntimePluginSync({
+        operation: "load",
+        installedPluginId: row.id,
+        workspaceId,
+        pluginId: row.pluginId,
+        installPath: installRecord.installPath,
+        sourceType: installRecord.sourceType,
+        sourceSpec: installRecord.sourceSpec,
+        expectedIntegrity: installRecord.expectedIntegrity ?? undefined,
+        resolvedIntegrity: installRecord.resolvedIntegrity ?? undefined,
+        artifactSha256: installRecord.artifactSha256 ?? undefined,
+        artifactSha512: installRecord.artifactSha512 ?? undefined,
+        actorUserId: actor,
+        configJson: updated?.configJson ?? row.configJson ?? "{}",
+      });
+    } else if (status === "disabled" && previousStatus !== "disabled") {
+      await triggerRuntimePluginSync({
+        operation: "unload",
+        installedPluginId: row.id,
+        workspaceId,
+        pluginId: row.pluginId,
+        installPath: installRecord.installPath,
+        sourceType: installRecord.sourceType,
+        sourceSpec: installRecord.sourceSpec,
+        expectedIntegrity: installRecord.expectedIntegrity ?? undefined,
+        resolvedIntegrity: installRecord.resolvedIntegrity ?? undefined,
+        artifactSha256: installRecord.artifactSha256 ?? undefined,
+        artifactSha512: installRecord.artifactSha512 ?? undefined,
+        actorUserId: actor,
+        configJson: updated?.configJson ?? row.configJson ?? "{}",
+      });
+    }
+  }
+
   if (!updated) {
     throw Object.assign(new Error("Installed plugin not found"), { code: "NOT_FOUND" });
   }
@@ -1879,6 +2052,7 @@ export async function updateWorkspacePluginConfig(params: {
     throw Object.assign(new Error("Installed plugin not found"), { code: "NOT_FOUND" });
   }
   const installRecord = findInstallRecordByInstalledPluginId(row.id);
+  const pluginRow = db.select().from(plugins).where(eq(plugins.id, row.pluginId)).get();
 
   let configJson = "{}";
   let updated: typeof installedPlugins.$inferSelect | undefined;
@@ -1924,6 +2098,26 @@ export async function updateWorkspacePluginConfig(params: {
     },
   });
 
+  const currentStatus = normalizeInstalledStatus(updated?.status ?? row.status);
+  const isToolPlugin = normalizePluginType(pluginRow?.type) === "tool";
+  if (isToolPlugin && currentStatus === "enabled" && installRecord?.installPath) {
+    await triggerRuntimePluginSync({
+      operation: "reload",
+      installedPluginId: row.id,
+      workspaceId,
+      pluginId: row.pluginId,
+      installPath: installRecord.installPath,
+      sourceType: installRecord.sourceType,
+      sourceSpec: installRecord.sourceSpec,
+      expectedIntegrity: installRecord.expectedIntegrity ?? undefined,
+      resolvedIntegrity: installRecord.resolvedIntegrity ?? undefined,
+      artifactSha256: installRecord.artifactSha256 ?? undefined,
+      artifactSha512: installRecord.artifactSha512 ?? undefined,
+      actorUserId: actor,
+      configJson,
+    });
+  }
+
   if (!updated) {
     throw Object.assign(new Error("Installed plugin not found"), { code: "NOT_FOUND" });
   }
@@ -1933,6 +2127,14 @@ export async function updateWorkspacePluginConfig(params: {
 function normalizeRuntimeLoadStatus(raw: string): "success" | "failure" {
   const status = (raw ?? "").trim().toLowerCase();
   return status === "success" ? "success" : "failure";
+}
+
+function normalizeRuntimeLoadOperation(raw: string | undefined): RuntimePluginSyncOperation | "bootstrap" {
+  const operation = (raw ?? "").trim().toLowerCase();
+  if (operation === "reload") return "reload";
+  if (operation === "unload") return "unload";
+  if (operation === "bootstrap") return "bootstrap";
+  return "load";
 }
 
 export function listRuntimePluginLoadCandidates(): RuntimePluginLoadCandidate[] {
@@ -1984,6 +2186,7 @@ export function reportRuntimePluginLoad(params: ReportRuntimePluginLoadParams): 
   const pluginId = (params.pluginId ?? "").trim();
   const actor = params.actorUserId?.trim() || "runtime";
   const status = normalizeRuntimeLoadStatus(params.status);
+  const operation = normalizeRuntimeLoadOperation(params.operation);
   const message = (params.message ?? "").trim() || null;
 
   if (!installedPluginId || !workspaceId || !pluginId) {
@@ -2004,21 +2207,25 @@ export function reportRuntimePluginLoad(params: ReportRuntimePluginLoadParams): 
       ),
     )
     .get();
-  if (!row) return { updated: false };
 
-  const nextInstalledStatus = status === "success" ? "enabled" : "error";
-  if (row.status !== nextInstalledStatus) {
-    db.update(installedPlugins)
-      .set({ status: nextInstalledStatus })
-      .where(eq(installedPlugins.id, row.id))
-      .run();
+  const installRecord = row ? findInstallRecordByInstalledPluginId(row.id) : null;
+  if (row) {
+    const shouldManageStatus = operation === "load" || operation === "reload" || operation === "bootstrap";
+    if (shouldManageStatus) {
+      const nextInstalledStatus = status === "success" ? "enabled" : "error";
+      if (row.status !== nextInstalledStatus) {
+        db.update(installedPlugins)
+          .set({ status: nextInstalledStatus })
+          .where(eq(installedPlugins.id, row.id))
+          .run();
+      }
+    }
   }
 
-  const installRecord = findInstallRecordByInstalledPluginId(row.id);
   writePluginInstallAudit({
     workspaceId,
     pluginId,
-    installedPluginId: row.id,
+    installedPluginId: row?.id ?? installedPluginId,
     actorUserId: actor,
     action: "runtime_load",
     status,
@@ -2029,7 +2236,11 @@ export function reportRuntimePluginLoad(params: ReportRuntimePluginLoadParams): 
     artifactSha256: installRecord?.artifactSha256 ?? undefined,
     artifactSha512: installRecord?.artifactSha512 ?? undefined,
     message: message ?? undefined,
+    detail: {
+      operation,
+      missingInstalledPlugin: !row,
+    },
   });
 
-  return { updated: true };
+  return { updated: Boolean(row) };
 }

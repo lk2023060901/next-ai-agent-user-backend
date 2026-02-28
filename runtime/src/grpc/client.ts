@@ -151,6 +151,7 @@ export const grpcClient = {
     workspaceId: string;
     pluginId: string;
     status: "success" | "failure";
+    operation?: "load" | "reload" | "unload" | "bootstrap";
     message?: string;
     actorUserId?: string;
   }): Promise<{ updated: boolean }> {
@@ -159,6 +160,7 @@ export const grpcClient = {
       workspaceId: params.workspaceId,
       pluginId: params.pluginId,
       status: params.status,
+      operation: params.operation ?? "load",
       message: params.message ?? "",
       actorUserId: params.actorUserId ?? "runtime",
     });

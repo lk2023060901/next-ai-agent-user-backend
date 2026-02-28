@@ -72,6 +72,7 @@ export const grpcClient = {
             workspaceId: params.workspaceId,
             pluginId: params.pluginId,
             status: params.status,
+            operation: params.operation ?? "load",
             message: params.message ?? "",
             actorUserId: params.actorUserId ?? "runtime",
         });
