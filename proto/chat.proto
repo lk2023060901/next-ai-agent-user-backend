@@ -80,6 +80,18 @@ message SaveUserMessageRequest {
   common.UserContext user_context = 3;
 }
 
+message UpdateUserMessageRequest {
+  string session_id = 1;
+  string message_id = 2;
+  string content = 3;
+  common.UserContext user_context = 4;
+}
+
+message UpdateUserMessageResponse {
+  ChatMessage message = 1;
+  repeated string removed_message_ids = 2;
+}
+
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 message AgentItem {
@@ -161,6 +173,7 @@ service ChatService {
   rpc DeleteSession(DeleteSessionRequest) returns (common.Empty);
   rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
   rpc SaveUserMessage(SaveUserMessageRequest) returns (ChatMessage);
+  rpc UpdateUserMessage(UpdateUserMessageRequest) returns (UpdateUserMessageResponse);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc CreateAgent(CreateAgentRequest) returns (AgentItem);
   rpc GetAgent(GetAgentRequest) returns (AgentItem);

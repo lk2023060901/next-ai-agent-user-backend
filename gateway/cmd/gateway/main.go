@@ -107,6 +107,7 @@ func main() {
 		// Chat — messages
 		r.Get("/sessions/{sessionId}/messages", chatHandler.ListMessages)
 		r.Post("/sessions/{sessionId}/messages", chatHandler.SaveUserMessage)
+		r.Patch("/sessions/{sessionId}/messages/{messageId}", chatHandler.UpdateUserMessage)
 
 		// Chat — agents
 		r.Get("/workspaces/{wsId}/agents", chatHandler.ListAgents)

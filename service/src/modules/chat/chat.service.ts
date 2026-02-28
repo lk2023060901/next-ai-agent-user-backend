@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, or, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
 import {
@@ -223,6 +223,81 @@ export function saveUserMessage(sessionId: string, content: string) {
     .run();
 
   return db.select().from(messages).where(eq(messages.id, id)).get()!;
+}
+
+export function updateUserMessage(sessionId: string, messageId: string, content: string) {
+  const session = db.select().from(chatSessions).where(eq(chatSessions.id, sessionId)).get();
+  if (!session) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+
+  const nextContent = content.trim();
+  if (!nextContent) {
+    throw Object.assign(new Error("content is required"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const target = db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.sessionId, sessionId), eq(messages.id, messageId)))
+    .get();
+  if (!target) {
+    throw Object.assign(new Error("Message not found"), { code: "NOT_FOUND" });
+  }
+  if (target.role !== "user") {
+    throw Object.assign(new Error("Only user messages can be edited"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const rowsToRemove = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.sessionId, sessionId),
+        or(
+          gt(messages.createdAt, target.createdAt),
+          and(eq(messages.createdAt, target.createdAt), gt(messages.id, target.id))
+        ),
+      ),
+    )
+    .all();
+
+  const removedMessageIds = rowsToRemove.map((row) => row.id);
+  if (removedMessageIds.length > 0) {
+    db.delete(messages).where(inArray(messages.id, removedMessageIds)).run();
+  }
+
+  db.update(messages)
+    .set({ content: nextContent, status: "done" })
+    .where(and(eq(messages.sessionId, sessionId), eq(messages.id, messageId)))
+    .run();
+
+  const updatedMessage = db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.sessionId, sessionId), eq(messages.id, messageId)))
+    .get();
+  if (!updatedMessage) {
+    throw Object.assign(new Error("Message not found after update"), { code: "INTERNAL" });
+  }
+
+  const remainingDesc = db
+    .select({ id: messages.id, createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.sessionId, sessionId))
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .all();
+
+  db.update(chatSessions)
+    .set({
+      messageCount: remainingDesc.length,
+      lastMessageAt: remainingDesc[0]?.createdAt ?? null,
+    })
+    .where(eq(chatSessions.id, sessionId))
+    .run();
+
+  return {
+    message: updatedMessage,
+    removedMessageIds,
+  };
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────

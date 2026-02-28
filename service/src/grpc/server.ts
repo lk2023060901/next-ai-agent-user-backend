@@ -30,7 +30,7 @@ import {
   getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
 } from "../modules/agent-run/agent-run.service";
 import {
-  listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage,
+  listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
 
@@ -586,6 +586,20 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     saveUserMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, saveUserMessage(call.request.sessionId, call.request.content)); }
+      catch (err) { handleError(callback, err); }
+    },
+    updateUserMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = updateUserMessage(
+          call.request.sessionId,
+          call.request.messageId,
+          call.request.content,
+        );
+        callback(null, {
+          message: result.message,
+          removedMessageIds: result.removedMessageIds,
+        });
+      }
       catch (err) { handleError(callback, err); }
     },
     listAgents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {

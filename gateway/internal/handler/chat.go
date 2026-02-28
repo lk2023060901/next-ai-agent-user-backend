@@ -230,6 +230,32 @@ func (h *ChatHandler) SaveUserMessage(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusCreated, messageMap(resp))
 }
 
+func (h *ChatHandler) UpdateUserMessage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.clients.Chat.UpdateUserMessage(r.Context(), &chatpb.UpdateUserMessageRequest{
+		SessionId:   chi.URLParam(r, "sessionId"),
+		MessageId:   chi.URLParam(r, "messageId"),
+		Content:     body.Content,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	writeData(w, http.StatusOK, map[string]any{
+		"message":           messageMap(resp.Message),
+		"removedMessageIds": resp.RemovedMessageIds,
+	})
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
 func (h *ChatHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
