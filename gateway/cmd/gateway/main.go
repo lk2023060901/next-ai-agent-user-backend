@@ -72,6 +72,7 @@ func main() {
 		r.Get("/orgs/{slug}/members", orgHandler.ListMembers)
 		r.Get("/orgs/{slug}/workspaces", orgHandler.ListWorkspaces)
 		r.Get("/orgs/{orgId}/dashboard/stats", orgHandler.GetDashboardStats)
+		r.Get("/orgs/{orgId}/dashboard/token-stats", orgHandler.GetDashboardTokenStats)
 
 		// Workspaces
 		r.Post("/workspaces", wsHandler.CreateWorkspace)
