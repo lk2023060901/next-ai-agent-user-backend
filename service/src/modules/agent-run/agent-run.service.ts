@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
 import {
@@ -453,10 +453,10 @@ function buildUsageRecordsWhere(params: ListUsageRecordsParams): SQL<unknown> {
   const endDate = (params.endDate ?? "").trim();
 
   if (startDate) {
-    clauses.push(gte(usageRecords.recordedAt, `${startDate} 00:00:00`));
+    clauses.push(sql`date(${usageRecords.recordedAt}) >= date(${startDate})`);
   }
   if (endDate) {
-    clauses.push(lte(usageRecords.recordedAt, `${endDate} 23:59:59`));
+    clauses.push(sql`date(${usageRecords.recordedAt}) <= date(${endDate})`);
   }
   if (clauses.length === 1) return clauses[0]!;
   return and(...clauses)!;
