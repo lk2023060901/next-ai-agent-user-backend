@@ -754,6 +754,283 @@ func (h *OrgHandler) GetDashboardTokenStats(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (h *OrgHandler) GetDashboardWorkload(w http.ResponseWriter, r *http.Request) {
+	orgRef := chi.URLParam(r, "orgId")
+	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+
+	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
+		OrgId:       orgSlug,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	type workloadItem struct {
+		agentID   string
+		agentName string
+		role      string
+		taskCount int64
+	}
+
+	workloadByAgent := map[string]*workloadItem{}
+	for _, ws := range workspaceResp.Workspaces {
+		workspaceID := strings.TrimSpace(ws.Id)
+		if workspaceID == "" {
+			continue
+		}
+
+		runtimeResp, runtimeErr := h.clients.Chat.GetRuntimeMetrics(r.Context(), &chatpb.GetRuntimeMetricsRequest{
+			WorkspaceId: workspaceID,
+			Days:        7,
+			UserContext: h.userCtx(r),
+		})
+		if runtimeErr != nil || runtimeResp == nil {
+			continue
+		}
+
+		for _, am := range runtimeResp.Agents {
+			agentID := strings.TrimSpace(am.AgentId)
+			if agentID == "" {
+				agentID = "unknown:" + workspaceID + ":" + strings.TrimSpace(am.Name)
+			}
+			item, ok := workloadByAgent[agentID]
+			if !ok {
+				role := strings.TrimSpace(am.Role)
+				if role == "" {
+					role = "coordinator"
+				}
+				item = &workloadItem{
+					agentID:   agentID,
+					agentName: strings.TrimSpace(am.Name),
+					role:      role,
+				}
+				if item.agentName == "" {
+					item.agentName = "Unknown Agent"
+				}
+				workloadByAgent[agentID] = item
+			}
+
+			taskCount := int64(am.SuccessfulTasks + am.FailedTasks)
+			if taskCount == 0 {
+				taskCount = int64(am.SuccessfulRuns + am.FailedRuns)
+			}
+			item.taskCount += taskCount
+		}
+	}
+
+	list := make([]*workloadItem, 0, len(workloadByAgent))
+	for _, item := range workloadByAgent {
+		list = append(list, item)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].taskCount == list[j].taskCount {
+			return list[i].agentName < list[j].agentName
+		}
+		return list[i].taskCount > list[j].taskCount
+	})
+
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		out = append(out, map[string]any{
+			"agentId":   item.agentID,
+			"agentName": item.agentName,
+			"role":      item.role,
+			"taskCount": item.taskCount,
+		})
+	}
+
+	writeData(w, http.StatusOK, out)
+}
+
+func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Request) {
+	orgRef := chi.URLParam(r, "orgId")
+	orgID, orgSlug := h.resolveOrgIdentity(r, orgRef)
+
+	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
+		OrgId:       orgSlug,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	type activityItem struct {
+		id          string
+		typ         string
+		title       string
+		description string
+		timestamp   time.Time
+		actorName   string
+		actorAvatar string
+	}
+
+	activities := make([]*activityItem, 0, 128)
+	appendActivity := func(item *activityItem) {
+		if item == nil {
+			return
+		}
+		if item.timestamp.IsZero() {
+			return
+		}
+		activities = append(activities, item)
+	}
+
+	memberResp, memberErr := h.clients.Org.ListMembers(r.Context(), &orgpb.ListMembersRequest{
+		OrgId:       orgID,
+		UserContext: h.userCtx(r),
+	})
+	if memberErr == nil && memberResp != nil {
+		for _, m := range memberResp.Members {
+			joinedAt, ok := parseTimestamp(m.JoinedAt)
+			if !ok {
+				continue
+			}
+			name := strings.TrimSpace(m.Name)
+			if name == "" {
+				name = strings.TrimSpace(m.Email)
+			}
+			if name == "" {
+				name = "Unknown Member"
+			}
+			description := strings.TrimSpace(m.Role)
+			if description == "" {
+				description = "member"
+			}
+			appendActivity(&activityItem{
+				id:          "member:" + strings.TrimSpace(m.Id),
+				typ:         "member",
+				title:       name + " joined the organization",
+				description: "Role: " + description,
+				timestamp:   joinedAt,
+				actorName:   name,
+				actorAvatar: strings.TrimSpace(m.AvatarUrl),
+			})
+		}
+	}
+
+	for _, ws := range workspaceResp.Workspaces {
+		workspaceID := strings.TrimSpace(ws.Id)
+		if workspaceID == "" {
+			continue
+		}
+		workspaceName := strings.TrimSpace(ws.Name)
+		if workspaceName == "" {
+			workspaceName = "Workspace"
+		}
+
+		sessionsResp, sessionsErr := h.clients.Chat.ListSessions(r.Context(), &chatpb.ListSessionsRequest{
+			WorkspaceId: workspaceID,
+			UserContext: h.userCtx(r),
+		})
+		if sessionsErr == nil && sessionsResp != nil {
+			for _, s := range sessionsResp.Sessions {
+				timestampRaw := strings.TrimSpace(s.LastMessageAt)
+				if timestampRaw == "" {
+					timestampRaw = strings.TrimSpace(s.CreatedAt)
+				}
+				timestamp, ok := parseTimestamp(timestampRaw)
+				if !ok {
+					continue
+				}
+				title := strings.TrimSpace(s.Title)
+				if title == "" {
+					title = "Untitled Session"
+				}
+				appendActivity(&activityItem{
+					id:          "session:" + strings.TrimSpace(s.Id),
+					typ:         "system",
+					title:       "Conversation updated",
+					description: fmt.Sprintf("%s · %d messages", title, s.MessageCount),
+					timestamp:   timestamp,
+					actorName:   workspaceName,
+					actorAvatar: "",
+				})
+			}
+		}
+
+		usageResp, usageErr := h.clients.Chat.ListUsageRecords(r.Context(), &chatpb.ListUsageRecordsRequest{
+			WorkspaceId: workspaceID,
+			Limit:       80,
+			Offset:      0,
+			UserContext: h.userCtx(r),
+		})
+		if usageErr != nil || usageResp == nil {
+			continue
+		}
+		for _, rec := range usageResp.Records {
+			if strings.TrimSpace(rec.RecordType) != "run" {
+				continue
+			}
+			timestampRaw := strings.TrimSpace(rec.EndedAt)
+			if timestampRaw == "" {
+				timestampRaw = strings.TrimSpace(rec.RecordedAt)
+			}
+			if timestampRaw == "" {
+				timestampRaw = strings.TrimSpace(rec.StartedAt)
+			}
+			timestamp, ok := parseTimestamp(timestampRaw)
+			if !ok {
+				continue
+			}
+			agentName := strings.TrimSpace(rec.AgentName)
+			if agentName == "" {
+				agentName = "Unknown Agent"
+			}
+			status := strings.ToLower(strings.TrimSpace(rec.Status))
+			title := agentName + " updated run"
+			switch status {
+			case "completed":
+				title = agentName + " completed a run"
+			case "failed", "blocked":
+				title = agentName + " failed a run"
+			}
+			provider := strings.TrimSpace(rec.ProviderName)
+			if provider == "" {
+				provider = "Unknown Provider"
+			}
+			model := strings.TrimSpace(rec.ModelName)
+			if model == "" {
+				model = "Unknown Model"
+			}
+			description := fmt.Sprintf("%s · %s · %d tokens", provider, model, rec.TotalTokens)
+			appendActivity(&activityItem{
+				id:          "usage:" + strings.TrimSpace(rec.Id),
+				typ:         "agent",
+				title:       title,
+				description: description,
+				timestamp:   timestamp,
+				actorName:   agentName,
+				actorAvatar: "",
+			})
+		}
+	}
+
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].timestamp.After(activities[j].timestamp)
+	})
+	if len(activities) > 50 {
+		activities = activities[:50]
+	}
+
+	out := make([]map[string]any, 0, len(activities))
+	for _, item := range activities {
+		out = append(out, map[string]any{
+			"id":          item.id,
+			"type":        item.typ,
+			"title":       item.title,
+			"description": item.description,
+			"timestamp":   item.timestamp.UTC().Format(time.RFC3339),
+			"actorName":   item.actorName,
+			"actorAvatar": item.actorAvatar,
+		})
+	}
+
+	writeData(w, http.StatusOK, out)
+}
+
 func (h *OrgHandler) listOrgUsageViews(
 	r *http.Request,
 	orgSlug string,
