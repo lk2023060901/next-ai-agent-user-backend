@@ -33,7 +33,7 @@ func main() {
 	r.Use(cors.New(cors.Options{
 		AllowedOrigins:   cfg.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID", "X-Runtime-Secret"},
 		AllowCredentials: true,
 	}).Handler)
 
@@ -44,6 +44,12 @@ func main() {
 	settingsHandler := handler.NewSettingsHandler(clients)
 	toolsHandler := handler.NewToolsHandler(clients)
 	channelsHandler := handler.NewChannelsHandler(clients, cfg.RuntimeSecret)
+	runtimeToolsHandler := handler.NewRuntimeToolsHandler(
+		cfg.RuntimeSecret,
+		cfg.WebSearchProvider,
+		cfg.WebSearchEndpoint,
+		cfg.WebSearchTimeoutMs,
+	)
 	schedulerHandler := handler.NewSchedulerHandler(clients)
 
 	// ── Public ────────────────────────────────────────────────────────────────
@@ -56,6 +62,7 @@ func main() {
 
 	// Public runtime endpoint (X-Runtime-Secret auth, no user JWT)
 	r.Post("/channels/{channelId}/send", channelsHandler.SendChannelMessage)
+	r.Post("/internal/tools/web-search", runtimeToolsHandler.WebSearch)
 
 	// ── Protected ─────────────────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
