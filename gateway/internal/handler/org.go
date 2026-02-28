@@ -111,6 +111,9 @@ type orgUsageView struct {
 	timestamp    time.Time
 	timestampRaw string
 	day          string
+	recordType   string
+	scope        string
+	status       string
 	agentID      string
 	agentName    string
 	agentRole    string
@@ -119,9 +122,79 @@ type orgUsageView struct {
 	inputTokens  int64
 	outputTokens int64
 	totalTokens  int64
+	successCount int64
+	failureCount int64
 	durationMs   int64
 	cost         float64
 	success      bool
+}
+
+type usageAggregate struct {
+	recordCount  int64
+	inputTokens  int64
+	outputTokens int64
+	totalTokens  int64
+	successCount int64
+	failureCount int64
+	durationMs   int64
+}
+
+func (a usageAggregate) avgDurationMs() int64 {
+	if a.recordCount <= 0 {
+		return 0
+	}
+	return a.durationMs / a.recordCount
+}
+
+func (a usageAggregate) toMap() map[string]any {
+	return map[string]any{
+		"recordCount":   a.recordCount,
+		"inputTokens":   a.inputTokens,
+		"outputTokens":  a.outputTokens,
+		"totalTokens":   a.totalTokens,
+		"successCount":  a.successCount,
+		"failureCount":  a.failureCount,
+		"durationMs":    a.durationMs,
+		"avgDurationMs": a.avgDurationMs(),
+	}
+}
+
+type usageSummary struct {
+	overall     usageAggregate
+	coordinator usageAggregate
+	subAgent    usageAggregate
+}
+
+func addUsageAggregate(agg *usageAggregate, item orgUsageView) {
+	agg.recordCount += 1
+	agg.inputTokens += item.inputTokens
+	agg.outputTokens += item.outputTokens
+	agg.totalTokens += item.totalTokens
+	agg.successCount += item.successCount
+	agg.failureCount += item.failureCount
+	agg.durationMs += item.durationMs
+}
+
+func summarizeUsageViews(views []orgUsageView) usageSummary {
+	summary := usageSummary{}
+	for _, item := range views {
+		addUsageAggregate(&summary.overall, item)
+		switch item.scope {
+		case "sub_agent":
+			addUsageAggregate(&summary.subAgent, item)
+		default:
+			addUsageAggregate(&summary.coordinator, item)
+		}
+	}
+	return summary
+}
+
+func (s usageSummary) toMap() map[string]any {
+	return map[string]any{
+		"overall":     s.overall.toMap(),
+		"coordinator": s.coordinator.toMap(),
+		"subAgent":    s.subAgent.toMap(),
+	}
 }
 
 func parseDateOnly(value string) (time.Time, bool) {
@@ -319,8 +392,31 @@ func toUsageView(item *chatpb.UsageRecord) orgUsageView {
 		agentRole = "coordinator"
 	}
 
+	recordType := strings.ToLower(strings.TrimSpace(item.RecordType))
+	if recordType == "" {
+		recordType = "run"
+	}
+
+	scope := strings.ToLower(strings.TrimSpace(item.Scope))
+	if scope == "" {
+		scope = "coordinator"
+		if recordType == "task" {
+			scope = "sub_agent"
+		}
+	}
+
 	status := strings.ToLower(strings.TrimSpace(item.Status))
-	success := status == "completed" || (item.FailureCount == 0 && item.SuccessCount > 0)
+	successCount := int64(item.SuccessCount)
+	failureCount := int64(item.FailureCount)
+	success := status == "completed" || (failureCount == 0 && successCount > 0)
+	if successCount == 0 && failureCount == 0 {
+		if success {
+			successCount = 1
+		} else {
+			failureCount = 1
+		}
+	}
+
 	durationMs := computeDurationMs(item.StartedAt, item.EndedAt)
 	totalTokens := int64(item.TotalTokens)
 	cost := roundFloat((float64(totalTokens)/1000.0)*usageEstimatedCostPer1KTokens, 4)
@@ -331,6 +427,9 @@ func toUsageView(item *chatpb.UsageRecord) orgUsageView {
 		timestamp:    timestamp,
 		timestampRaw: timestampRaw,
 		day:          day,
+		recordType:   recordType,
+		scope:        scope,
+		status:       status,
 		agentID:      strings.TrimSpace(item.AgentId),
 		agentName:    agentName,
 		agentRole:    agentRole,
@@ -339,6 +438,8 @@ func toUsageView(item *chatpb.UsageRecord) orgUsageView {
 		inputTokens:  int64(item.InputTokens),
 		outputTokens: int64(item.OutputTokens),
 		totalTokens:  totalTokens,
+		successCount: successCount,
+		failureCount: failureCount,
 		durationMs:   durationMs,
 		cost:         cost,
 		success:      success,
@@ -1178,6 +1279,7 @@ func (h *OrgHandler) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 	callTrend := calcTrend(sumFloat64(callSeries[split:]), sumFloat64(callSeries[:split]))
 	costTrend := calcTrend(sumFloat64(costSeries[split:]), sumFloat64(costSeries[:split]))
 	avgRespTrend := calcTrend(sumFloat64(avgRespSeries[split:]), sumFloat64(avgRespSeries[:split]))
+	summary := summarizeUsageViews(views)
 
 	writeData(w, http.StatusOK, map[string]any{
 		"totalTokens": map[string]any{
@@ -1200,6 +1302,7 @@ func (h *OrgHandler) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 			"trend":     costTrend,
 			"sparkline": sparklineFromSeries(costSeries, 7),
 		},
+		"summary": summary.toMap(),
 	})
 }
 
@@ -1376,6 +1479,7 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "workspaceId does not belong to organization")
 		return
 	}
+	summary := summarizeUsageViews(views)
 
 	if params.format == "csv" {
 		fileName := fmt.Sprintf(
@@ -1389,14 +1493,19 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 
 		writer := csv.NewWriter(w)
 		_ = writer.Write([]string{
-			"id", "timestamp", "workspaceId", "agentId", "agentName", "agentRole",
-			"provider", "model", "inputTokens", "outputTokens", "durationMs", "cost", "success",
+			"id", "timestamp", "workspaceId", "recordType", "scope", "status",
+			"agentId", "agentName", "agentRole", "provider", "model",
+			"inputTokens", "outputTokens", "totalTokens",
+			"successCount", "failureCount", "durationMs", "cost", "success",
 		})
 		for _, item := range views {
 			_ = writer.Write([]string{
 				item.id,
 				item.timestamp.UTC().Format(time.RFC3339),
 				item.workspaceID,
+				item.recordType,
+				item.scope,
+				item.status,
 				item.agentID,
 				item.agentName,
 				item.agentRole,
@@ -1404,6 +1513,9 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 				item.model,
 				strconv.FormatInt(item.inputTokens, 10),
 				strconv.FormatInt(item.outputTokens, 10),
+				strconv.FormatInt(item.totalTokens, 10),
+				strconv.FormatInt(item.successCount, 10),
+				strconv.FormatInt(item.failureCount, 10),
 				strconv.FormatInt(item.durationMs, 10),
 				strconv.FormatFloat(item.cost, 'f', 4, 64),
 				strconv.FormatBool(item.success),
@@ -1431,6 +1543,10 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, map[string]any{
 			"id":           item.id,
 			"timestamp":    item.timestamp.UTC().Format(time.RFC3339),
+			"workspaceId":  item.workspaceID,
+			"recordType":   item.recordType,
+			"scope":        item.scope,
+			"status":       item.status,
 			"agentId":      item.agentID,
 			"agentName":    item.agentName,
 			"agentRole":    item.agentRole,
@@ -1438,6 +1554,9 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 			"model":        item.model,
 			"inputTokens":  item.inputTokens,
 			"outputTokens": item.outputTokens,
+			"totalTokens":  item.totalTokens,
+			"successCount": item.successCount,
+			"failureCount": item.failureCount,
 			"duration":     item.durationMs,
 			"cost":         item.cost,
 			"success":      item.success,
@@ -1450,5 +1569,6 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		"page":       page,
 		"pageSize":   pageSize,
 		"totalPages": totalPages,
+		"summary":    summary.toMap(),
 	})
 }
