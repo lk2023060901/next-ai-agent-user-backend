@@ -1,6 +1,6 @@
 import { grpcClient } from "../grpc/client.js";
 import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
-import { getChannel } from "../sse/emitter.js";
+import type { SseEmitter } from "../sse/emitter.js";
 import { runCoordinator } from "./coordinator.js";
 
 export interface RunRequest {
@@ -12,15 +12,11 @@ export interface RunRequest {
 }
 
 /**
- * Entry point — called after runId has been created via gRPC and the SSE channel is registered.
- * Runs the coordinator loop in the background; the SSE stream delivers events in real time.
+ * Entry point — called after runId has been created via gRPC.
+ * Runs the coordinator loop in the background; runtime run-store is responsible
+ * for dispatching and replaying stream events to connected clients.
  */
-export async function startRun(req: RunRequest): Promise<void> {
-  const emit = getChannel(req.runId);
-  if (!emit) {
-    throw new Error(`No SSE channel registered for runId: ${req.runId}`);
-  }
-
+export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void> {
   try {
     await grpcClient.updateRunStatus(req.runId, "running");
 

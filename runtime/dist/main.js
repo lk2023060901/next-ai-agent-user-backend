@@ -2,13 +2,20 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { config } from "./config.js";
 import { grpcClient } from "./grpc/client.js";
-import { registerChannel, removeChannel, formatSseData } from "./sse/emitter.js";
+import { formatSseData } from "./sse/emitter.js";
+import { IdempotencyConflictError, RunStore } from "./sse/run-store.js";
 import { startRun } from "./agent/runner.js";
 import { runChannelRequest } from "./agent/channel-runner.js";
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 // ─── Health ───────────────────────────────────────────────────────────────────
 app.get("/health", async () => ({ status: "ok" }));
+const runStore = new RunStore({
+    maxEventsPerRun: config.runEventBufferSize,
+    runRetentionMs: config.runRetentionMs,
+    idempotencyTtlMs: config.runIdempotencyTtlMs,
+    cleanupIntervalMs: config.runStoreCleanupIntervalMs,
+});
 // ─── Channel run (async, no SSE) ──────────────────────────────────────────────
 // POST /channel-run
 // Body: { sessionId, channelId, agentId, workspaceId, message, chatId, threadId? }
@@ -50,36 +57,87 @@ app.post("/channel-run", async (request, reply) => {
 // Body: { sessionId, userRequest, coordinatorAgentId }
 // Returns: { runId }
 // The run starts asynchronously; subscribe to /runtime/runs/:runId/stream for events.
-// Pending runs: created but not yet started (waiting for SSE client to connect)
-const pendingRuns = new Map();
+function firstHeaderValue(value) {
+    if (Array.isArray(value))
+        return value[0] ?? "";
+    return value ?? "";
+}
 app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
     const { wsId } = request.params;
     const { sessionId, userRequest, coordinatorAgentId } = request.body;
     if (!sessionId || !userRequest || !coordinatorAgentId) {
         return reply.status(400).send({ error: "sessionId, userRequest, coordinatorAgentId required" });
     }
-    const { runId } = await grpcClient.createRun({
+    const idempotencyHeader = firstHeaderValue(request.headers["idempotency-key"]);
+    const idempotencyKey = (request.body.idempotencyKey ?? idempotencyHeader).trim() || undefined;
+    const fingerprint = JSON.stringify({
         sessionId,
         workspaceId: wsId,
         userRequest,
         coordinatorAgentId,
     });
-    // Save run params — actual execution starts when the SSE client connects
-    pendingRuns.set(runId, { sessionId, workspaceId: wsId, userRequest, coordinatorAgentId });
-    return reply.send({ runId });
+    try {
+        const createResult = await runStore.createRuntimeRun({
+            params: {
+                sessionId,
+                workspaceId: wsId,
+                userRequest,
+                coordinatorAgentId,
+            },
+            idempotencyKey,
+            fingerprint,
+            createRun: () => grpcClient.createRun({
+                sessionId,
+                workspaceId: wsId,
+                userRequest,
+                coordinatorAgentId,
+            }),
+        });
+        setImmediate(() => {
+            runStore
+                .startRun(createResult.runId, async ({ runId, params, emit }) => {
+                await startRun({ runId, ...params }, emit);
+            })
+                .catch((err) => {
+                app.log.error({ err, runId: createResult.runId }, "Agent run failed");
+            });
+        });
+        return reply.send({
+            runId: createResult.runId,
+            deduplicated: createResult.deduplicated,
+        });
+    }
+    catch (err) {
+        if (err instanceof IdempotencyConflictError) {
+            return reply.status(409).send({ error: err.message, code: err.code });
+        }
+        throw err;
+    }
 });
 // ─── SSE stream ───────────────────────────────────────────────────────────────
 // GET /runtime/runs/:runId/stream
 // Returns: text/event-stream
 app.get("/runtime/runs/:runId/stream", async (request, reply) => {
     const { runId } = request.params;
+    const snapshot = runStore.getSnapshot(runId);
+    if (!snapshot) {
+        return reply.status(404).send({ error: "run not found or expired" });
+    }
+    const cursorRaw = request.query.cursor;
+    const cursor = typeof cursorRaw === "number"
+        ? cursorRaw
+        : typeof cursorRaw === "string"
+            ? Number.parseInt(cursorRaw, 10)
+            : 0;
+    const safeCursor = Number.isFinite(cursor) ? Math.max(0, Math.floor(cursor)) : 0;
     reply.raw.setHeader("Content-Type", "text/event-stream");
     reply.raw.setHeader("Cache-Control", "no-cache");
     reply.raw.setHeader("Connection", "keep-alive");
     reply.raw.setHeader("X-Accel-Buffering", "no");
     reply.raw.flushHeaders();
+    let subscription = null;
     const closeStream = () => {
-        removeChannel(runId);
+        subscription?.unsubscribe();
         if (!reply.raw.writableEnded) {
             reply.raw.end();
         }
@@ -93,18 +151,17 @@ app.get("/runtime/runs/:runId/stream", async (request, reply) => {
             setImmediate(closeStream);
         }
     };
-    registerChannel(runId, emit);
+    try {
+        subscription = runStore.subscribe(runId, emit, safeCursor);
+    }
+    catch {
+        return reply.status(404).send({ error: "run not found or expired" });
+    }
     // Clean up channel when client disconnects
     request.raw.on("close", closeStream);
-    // Start the run now that the SSE channel is registered
-    const pending = pendingRuns.get(runId);
-    if (pending) {
-        pendingRuns.delete(runId);
-        setImmediate(() => {
-            startRun({ runId, ...pending }).catch((err) => {
-                app.log.error({ err, runId }, "Agent run failed");
-            });
-        });
+    request.raw.on("finish", closeStream);
+    if (subscription.snapshot.terminal) {
+        setImmediate(closeStream);
     }
     // Keep connection alive — the coordinator will close it via message-end
     await new Promise((resolve) => {
@@ -117,7 +174,7 @@ app.get("/runtime/runs/:runId/stream", async (request, reply) => {
 app.post("/runtime/runs/:runId/cancel", async (request, reply) => {
     const { runId } = request.params;
     await grpcClient.updateRunStatus(runId, "cancelled");
-    removeChannel(runId);
+    runStore.cancel(runId, "Run cancelled by user");
     return reply.send({ ok: true });
 });
 async function processChannelRun(body) {
@@ -173,6 +230,7 @@ try {
     app.log.info(`Runtime listening on :${config.port}`);
 }
 catch (err) {
+    runStore.close();
     app.log.error(err);
     process.exit(1);
 }

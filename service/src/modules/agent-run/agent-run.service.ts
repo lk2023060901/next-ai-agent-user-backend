@@ -259,6 +259,26 @@ interface AgentUsageIdentity {
   modelName: string;
 }
 
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const RUN_STATUS_TRANSITIONS: Record<string, Set<string>> = {
+  pending: new Set(["running", "failed", "cancelled"]),
+  running: new Set(["completed", "failed", "cancelled"]),
+  completed: new Set(),
+  failed: new Set(),
+  cancelled: new Set(),
+};
+
+function normalizeRunStatus(status: string): string {
+  return (status || "").trim().toLowerCase();
+}
+
+function canTransitionRunStatus(currentStatus: string, nextStatus: string): boolean {
+  if (currentStatus === nextStatus) return true;
+  const allowed = RUN_STATUS_TRANSITIONS[currentStatus];
+  if (!allowed) return false;
+  return allowed.has(nextStatus);
+}
+
 function resolveAgentUsageIdentity(agentId?: string | null): AgentUsageIdentity {
   if (!agentId) {
     return {
@@ -624,15 +644,35 @@ export function updateRunStatus(runId: string, status: string): void {
     throw Object.assign(new Error("Agent run not found"), { code: "NOT_FOUND" });
   }
 
+  const currentStatus = normalizeRunStatus(run.status);
+  const nextStatus = normalizeRunStatus(status);
+  if (!nextStatus) {
+    throw Object.assign(new Error("Run status is required"), { code: "INVALID_ARGUMENT" });
+  }
+  if (currentStatus === nextStatus) {
+    return;
+  }
+
+  // Terminal runs are immutable to protect idempotency and cancellation semantics.
+  if (TERMINAL_RUN_STATUSES.has(currentStatus)) {
+    return;
+  }
+  if (!canTransitionRunStatus(currentStatus, nextStatus)) {
+    throw Object.assign(
+      new Error(`Invalid run status transition: ${currentStatus} -> ${nextStatus}`),
+      { code: "INVALID_ARGUMENT" }
+    );
+  }
+
   const now = new Date().toISOString();
   const patch: Partial<typeof agentRuns.$inferInsert> = {
-    status,
-    startedAt: status === "running" ? now : run.startedAt,
-    endedAt: ["completed", "failed", "cancelled"].includes(status) ? now : run.endedAt,
+    status: nextStatus,
+    startedAt: nextStatus === "running" ? now : run.startedAt,
+    endedAt: ["completed", "failed", "cancelled"].includes(nextStatus) ? now : run.endedAt,
     updatedAt: now,
   };
 
-  if (["completed", "failed", "cancelled"].includes(status)) {
+  if (["completed", "failed", "cancelled"].includes(nextStatus)) {
     const tasks = db.select().from(agentTasks).where(eq(agentTasks.runId, runId)).all();
 
     const subAgentInputTokens = tasks.reduce((sum, task) => sum + (task.inputTokens ?? 0), 0);
@@ -660,8 +700,8 @@ export function updateRunStatus(runId: string, status: string): void {
     .where(eq(agentRuns.id, runId))
     .run();
 
-  if (["completed", "failed", "cancelled"].includes(status)) {
-    upsertRunUsageLedgerRecord(runId, status);
+  if (["completed", "failed", "cancelled"].includes(nextStatus)) {
+    upsertRunUsageLedgerRecord(runId, nextStatus);
   }
 }
 

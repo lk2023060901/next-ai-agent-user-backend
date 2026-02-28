@@ -1,9 +1,15 @@
+export type SseEnvelope = {
+  seq?: number;
+  emittedAt?: string;
+};
+
 // SSE event types — extends the frontend use-streaming-chat.ts event types
-export type SseEvent =
-  | { type: "message-start"; runId?: string; messageId?: string; agentId: string }
-  | { type: "text-delta"; runId?: string; messageId?: string; text: string; delta?: string }
-  | { type: "reasoning-delta"; runId?: string; messageId?: string; text: string; delta?: string }
-  | { type: "reasoning"; runId?: string; messageId?: string; text: string }
+export type SseEvent = SseEnvelope &
+  (
+    | { type: "message-start"; runId?: string; messageId?: string; agentId: string }
+    | { type: "text-delta"; runId?: string; messageId?: string; text: string; delta?: string }
+    | { type: "reasoning-delta"; runId?: string; messageId?: string; text: string; delta?: string }
+    | { type: "reasoning"; runId?: string; messageId?: string; text: string }
   | {
       type: "tool-call";
       runId?: string;
@@ -37,27 +43,14 @@ export type SseEvent =
       outputTokens: number;
       totalTokens: number;
     }
-  | { type: "message-end"; runId: string; messageId?: string }
-  | { type: "done"; runId: string }
-  | { type: "error"; runId: string; message: string };
+    | { type: "message-end"; runId: string; messageId?: string }
+    | { type: "done"; runId: string }
+    | { type: "error"; runId: string; message: string }
+  );
 
 export type SseEmitter = (event: SseEvent) => void;
 
-// One emitter per active runId — registered by Fastify SSE handler, consumed by agent runner
-const channels = new Map<string, SseEmitter>();
-
-export function registerChannel(runId: string, emit: SseEmitter): void {
-  channels.set(runId, emit);
-}
-
-export function getChannel(runId: string): SseEmitter | undefined {
-  return channels.get(runId);
-}
-
-export function removeChannel(runId: string): void {
-  channels.delete(runId);
-}
-
 export function formatSseData(event: SseEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
+  const idLine = typeof event.seq === "number" && Number.isFinite(event.seq) ? `id: ${event.seq}\n` : "";
+  return `${idLine}data: ${JSON.stringify(event)}\n\n`;
 }
