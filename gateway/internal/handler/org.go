@@ -107,7 +107,11 @@ type usageQueryParams struct {
 
 type orgUsageView struct {
 	id           string
+	orgID        string
 	workspaceID  string
+	sessionID    string
+	runID        string
+	taskID       string
 	timestamp    time.Time
 	timestampRaw string
 	day          string
@@ -127,6 +131,7 @@ type orgUsageView struct {
 	durationMs   int64
 	cost         float64
 	success      bool
+	metadataJSON string
 }
 
 type usageAggregate struct {
@@ -423,7 +428,11 @@ func toUsageView(item *chatpb.UsageRecord) orgUsageView {
 
 	return orgUsageView{
 		id:           item.Id,
+		orgID:        strings.TrimSpace(item.OrgId),
 		workspaceID:  item.WorkspaceId,
+		sessionID:    strings.TrimSpace(item.SessionId),
+		runID:        strings.TrimSpace(item.RunId),
+		taskID:       strings.TrimSpace(item.TaskId),
 		timestamp:    timestamp,
 		timestampRaw: timestampRaw,
 		day:          day,
@@ -443,6 +452,7 @@ func toUsageView(item *chatpb.UsageRecord) orgUsageView {
 		durationMs:   durationMs,
 		cost:         cost,
 		success:      success,
+		metadataJSON: strings.TrimSpace(item.MetadataJson),
 	}
 }
 
@@ -1731,6 +1741,67 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 	}
 	summary := summarizeUsageViews(views)
 
+	if isPluginJSONFormat(params.format) || isPluginNDJSONFormat(params.format) {
+		events := make([]map[string]any, 0, len(views))
+		for _, item := range views {
+			timestamp := item.timestampRaw
+			if strings.TrimSpace(timestamp) == "" {
+				timestamp = item.timestamp.UTC().Format(time.RFC3339)
+			}
+			events = append(events, buildPluginUsageEvent(pluginUsageSourceRecord{
+				ID:           item.id,
+				WorkspaceID:  item.workspaceID,
+				OrgID:        item.orgID,
+				SessionID:    item.sessionID,
+				RunID:        item.runID,
+				TaskID:       item.taskID,
+				RecordType:   item.recordType,
+				Scope:        item.scope,
+				Status:       item.status,
+				AgentID:      item.agentID,
+				AgentName:    item.agentName,
+				AgentRole:    item.agentRole,
+				Provider:     item.provider,
+				Model:        item.model,
+				InputTokens:  item.inputTokens,
+				OutputTokens: item.outputTokens,
+				TotalTokens:  item.totalTokens,
+				SuccessCount: item.successCount,
+				FailureCount: item.failureCount,
+				DurationMs:   item.durationMs,
+				Cost:         item.cost,
+				Timestamp:    timestamp,
+				MetadataJSON: item.metadataJSON,
+			}))
+		}
+
+		if isPluginNDJSONFormat(params.format) {
+			fileName := fmt.Sprintf(
+				"org-plugin-usage-events-%s-%s.ndjson",
+				orgSlug,
+				time.Now().UTC().Format("20060102-150405"),
+			)
+			w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+			w.WriteHeader(http.StatusOK)
+			encoder := json.NewEncoder(w)
+			for _, event := range events {
+				if err := encoder.Encode(event); err != nil {
+					return
+				}
+			}
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"specVersion": pluginUsageSpecVersion,
+			"data":        events,
+			"total":       len(events),
+			"summary":     summary.toMap(),
+		})
+		return
+	}
+
 	if params.format == "csv" {
 		fileName := fmt.Sprintf(
 			"org-usage-records-%s-%s.csv",
@@ -1746,7 +1817,7 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 			"id", "timestamp", "workspaceId", "recordType", "scope", "status",
 			"agentId", "agentName", "agentRole", "provider", "model",
 			"inputTokens", "outputTokens", "totalTokens",
-			"successCount", "failureCount", "durationMs", "cost", "success",
+			"successCount", "failureCount", "durationMs", "cost", "success", "metadataJson",
 		})
 		for _, item := range views {
 			_ = writer.Write([]string{
@@ -1769,6 +1840,7 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 				strconv.FormatInt(item.durationMs, 10),
 				strconv.FormatFloat(item.cost, 'f', 4, 64),
 				strconv.FormatBool(item.success),
+				item.metadataJSON,
 			})
 		}
 		writer.Flush()
@@ -1810,6 +1882,7 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 			"duration":     item.durationMs,
 			"cost":         item.cost,
 			"success":      item.success,
+			"metadataJson": item.metadataJSON,
 		})
 	}
 

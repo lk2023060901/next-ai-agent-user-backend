@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -354,7 +355,67 @@ func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	format := r.URL.Query().Get("format")
+	format := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("format")))
+	if isPluginJSONFormat(format) || isPluginNDJSONFormat(format) {
+		events := make([]map[string]any, 0, len(resp.Records))
+		for _, item := range resp.Records {
+			events = append(events, buildPluginUsageEvent(pluginUsageSourceRecord{
+				ID:           item.Id,
+				WorkspaceID:  item.WorkspaceId,
+				OrgID:        item.OrgId,
+				SessionID:    item.SessionId,
+				RunID:        item.RunId,
+				TaskID:       item.TaskId,
+				RecordType:   item.RecordType,
+				Scope:        item.Scope,
+				Status:       item.Status,
+				AgentID:      item.AgentId,
+				AgentName:    item.AgentName,
+				AgentRole:    item.AgentRole,
+				Provider:     item.ProviderName,
+				Model:        item.ModelName,
+				InputTokens:  int64(item.InputTokens),
+				OutputTokens: int64(item.OutputTokens),
+				TotalTokens:  int64(item.TotalTokens),
+				SuccessCount: int64(item.SuccessCount),
+				FailureCount: int64(item.FailureCount),
+				DurationMs:   computeDurationMs(item.StartedAt, item.EndedAt),
+				Timestamp:    item.RecordedAt,
+				MetadataJSON: item.MetadataJson,
+			}))
+		}
+
+		if isPluginNDJSONFormat(format) {
+			fileName := fmt.Sprintf(
+				"plugin-usage-events-%s-%s.ndjson",
+				chi.URLParam(r, "wsId"),
+				time.Now().UTC().Format("20060102-150405"),
+			)
+			w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+			w.WriteHeader(http.StatusOK)
+			encoder := json.NewEncoder(w)
+			for _, event := range events {
+				if err := encoder.Encode(event); err != nil {
+					return
+				}
+			}
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"specVersion":     pluginUsageSpecVersion,
+			"records":         events,
+			"total":           resp.Total,
+			"sumInputTokens":  resp.SumInputTokens,
+			"sumOutputTokens": resp.SumOutputTokens,
+			"sumTotalTokens":  resp.SumTotalTokens,
+			"sumSuccessCount": resp.SumSuccessCount,
+			"sumFailureCount": resp.SumFailureCount,
+		})
+		return
+	}
+
 	if format == "csv" {
 		fileName := fmt.Sprintf(
 			"usage-records-%s-%s.csv",
@@ -373,7 +434,7 @@ func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 			"providerId", "providerName", "modelId", "modelName",
 			"inputTokens", "outputTokens", "totalTokens",
 			"successCount", "failureCount",
-			"startedAt", "endedAt", "recordedAt",
+			"startedAt", "endedAt", "recordedAt", "metadataJson",
 		})
 
 		for _, item := range resp.Records {
@@ -402,6 +463,7 @@ func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 				item.StartedAt,
 				item.EndedAt,
 				item.RecordedAt,
+				item.MetadataJson,
 			})
 		}
 		writer.Flush()
@@ -435,6 +497,7 @@ func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 			"startedAt":    item.StartedAt,
 			"endedAt":      item.EndedAt,
 			"recordedAt":   item.RecordedAt,
+			"metadataJson": item.MetadataJson,
 		}
 	}
 

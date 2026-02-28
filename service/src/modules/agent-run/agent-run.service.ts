@@ -148,6 +148,7 @@ export interface UsageRecordRow {
   startedAt: string;
   endedAt: string;
   recordedAt: string;
+  metadataJson: string;
 }
 
 export interface ListUsageRecordsParams {
@@ -259,6 +260,9 @@ interface AgentUsageIdentity {
   modelName: string;
 }
 
+const RUNTIME_PLUGIN_NAME = "runtime.core";
+const RUNTIME_PLUGIN_VERSION = "1.0.0";
+
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const RUN_STATUS_TRANSITIONS: Record<string, Set<string>> = {
   pending: new Set(["running", "failed", "cancelled"]),
@@ -365,9 +369,14 @@ function upsertRunUsageLedgerRecord(runId: string, status: string): void {
     endedAt: run.endedAt,
     recordedAt: now,
     metadataJson: JSON.stringify({
-      runStatus: status,
-      taskSuccessCount: run.taskSuccessCount ?? 0,
-      taskFailureCount: run.taskFailureCount ?? 0,
+      pluginName: RUNTIME_PLUGIN_NAME,
+      pluginVersion: RUNTIME_PLUGIN_VERSION,
+      eventType: "runtime.run.usage",
+      payload: {
+        runStatus: status,
+        taskSuccessCount: run.taskSuccessCount ?? 0,
+        taskFailureCount: run.taskFailureCount ?? 0,
+      },
     }),
   };
 
@@ -439,7 +448,12 @@ function upsertTaskUsageLedgerRecord(taskId: string, status: string): void {
     startedAt: task.startedAt,
     endedAt: task.endedAt,
     recordedAt: now,
-    metadataJson: JSON.stringify({ taskStatus: status }),
+    metadataJson: JSON.stringify({
+      pluginName: RUNTIME_PLUGIN_NAME,
+      pluginVersion: RUNTIME_PLUGIN_VERSION,
+      eventType: "runtime.task.usage",
+      payload: { taskStatus: status },
+    }),
   };
 
   const existing = db
@@ -508,6 +522,7 @@ function mapUsageRecordRow(row: typeof usageRecords.$inferSelect): UsageRecordRo
     startedAt: row.startedAt ?? "",
     endedAt: row.endedAt ?? "",
     recordedAt: row.recordedAt,
+    metadataJson: row.metadataJson ?? "",
   };
 }
 

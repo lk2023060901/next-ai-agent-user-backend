@@ -165,6 +165,7 @@ message UsageRecord {
   string started_at = 22;
   string ended_at = 23;
   string recorded_at = 24;
+  string metadata_json = 25;
 }
 
 message ListUsageRecordsRequest {

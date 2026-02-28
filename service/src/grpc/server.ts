@@ -702,6 +702,7 @@ export function startGrpcServer(port: number): grpc.Server {
             startedAt: item.startedAt,
             endedAt: item.endedAt,
             recordedAt: item.recordedAt,
+            metadataJson: item.metadataJson,
           })),
           total: result.total,
           sumInputTokens: result.sumInputTokens,
