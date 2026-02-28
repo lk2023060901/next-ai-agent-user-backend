@@ -42,6 +42,8 @@ import {
   listMarketplacePlugins,
   listPluginReviews,
   listWorkspaceInstalledPlugins,
+  listRuntimePluginLoadCandidates,
+  reportRuntimePluginLoad,
   uninstallWorkspacePlugin,
   updateWorkspacePluginConfig,
   updateWorkspacePluginStatus,
@@ -49,6 +51,7 @@ import {
   type PluginConfigField,
   type PluginMarketplaceItem,
   type PluginReviewItem,
+  type RuntimePluginLoadCandidate,
 } from "../modules/plugins/plugin.service";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
@@ -178,6 +181,22 @@ function pluginReviewToProto(item: PluginReviewItem): Record<string, unknown> {
     rating: item.rating,
     content: item.content,
     createdAt: item.createdAt,
+  };
+}
+
+function runtimePluginLoadCandidateToProto(item: RuntimePluginLoadCandidate): Record<string, unknown> {
+  return {
+    installedPluginId: item.installedPluginId,
+    workspaceId: item.workspaceId,
+    pluginId: item.pluginId,
+    pluginName: item.pluginName,
+    pluginVersion: item.pluginVersion,
+    pluginType: item.pluginType,
+    status: item.status,
+    configJson: item.configJson,
+    installPath: item.installPath,
+    sourceType: item.sourceType,
+    sourceSpec: item.sourceSpec,
   };
 }
 
@@ -649,6 +668,27 @@ export function startGrpcServer(port: number): grpc.Server {
           totalTokens: call.request.totalTokens,
         });
         callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+    listRuntimePlugins(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const plugins = listRuntimePluginLoadCandidates();
+        callback(null, {
+          plugins: plugins.map(runtimePluginLoadCandidateToProto),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    reportRuntimePluginLoad(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = reportRuntimePluginLoad({
+          installedPluginId: String(call.request.installedPluginId ?? ""),
+          workspaceId: String(call.request.workspaceId ?? ""),
+          pluginId: String(call.request.pluginId ?? ""),
+          status: String(call.request.status ?? ""),
+          message: String(call.request.message ?? ""),
+          actorUserId: String(call.request.actorUserId ?? "runtime"),
+        });
+        callback(null, { updated: result.updated });
       } catch (err) { handleError(callback, err); }
     },
   });

@@ -6,6 +6,7 @@ import { formatSseData, type SseEvent } from "./sse/emitter.js";
 import { IdempotencyConflictError, RunStore } from "./sse/run-store.js";
 import { startRun } from "./agent/runner.js";
 import { runChannelRequest } from "./agent/channel-runner.js";
+import { initializeRuntimePlugins } from "./plugins/runtime-loader.js";
 
 const app = Fastify({ logger: true });
 
@@ -305,6 +306,16 @@ async function sendReplyToChannel(params: {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 try {
+  try {
+    const summary = await initializeRuntimePlugins({
+      grpc: grpcClient,
+      logger: app.log,
+    });
+    app.log.info(summary, "Runtime plugin bootstrap completed");
+  } catch (err) {
+    app.log.error({ err }, "Runtime plugin bootstrap failed");
+  }
+
   await app.listen({ port: config.port, host: "0.0.0.0" });
   app.log.info(`Runtime listening on :${config.port}`);
 } catch (err) {

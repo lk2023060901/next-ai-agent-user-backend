@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
@@ -112,6 +112,29 @@ export type InstallWorkspacePluginParams = {
   sourcePin?: boolean;
   installedBy?: string;
 };
+
+export interface RuntimePluginLoadCandidate {
+  installedPluginId: string;
+  workspaceId: string;
+  pluginId: string;
+  pluginName: string;
+  pluginVersion: string;
+  pluginType: string;
+  status: string;
+  configJson: string;
+  installPath: string;
+  sourceType: string;
+  sourceSpec: string;
+}
+
+export interface ReportRuntimePluginLoadParams {
+  installedPluginId: string;
+  workspaceId: string;
+  pluginId: string;
+  status: string;
+  message?: string;
+  actorUserId?: string;
+}
 
 type OpenClawManifest = {
   id: string;
@@ -1905,4 +1928,108 @@ export async function updateWorkspacePluginConfig(params: {
     throw Object.assign(new Error("Installed plugin not found"), { code: "NOT_FOUND" });
   }
   return await buildInstalledPluginItem(updated);
+}
+
+function normalizeRuntimeLoadStatus(raw: string): "success" | "failure" {
+  const status = (raw ?? "").trim().toLowerCase();
+  return status === "success" ? "success" : "failure";
+}
+
+export function listRuntimePluginLoadCandidates(): RuntimePluginLoadCandidate[] {
+  const rows = db
+    .select({
+      installedPluginId: installedPlugins.id,
+      workspaceId: installedPlugins.workspaceId,
+      pluginId: installedPlugins.pluginId,
+      status: installedPlugins.status,
+      configJson: installedPlugins.configJson,
+      pluginName: plugins.name,
+      pluginVersion: plugins.version,
+      pluginType: plugins.type,
+      sourceType: pluginInstallRecords.sourceType,
+      sourceSpec: pluginInstallRecords.sourceSpec,
+      installPath: pluginInstallRecords.installPath,
+    })
+    .from(installedPlugins)
+    .innerJoin(plugins, eq(plugins.id, installedPlugins.pluginId))
+    .innerJoin(pluginInstallRecords, eq(pluginInstallRecords.installedPluginId, installedPlugins.id))
+    .where(
+      and(
+        inArray(installedPlugins.status, ["enabled", "active"]),
+        eq(plugins.type, "tool"),
+      ),
+    )
+    .all();
+
+  return rows
+    .map((row) => ({
+      installedPluginId: row.installedPluginId,
+      workspaceId: row.workspaceId,
+      pluginId: row.pluginId,
+      pluginName: row.pluginName ?? row.pluginId,
+      pluginVersion: row.pluginVersion ?? "0.0.0",
+      pluginType: normalizePluginType(row.pluginType),
+      status: normalizeInstalledStatus(row.status),
+      configJson: row.configJson ?? "{}",
+      installPath: row.installPath ?? "",
+      sourceType: row.sourceType,
+      sourceSpec: row.sourceSpec,
+    }))
+    .filter((row) => row.installPath.trim().length > 0);
+}
+
+export function reportRuntimePluginLoad(params: ReportRuntimePluginLoadParams): { updated: boolean } {
+  const installedPluginId = (params.installedPluginId ?? "").trim();
+  const workspaceId = (params.workspaceId ?? "").trim();
+  const pluginId = (params.pluginId ?? "").trim();
+  const actor = params.actorUserId?.trim() || "runtime";
+  const status = normalizeRuntimeLoadStatus(params.status);
+  const message = (params.message ?? "").trim() || null;
+
+  if (!installedPluginId || !workspaceId || !pluginId) {
+    throw Object.assign(
+      new Error("installedPluginId, workspaceId and pluginId are required"),
+      { code: "INVALID_ARGUMENT" },
+    );
+  }
+
+  const row = db
+    .select()
+    .from(installedPlugins)
+    .where(
+      and(
+        eq(installedPlugins.id, installedPluginId),
+        eq(installedPlugins.workspaceId, workspaceId),
+        eq(installedPlugins.pluginId, pluginId),
+      ),
+    )
+    .get();
+  if (!row) return { updated: false };
+
+  const nextInstalledStatus = status === "success" ? "enabled" : "error";
+  if (row.status !== nextInstalledStatus) {
+    db.update(installedPlugins)
+      .set({ status: nextInstalledStatus })
+      .where(eq(installedPlugins.id, row.id))
+      .run();
+  }
+
+  const installRecord = findInstallRecordByInstalledPluginId(row.id);
+  writePluginInstallAudit({
+    workspaceId,
+    pluginId,
+    installedPluginId: row.id,
+    actorUserId: actor,
+    action: "runtime_load",
+    status,
+    sourceType: installRecord?.sourceType ?? undefined,
+    sourceSpec: installRecord?.sourceSpec ?? undefined,
+    expectedIntegrity: installRecord?.expectedIntegrity ?? undefined,
+    resolvedIntegrity: installRecord?.resolvedIntegrity ?? undefined,
+    artifactSha256: installRecord?.artifactSha256 ?? undefined,
+    artifactSha512: installRecord?.artifactSha512 ?? undefined,
+    message: message ?? undefined,
+  });
+
+  return { updated: true };
 }

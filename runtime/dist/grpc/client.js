@@ -63,4 +63,17 @@ export const grpcClient = {
             totalTokens: params.totalTokens,
         });
     },
+    listRuntimePlugins() {
+        return promisify(agentRunClient, "listRuntimePlugins", {});
+    },
+    reportRuntimePluginLoad(params) {
+        return promisify(agentRunClient, "reportRuntimePluginLoad", {
+            installedPluginId: params.installedPluginId,
+            workspaceId: params.workspaceId,
+            pluginId: params.pluginId,
+            status: params.status,
+            message: params.message ?? "",
+            actorUserId: params.actorUserId ?? "runtime",
+        });
+    },
 };

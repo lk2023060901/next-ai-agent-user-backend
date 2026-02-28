@@ -221,10 +221,51 @@ async function main(): Promise<void> {
   assertTrue(rollbackAudits.some((row) => row.status === "failure"), "missing failure audit for rollback scenario");
   assertTrue(rollbackAudits.some((row) => row.status === "rollback"), "missing rollback audit for rollback scenario");
 
+  const runtimeCandidates = pluginService.listRuntimePluginLoadCandidates();
+  const okRuntimeCandidate = runtimeCandidates.find((row) => row.pluginId === "smoke-plugin-ok");
+  assertTrue(okRuntimeCandidate, "runtime load candidates should include smoke-plugin-ok");
+
+  const runtimeFailure = pluginService.reportRuntimePluginLoad({
+    installedPluginId: okRuntimeCandidate.installedPluginId,
+    workspaceId: okRuntimeCandidate.workspaceId,
+    pluginId: okRuntimeCandidate.pluginId,
+    status: "failure",
+    message: "runtime bootstrap failed (smoke)",
+    actorUserId: "runtime-smoke",
+  });
+  assertTrue(runtimeFailure.updated, "runtime failure report should update status");
+
+  const afterFailure = db.select().from(schema.installedPlugins)
+    .where(eq(schema.installedPlugins.id, okRuntimeCandidate.installedPluginId))
+    .get();
+  assertTrue(afterFailure?.status === "error", "runtime failure should mark installed plugin as error");
+
+  const runtimeSuccess = pluginService.reportRuntimePluginLoad({
+    installedPluginId: okRuntimeCandidate.installedPluginId,
+    workspaceId: okRuntimeCandidate.workspaceId,
+    pluginId: okRuntimeCandidate.pluginId,
+    status: "success",
+    message: "runtime bootstrap recovered (smoke)",
+    actorUserId: "runtime-smoke",
+  });
+  assertTrue(runtimeSuccess.updated, "runtime success report should update status");
+
+  const afterSuccess = db.select().from(schema.installedPlugins)
+    .where(eq(schema.installedPlugins.id, okRuntimeCandidate.installedPluginId))
+    .get();
+  assertTrue(afterSuccess?.status === "enabled", "runtime success should mark installed plugin as enabled");
+
+  const runtimeLoadAudits = db.select().from(schema.pluginInstallAudits)
+    .where(and(eq(schema.pluginInstallAudits.workspaceId, wsSuccess), eq(schema.pluginInstallAudits.action, "runtime_load")))
+    .all();
+  assertTrue(runtimeLoadAudits.some((row) => row.status === "failure"), "missing runtime_load failure audit");
+  assertTrue(runtimeLoadAudits.some((row) => row.status === "success"), "missing runtime_load success audit");
+
   console.log(`[PASS] happy path install with integrity check (${okInstall.pluginId})`);
   console.log("[PASS] integrity mismatch is rejected and no installed row created");
   console.log("[PASS] rollback cleans install path on source install failure");
   console.log("[PASS] audit trail written for success/failure/rollback");
+  console.log("[PASS] runtime loader candidate list + status report + runtime_load audit");
   console.log(`Smoke DB: ${dbPath}`);
 }
 

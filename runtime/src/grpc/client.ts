@@ -53,6 +53,20 @@ export interface AgentConfig {
   llmApiKey: string;
 }
 
+export interface RuntimePluginLoadCandidate {
+  installedPluginId: string;
+  workspaceId: string;
+  pluginId: string;
+  pluginName: string;
+  pluginVersion: string;
+  pluginType: string;
+  status: string;
+  configJson: string;
+  installPath: string;
+  sourceType: string;
+  sourceSpec: string;
+}
+
 export const grpcClient = {
   getAgentConfig(agentId: string): Promise<AgentConfig> {
     return promisify<AgentConfig>(agentRunClient, "getAgentConfig", { agentId });
@@ -125,6 +139,28 @@ export const grpcClient = {
       inputTokens: params.inputTokens,
       outputTokens: params.outputTokens,
       totalTokens: params.totalTokens,
+    });
+  },
+
+  listRuntimePlugins(): Promise<{ plugins: RuntimePluginLoadCandidate[] }> {
+    return promisify(agentRunClient, "listRuntimePlugins", {});
+  },
+
+  reportRuntimePluginLoad(params: {
+    installedPluginId: string;
+    workspaceId: string;
+    pluginId: string;
+    status: "success" | "failure";
+    message?: string;
+    actorUserId?: string;
+  }): Promise<{ updated: boolean }> {
+    return promisify(agentRunClient, "reportRuntimePluginLoad", {
+      installedPluginId: params.installedPluginId,
+      workspaceId: params.workspaceId,
+      pluginId: params.pluginId,
+      status: params.status,
+      message: params.message ?? "",
+      actorUserId: params.actorUserId ?? "runtime",
     });
   },
 };
