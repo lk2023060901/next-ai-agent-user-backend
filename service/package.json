@@ -8,7 +8,8 @@
     "start": "node dist/server.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "proto": "bash ../scripts/gen-proto.sh"
+    "proto": "bash ../scripts/gen-proto.sh",
+    "smoke:plugin-security": "tsx src/scripts/plugin-install-security-smoke.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",

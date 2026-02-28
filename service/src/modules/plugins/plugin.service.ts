@@ -316,6 +316,21 @@ function decodeBase64ToHex(value: string): string | null {
   }
 }
 
+function parseIntegrityPayload(algo: "sha256" | "sha512", payload: string): string | null {
+  const normalized = payload.trim();
+  if (!normalized) return null;
+
+  const expectedHexLength = algo === "sha256" ? 64 : 128;
+  const hexPattern = algo === "sha256" ? /^[a-f0-9]{64}$/i : /^[a-f0-9]{128}$/i;
+  if (hexPattern.test(normalized)) {
+    return normalizeHex(normalized);
+  }
+
+  const decoded = decodeBase64ToHex(normalized);
+  if (!decoded || decoded.length !== expectedHexLength) return null;
+  return normalizeHex(decoded);
+}
+
 function parseExpectedIntegrity(raw: string | undefined): { algo: "sha256" | "sha512"; value: string } | null {
   if (!raw) return null;
   const value = raw.trim();
@@ -323,16 +338,14 @@ function parseExpectedIntegrity(raw: string | undefined): { algo: "sha256" | "sh
 
   const lower = value.toLowerCase();
   if (lower.startsWith("sha256:") || lower.startsWith("sha256-")) {
-    const payload = value.slice(7).trim();
-    const decoded = decodeBase64ToHex(payload);
-    if (decoded) return { algo: "sha256", value: decoded };
-    return { algo: "sha256", value: normalizeHex(payload) };
+    const parsed = parseIntegrityPayload("sha256", value.slice(7));
+    if (!parsed) return null;
+    return { algo: "sha256", value: parsed };
   }
   if (lower.startsWith("sha512:") || lower.startsWith("sha512-")) {
-    const payload = value.slice(7).trim();
-    const decoded = decodeBase64ToHex(payload);
-    if (decoded) return { algo: "sha512", value: decoded };
-    return { algo: "sha512", value: normalizeHex(payload) };
+    const parsed = parseIntegrityPayload("sha512", value.slice(7));
+    if (!parsed) return null;
+    return { algo: "sha512", value: parsed };
   }
   if (/^[a-f0-9]{64}$/i.test(value)) {
     return { algo: "sha256", value: normalizeHex(value) };
@@ -349,12 +362,12 @@ function parseResolvedIntegrity(raw: string | undefined): { algo: "sha256" | "sh
   if (!value) return null;
   const lower = value.toLowerCase();
   if (lower.startsWith("sha256-")) {
-    const decoded = decodeBase64ToHex(value.slice(7));
+    const decoded = parseIntegrityPayload("sha256", value.slice(7));
     if (decoded) return { algo: "sha256", value: decoded };
     return null;
   }
   if (lower.startsWith("sha512-")) {
-    const decoded = decodeBase64ToHex(value.slice(7));
+    const decoded = parseIntegrityPayload("sha512", value.slice(7));
     if (decoded) return { algo: "sha512", value: decoded };
     return null;
   }
