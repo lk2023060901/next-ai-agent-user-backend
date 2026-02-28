@@ -19,8 +19,15 @@ export interface CoordinatorParams {
 export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId);
   let fullText = "";
+  const messageId = uuidv4();
+  const pendingToolCalls = new Map<string, string[]>();
 
-  params.emit({ type: "message-start", agentId: params.coordinatorAgentId });
+  params.emit({
+    type: "message-start",
+    runId: params.runId,
+    messageId,
+    agentId: params.coordinatorAgentId,
+  });
 
   const rootTaskId = uuidv4();
 
@@ -53,6 +60,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
         textDelta?: string;
         text?: string;
         reasoning?: string;
+        toolCallId?: string;
         toolName?: string;
         args?: unknown;
         result?: unknown;
@@ -60,25 +68,63 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
       };
       if (c.type === "text-delta" && c.textDelta !== undefined) {
         fullText += c.textDelta;
-        params.emit({ type: "text-delta", text: c.textDelta });
+        params.emit({
+          type: "text-delta",
+          runId: params.runId,
+          messageId,
+          text: c.textDelta,
+          delta: c.textDelta,
+        });
       } else if (c.type === "reasoning-delta") {
         const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
-        if (text) params.emit({ type: "reasoning-delta", text });
+        if (text) {
+          params.emit({
+            type: "reasoning-delta",
+            runId: params.runId,
+            messageId,
+            text,
+            delta: text,
+          });
+        }
       } else if (c.type === "reasoning") {
         const text = c.text ?? c.reasoning ?? "";
-        if (text) params.emit({ type: "reasoning", text });
+        if (text) params.emit({ type: "reasoning", runId: params.runId, messageId, text });
       } else if (c.type === "tool-call") {
-        params.emit({ type: "tool-call", toolName: c.toolName!, args: c.args });
+        const toolName = c.toolName ?? "unknown_tool";
+        const toolCallId = c.toolCallId ?? uuidv4();
+        const queue = pendingToolCalls.get(toolName) ?? [];
+        queue.push(toolCallId);
+        pendingToolCalls.set(toolName, queue);
+        params.emit({
+          type: "tool-call",
+          runId: params.runId,
+          messageId,
+          toolCallId,
+          toolName,
+          args: c.args ?? {},
+        });
       } else if (c.type === "tool-result") {
-        params.emit({ type: "tool-result", toolName: c.toolName!, result: c.result });
+        const toolName = c.toolName ?? "unknown_tool";
+        const queue = pendingToolCalls.get(toolName);
+        const queuedToolCallId = queue && queue.length > 0 ? queue.shift() : undefined;
+        if (queue && queue.length === 0) pendingToolCalls.delete(toolName);
+        params.emit({
+          type: "tool-result",
+          runId: params.runId,
+          messageId,
+          toolCallId: c.toolCallId ?? queuedToolCallId,
+          toolName,
+          result: c.result ?? "",
+          status: "success",
+        });
       } else if (c.type === "error") {
         throw new Error(String(c.error));
       }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    params.emit({ type: "task-failed", taskId: params.runId, error: msg });
-    params.emit({ type: "message-end", runId: params.runId });
+    params.emit({ type: "task-failed", runId: params.runId, messageId, taskId: params.runId, error: msg });
+    params.emit({ type: "message-end", runId: params.runId, messageId });
     throw err;
   }
 
@@ -91,5 +137,5 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     });
   }
 
-  params.emit({ type: "message-end", runId: params.runId });
+  params.emit({ type: "message-end", runId: params.runId, messageId });
 }

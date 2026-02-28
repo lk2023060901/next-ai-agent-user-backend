@@ -14,7 +14,7 @@ export function makeDelegateTool(params) {
                     error: `Max spawn depth (${params.sandbox.maxSpawnDepth}) reached — cannot delegate further`,
                 };
             }
-            params.emit({ type: "agent-switch", agentId });
+            params.emit({ type: "agent-switch", runId: params.runId, agentId });
             const { taskId } = await params.grpc.createTask({
                 runId: params.runId,
                 agentId,
@@ -22,7 +22,7 @@ export function makeDelegateTool(params) {
                 depth: params.depth + 1,
                 parentTaskId: params.taskId,
             });
-            params.emit({ type: "agent-switch", agentId, taskId });
+            params.emit({ type: "agent-switch", runId: params.runId, agentId, taskId });
             // Lazy import to avoid circular dependency: delegate → executor → delegate
             const { runExecutor } = await import("../agent/executor.js");
             const narrowedSandbox = {

@@ -24,6 +24,7 @@ export async function startRun(req) {
             grpc: grpcClient,
         });
         await grpcClient.updateRunStatus(req.runId, "completed");
+        emit({ type: "done", runId: req.runId });
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -33,7 +34,8 @@ export async function startRun(req) {
         catch {
             // best effort
         }
-        emit({ type: "message-end", runId: req.runId });
+        emit({ type: "error", runId: req.runId, message: msg });
+        emit({ type: "done", runId: req.runId });
         throw err;
     }
 }

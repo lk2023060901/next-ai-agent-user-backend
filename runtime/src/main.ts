@@ -33,6 +33,14 @@ app.get("/health", async () => ({ status: "ok" }));
 // the final reply back to Gateway /channels/:channelId/send.
 
 app.post<{ Body: ChannelRunBody }>("/channel-run", async (request, reply) => {
+  const runtimeSecretHeader = request.headers["x-runtime-secret"];
+  const providedSecret = Array.isArray(runtimeSecretHeader)
+    ? (runtimeSecretHeader[0] ?? "")
+    : (runtimeSecretHeader ?? "");
+  if (providedSecret !== config.runtimeSecret) {
+    return reply.status(401).send({ error: "invalid runtime secret" });
+  }
+
   const body = request.body;
 
   if (
@@ -113,16 +121,26 @@ app.get<{ Params: { runId: string } }>(
     reply.raw.setHeader("X-Accel-Buffering", "no");
     reply.raw.flushHeaders();
 
+    const closeStream = () => {
+      removeChannel(runId);
+      if (!reply.raw.writableEnded) {
+        reply.raw.end();
+      }
+    };
+
     const emit = (event: SseEvent) => {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return;
       reply.raw.write(formatSseData(event));
+      if (event.type === "done" || event.type === "error") {
+        // Ensure frontend read loop can terminate naturally.
+        setImmediate(closeStream);
+      }
     };
 
     registerChannel(runId, emit);
 
     // Clean up channel when client disconnects
-    request.raw.on("close", () => {
-      removeChannel(runId);
-    });
+    request.raw.on("close", closeStream);
 
     // Start the run now that the SSE channel is registered
     const pending = pendingRuns.get(runId);

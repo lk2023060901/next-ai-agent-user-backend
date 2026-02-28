@@ -29,7 +29,7 @@ export function makeDelegateTool(params: DelegateParams) {
         };
       }
 
-      params.emit({ type: "agent-switch", agentId });
+      params.emit({ type: "agent-switch", runId: params.runId, agentId });
 
       const { taskId } = await params.grpc.createTask({
         runId: params.runId,
@@ -39,7 +39,7 @@ export function makeDelegateTool(params: DelegateParams) {
         parentTaskId: params.taskId,
       });
 
-      params.emit({ type: "agent-switch", agentId, taskId });
+      params.emit({ type: "agent-switch", runId: params.runId, agentId, taskId });
 
       // Lazy import to avoid circular dependency: delegate → executor → delegate
       const { runExecutor } = await import("../agent/executor.js");

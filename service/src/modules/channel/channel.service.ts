@@ -213,7 +213,10 @@ export function handleWebhook(
     // Fire-and-forget: dispatch to runtime without blocking Feishu webhook response
     fetch(`${config.runtimeAddr}/channel-run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Runtime-Secret': config.runtimeSecret,
+      },
       signal: AbortSignal.timeout(5000),
       body: JSON.stringify({
         sessionId: session.id,
