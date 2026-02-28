@@ -46,7 +46,6 @@ message UpdateRunStatusRequest {
   string run_id = 1;
   string status = 2;
 }
-message Empty {}
 
 message CreateTaskRequest {
   string run_id = 1;
@@ -64,6 +63,22 @@ message UpdateTaskRequest {
   string result = 4;
 }
 
+message RecordRunUsageRequest {
+  string run_id = 1;
+  int32 coordinator_input_tokens = 2;
+  int32 coordinator_output_tokens = 3;
+  int32 coordinator_total_tokens = 4;
+}
+
+message RecordTaskUsageRequest {
+  string task_id = 1;
+  int32 input_tokens = 2;
+  int32 output_tokens = 3;
+  int32 total_tokens = 4;
+}
+
+message Empty {}
+
 service AgentRunService {
   rpc GetAgentConfig  (GetAgentConfigRequest)  returns (AgentConfig);
   rpc CreateRun       (CreateRunRequest)        returns (CreateRunResponse);
@@ -71,4 +86,6 @@ service AgentRunService {
   rpc UpdateRunStatus (UpdateRunStatusRequest)  returns (Empty);
   rpc CreateTask      (CreateTaskRequest)       returns (CreateTaskResponse);
   rpc UpdateTask      (UpdateTaskRequest)       returns (Empty);
+  rpc RecordRunUsage  (RecordRunUsageRequest)   returns (Empty);
+  rpc RecordTaskUsage (RecordTaskUsageRequest)  returns (Empty);
 }

@@ -46,9 +46,22 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
   });
 
   let fullText = "";
+  let result: ReturnType<typeof streamText> | null = null;
+  const resolveUsage = async () => {
+    if (!result) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    try {
+      const usage = await result.usage;
+      const inputTokens = Math.max(0, usage.promptTokens ?? 0);
+      const outputTokens = Math.max(0, usage.completionTokens ?? 0);
+      const totalTokens = Math.max(0, usage.totalTokens ?? (inputTokens + outputTokens));
+      return { inputTokens, outputTokens, totalTokens };
+    } catch {
+      return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    }
+  };
 
   try {
-    const result = streamText({
+    result = streamText({
       model: buildModelForAgent(agentCfg),
       system: agentCfg.systemPrompt || undefined,
       messages: [{ role: "user", content: params.instruction }],
@@ -121,6 +134,18 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
       }
     }
 
+    const usage = await resolveUsage();
+    try {
+      await params.grpc.recordTaskUsage({
+        taskId: params.taskId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+      });
+    } catch {
+      // best effort
+    }
+
     await params.grpc.updateTask({
       taskId: params.taskId,
       status: "completed",
@@ -147,6 +172,18 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
 
     return { result: fullText };
   } catch (err) {
+    const usage = await resolveUsage();
+    try {
+      await params.grpc.recordTaskUsage({
+        taskId: params.taskId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+      });
+    } catch {
+      // best effort
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     await params.grpc.updateTask({
       taskId: params.taskId,

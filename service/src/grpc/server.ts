@@ -28,9 +28,11 @@ import {
 } from "../modules/scheduler/scheduler.service";
 import {
   getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
+  recordRunUsage, recordTaskUsage,
 } from "../modules/agent-run/agent-run.service";
 import {
   listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
+  getRuntimeMetrics,
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
 
@@ -542,6 +544,28 @@ export function startGrpcServer(port: number): grpc.Server {
         callback(null, {});
       } catch (err) { handleError(callback, err); }
     },
+    recordRunUsage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        recordRunUsage({
+          runId: call.request.runId,
+          inputTokens: call.request.coordinatorInputTokens,
+          outputTokens: call.request.coordinatorOutputTokens,
+          totalTokens: call.request.coordinatorTotalTokens,
+        });
+        callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+    recordTaskUsage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        recordTaskUsage({
+          taskId: call.request.taskId,
+          inputTokens: call.request.inputTokens,
+          outputTokens: call.request.outputTokens,
+          totalTokens: call.request.totalTokens,
+        });
+        callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
   });
 
   // ── Chat (Sessions / Messages / Agents) ───────────────────────────────────
@@ -601,6 +625,48 @@ export function startGrpcServer(port: number): grpc.Server {
         });
       }
       catch (err) { handleError(callback, err); }
+    },
+    getRuntimeMetrics(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = getRuntimeMetrics(call.request.workspaceId, call.request.days);
+        callback(null, {
+          totalInputTokens: result.totalInputTokens,
+          totalOutputTokens: result.totalOutputTokens,
+          totalTokens: result.totalTokens,
+          coordinatorInputTokens: result.coordinatorInputTokens,
+          coordinatorOutputTokens: result.coordinatorOutputTokens,
+          coordinatorTotalTokens: result.coordinatorTotalTokens,
+          subAgentInputTokens: result.subAgentInputTokens,
+          subAgentOutputTokens: result.subAgentOutputTokens,
+          subAgentTotalTokens: result.subAgentTotalTokens,
+          successfulRuns: result.successfulRuns,
+          failedRuns: result.failedRuns,
+          successfulTasks: result.successfulTasks,
+          failedTasks: result.failedTasks,
+          daily: result.daily.map((item) => ({
+            date: item.date,
+            inputTokens: item.inputTokens,
+            outputTokens: item.outputTokens,
+            totalTokens: item.totalTokens,
+            successfulRuns: item.successfulRuns,
+            failedRuns: item.failedRuns,
+            successfulTasks: item.successfulTasks,
+            failedTasks: item.failedTasks,
+          })),
+          agents: result.agents.map((item) => ({
+            agentId: item.agentId,
+            name: item.name,
+            role: item.role,
+            inputTokens: item.inputTokens,
+            outputTokens: item.outputTokens,
+            totalTokens: item.totalTokens,
+            successfulRuns: item.successfulRuns,
+            failedRuns: item.failedRuns,
+            successfulTasks: item.successfulTasks,
+            failedTasks: item.failedTasks,
+          })),
+        });
+      } catch (err) { handleError(callback, err); }
     },
     listAgents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, { agents: listAgents(call.request.workspaceId) }); }

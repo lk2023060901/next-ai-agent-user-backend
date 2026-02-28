@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, inArray, lt, or, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
+import { getWorkspaceRuntimeMetrics } from "../agent-run/agent-run.service";
 import {
   chatSessions,
   messages,
@@ -298,6 +299,10 @@ export function updateUserMessage(sessionId: string, messageId: string, content:
     message: updatedMessage,
     removedMessageIds,
   };
+}
+
+export function getRuntimeMetrics(workspaceId: string, days?: number) {
+  return getWorkspaceRuntimeMetrics(workspaceId, days ?? 7);
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────

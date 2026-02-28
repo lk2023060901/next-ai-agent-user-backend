@@ -256,6 +256,73 @@ func (h *ChatHandler) UpdateUserMessage(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h *ChatHandler) GetRuntimeMetrics(w http.ResponseWriter, r *http.Request) {
+	days := int32(7)
+	if raw := r.URL.Query().Get("days"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 90 {
+			days = int32(n)
+		}
+	}
+
+	resp, err := h.clients.Chat.GetRuntimeMetrics(r.Context(), &chatpb.GetRuntimeMetricsRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		Days:        days,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	daily := make([]map[string]any, len(resp.Daily))
+	for i, item := range resp.Daily {
+		daily[i] = map[string]any{
+			"date":            item.Date,
+			"inputTokens":     item.InputTokens,
+			"outputTokens":    item.OutputTokens,
+			"totalTokens":     item.TotalTokens,
+			"successfulRuns":  item.SuccessfulRuns,
+			"failedRuns":      item.FailedRuns,
+			"successfulTasks": item.SuccessfulTasks,
+			"failedTasks":     item.FailedTasks,
+		}
+	}
+
+	agents := make([]map[string]any, len(resp.Agents))
+	for i, item := range resp.Agents {
+		agents[i] = map[string]any{
+			"agentId":         item.AgentId,
+			"name":            item.Name,
+			"role":            item.Role,
+			"inputTokens":     item.InputTokens,
+			"outputTokens":    item.OutputTokens,
+			"totalTokens":     item.TotalTokens,
+			"successfulRuns":  item.SuccessfulRuns,
+			"failedRuns":      item.FailedRuns,
+			"successfulTasks": item.SuccessfulTasks,
+			"failedTasks":     item.FailedTasks,
+		}
+	}
+
+	writeData(w, http.StatusOK, map[string]any{
+		"totalInputTokens":        resp.TotalInputTokens,
+		"totalOutputTokens":       resp.TotalOutputTokens,
+		"totalTokens":             resp.TotalTokens,
+		"coordinatorInputTokens":  resp.CoordinatorInputTokens,
+		"coordinatorOutputTokens": resp.CoordinatorOutputTokens,
+		"coordinatorTotalTokens":  resp.CoordinatorTotalTokens,
+		"subAgentInputTokens":     resp.SubAgentInputTokens,
+		"subAgentOutputTokens":    resp.SubAgentOutputTokens,
+		"subAgentTotalTokens":     resp.SubAgentTotalTokens,
+		"successfulRuns":          resp.SuccessfulRuns,
+		"failedRuns":              resp.FailedRuns,
+		"successfulTasks":         resp.SuccessfulTasks,
+		"failedTasks":             resp.FailedTasks,
+		"daily":                   daily,
+		"agents":                  agents,
+	})
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
 func (h *ChatHandler) ListAgents(w http.ResponseWriter, r *http.Request) {

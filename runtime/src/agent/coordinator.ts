@@ -52,6 +52,17 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     tools: Object.keys(tools).length > 0 ? tools : undefined,
     maxSteps: params.sandbox.maxTurns,
   });
+  const resolveUsage = async () => {
+    try {
+      const usage = await result.usage;
+      const inputTokens = Math.max(0, usage.promptTokens ?? 0);
+      const outputTokens = Math.max(0, usage.completionTokens ?? 0);
+      const totalTokens = Math.max(0, usage.totalTokens ?? (inputTokens + outputTokens));
+      return { inputTokens, outputTokens, totalTokens };
+    } catch {
+      return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    }
+  };
 
   try {
     for await (const chunk of result.fullStream) {
@@ -122,10 +133,34 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
       }
     }
   } catch (err) {
+    const usage = await resolveUsage();
+    try {
+      await params.grpc.recordRunUsage({
+        runId: params.runId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+      });
+    } catch {
+      // best effort
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     params.emit({ type: "task-failed", runId: params.runId, messageId, taskId: params.runId, error: msg });
     params.emit({ type: "message-end", runId: params.runId, messageId });
     throw err;
+  }
+
+  const usage = await resolveUsage();
+  try {
+    await params.grpc.recordRunUsage({
+      runId: params.runId,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens,
+    });
+  } catch {
+    // best effort
   }
 
   if (fullText.trim().length > 0) {

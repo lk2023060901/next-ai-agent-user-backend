@@ -99,4 +99,32 @@ export const grpcClient = {
   }): Promise<void> {
     return promisify(agentRunClient, "updateTask", params);
   },
+
+  recordRunUsage(params: {
+    runId: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  }): Promise<void> {
+    return promisify(agentRunClient, "recordRunUsage", {
+      runId: params.runId,
+      coordinatorInputTokens: params.inputTokens,
+      coordinatorOutputTokens: params.outputTokens,
+      coordinatorTotalTokens: params.totalTokens,
+    });
+  },
+
+  recordTaskUsage(params: {
+    taskId: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  }): Promise<void> {
+    return promisify(agentRunClient, "recordTaskUsage", {
+      taskId: params.taskId,
+      inputTokens: params.inputTokens,
+      outputTokens: params.outputTokens,
+      totalTokens: params.totalTokens,
+    });
+  },
 };

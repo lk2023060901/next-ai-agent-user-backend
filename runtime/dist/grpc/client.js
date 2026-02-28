@@ -47,4 +47,20 @@ export const grpcClient = {
     updateTask(params) {
         return promisify(agentRunClient, "updateTask", params);
     },
+    recordRunUsage(params) {
+        return promisify(agentRunClient, "recordRunUsage", {
+            runId: params.runId,
+            coordinatorInputTokens: params.inputTokens,
+            coordinatorOutputTokens: params.outputTokens,
+            coordinatorTotalTokens: params.totalTokens,
+        });
+    },
+    recordTaskUsage(params) {
+        return promisify(agentRunClient, "recordTaskUsage", {
+            taskId: params.taskId,
+            inputTokens: params.inputTokens,
+            outputTokens: params.outputTokens,
+            totalTokens: params.totalTokens,
+        });
+    },
 };

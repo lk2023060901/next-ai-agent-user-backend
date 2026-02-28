@@ -92,6 +92,54 @@ message UpdateUserMessageResponse {
   repeated string removed_message_ids = 2;
 }
 
+message GetRuntimeMetricsRequest {
+  string workspace_id = 1;
+  int32 days = 2;
+  common.UserContext user_context = 3;
+}
+
+message RuntimeMetricsDay {
+  string date = 1;
+  int32 input_tokens = 2;
+  int32 output_tokens = 3;
+  int32 total_tokens = 4;
+  int32 successful_runs = 5;
+  int32 failed_runs = 6;
+  int32 successful_tasks = 7;
+  int32 failed_tasks = 8;
+}
+
+message RuntimeAgentMetrics {
+  string agent_id = 1;
+  string name = 2;
+  string role = 3;
+  int32 input_tokens = 4;
+  int32 output_tokens = 5;
+  int32 total_tokens = 6;
+  int32 successful_runs = 7;
+  int32 failed_runs = 8;
+  int32 successful_tasks = 9;
+  int32 failed_tasks = 10;
+}
+
+message GetRuntimeMetricsResponse {
+  int32 total_input_tokens = 1;
+  int32 total_output_tokens = 2;
+  int32 total_tokens = 3;
+  int32 coordinator_input_tokens = 4;
+  int32 coordinator_output_tokens = 5;
+  int32 coordinator_total_tokens = 6;
+  int32 sub_agent_input_tokens = 7;
+  int32 sub_agent_output_tokens = 8;
+  int32 sub_agent_total_tokens = 9;
+  int32 successful_runs = 10;
+  int32 failed_runs = 11;
+  int32 successful_tasks = 12;
+  int32 failed_tasks = 13;
+  repeated RuntimeMetricsDay daily = 14;
+  repeated RuntimeAgentMetrics agents = 15;
+}
+
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 message AgentItem {
@@ -174,6 +222,7 @@ service ChatService {
   rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse);
   rpc SaveUserMessage(SaveUserMessageRequest) returns (ChatMessage);
   rpc UpdateUserMessage(UpdateUserMessageRequest) returns (UpdateUserMessageResponse);
+  rpc GetRuntimeMetrics(GetRuntimeMetricsRequest) returns (GetRuntimeMetricsResponse);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc CreateAgent(CreateAgentRequest) returns (AgentItem);
   rpc GetAgent(GetAgentRequest) returns (AgentItem);
