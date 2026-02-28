@@ -187,6 +187,30 @@ message ListUsageRecordsResponse {
   int32 sum_failure_count = 7;
 }
 
+message PluginUsageEvent {
+  string spec_version = 1;
+  string plugin_name = 2;
+  string plugin_version = 3;
+  string event_id = 4;
+  string event_type = 5;
+  string timestamp = 6;
+  string workspace_id = 7;
+  string run_id = 8;
+  string status = 9;
+  string metrics_json = 10;
+  string payload_json = 11;
+}
+
+message ReportPluginUsageEventsRequest {
+  string workspace_id = 1;
+  repeated PluginUsageEvent events = 2;
+  common.UserContext user_context = 3;
+}
+
+message ReportPluginUsageEventsResponse {
+  int32 accepted = 1;
+}
+
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 message AgentItem {
@@ -271,6 +295,7 @@ service ChatService {
   rpc UpdateUserMessage(UpdateUserMessageRequest) returns (UpdateUserMessageResponse);
   rpc GetRuntimeMetrics(GetRuntimeMetricsRequest) returns (GetRuntimeMetricsResponse);
   rpc ListUsageRecords(ListUsageRecordsRequest) returns (ListUsageRecordsResponse);
+  rpc ReportPluginUsageEvents(ReportPluginUsageEventsRequest) returns (ReportPluginUsageEventsResponse);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc CreateAgent(CreateAgentRequest) returns (AgentItem);
   rpc GetAgent(GetAgentRequest) returns (AgentItem);

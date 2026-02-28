@@ -98,6 +98,21 @@ func messageMap(m *chatpb.ChatMessage) map[string]any {
 	return out
 }
 
+func normalizeJSONObject(raw json.RawMessage, fieldName string) (string, error) {
+	if len(raw) == 0 {
+		return "", fmt.Errorf("%s must be a JSON object", fieldName)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", fmt.Errorf("%s must be valid JSON object", fieldName)
+	}
+	normalized, err := json.Marshal(obj)
+	if err != nil {
+		return "", fmt.Errorf("%s must be valid JSON object", fieldName)
+	}
+	return string(normalized), nil
+}
+
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 func (h *ChatHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
@@ -509,6 +524,117 @@ func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		"sumTotalTokens":  resp.SumTotalTokens,
 		"sumSuccessCount": resp.SumSuccessCount,
 		"sumFailureCount": resp.SumFailureCount,
+	})
+}
+
+func (h *ChatHandler) ReportPluginUsageEvents(w http.ResponseWriter, r *http.Request) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "wsId"))
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "workspace id is required")
+		return
+	}
+
+	var body struct {
+		Events []struct {
+			SpecVersion   string          `json:"specVersion"`
+			PluginName    string          `json:"pluginName"`
+			PluginVersion string          `json:"pluginVersion"`
+			EventID       string          `json:"eventId"`
+			EventType     string          `json:"eventType"`
+			Timestamp     string          `json:"timestamp"`
+			WorkspaceID   string          `json:"workspaceId"`
+			RunID         string          `json:"runId"`
+			Status        string          `json:"status"`
+			Metrics       json.RawMessage `json:"metrics"`
+			Payload       json.RawMessage `json:"payload"`
+		} `json:"events"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.Events) == 0 {
+		writeError(w, http.StatusBadRequest, "events is required")
+		return
+	}
+	if len(body.Events) > 1000 {
+		writeError(w, http.StatusBadRequest, "events exceeds limit (max 1000)")
+		return
+	}
+
+	allowedStatus := map[string]struct{}{"success": {}, "failure": {}, "partial": {}}
+	events := make([]*chatpb.PluginUsageEvent, 0, len(body.Events))
+	for idx, item := range body.Events {
+		prefix := fmt.Sprintf("events[%d]", idx)
+		specVersion := strings.TrimSpace(item.SpecVersion)
+		pluginName := strings.TrimSpace(item.PluginName)
+		pluginVersion := strings.TrimSpace(item.PluginVersion)
+		eventID := strings.TrimSpace(item.EventID)
+		eventType := strings.TrimSpace(item.EventType)
+		timestamp := strings.TrimSpace(item.Timestamp)
+		eventWorkspaceID := strings.TrimSpace(item.WorkspaceID)
+		status := strings.ToLower(strings.TrimSpace(item.Status))
+
+		if specVersion != pluginUsageSpecVersion {
+			writeError(w, http.StatusBadRequest, prefix+".specVersion must be plugin-usage.v1")
+			return
+		}
+		if pluginName == "" || pluginVersion == "" || eventID == "" || eventType == "" || eventWorkspaceID == "" {
+			writeError(w, http.StatusBadRequest, prefix+" missing required fields")
+			return
+		}
+		if eventWorkspaceID != workspaceID {
+			writeError(w, http.StatusBadRequest, prefix+".workspaceId must match path workspace id")
+			return
+		}
+		if _, ok := allowedStatus[status]; !ok {
+			writeError(w, http.StatusBadRequest, prefix+".status must be success|failure|partial")
+			return
+		}
+		if _, err := time.Parse(time.RFC3339Nano, timestamp); err != nil {
+			writeError(w, http.StatusBadRequest, prefix+".timestamp must be RFC3339 datetime")
+			return
+		}
+
+		metricsJSON, err := normalizeJSONObject(item.Metrics, prefix+".metrics")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		payloadJSON, err := normalizeJSONObject(item.Payload, prefix+".payload")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		events = append(events, &chatpb.PluginUsageEvent{
+			SpecVersion:   specVersion,
+			PluginName:    pluginName,
+			PluginVersion: pluginVersion,
+			EventId:       eventID,
+			EventType:     eventType,
+			Timestamp:     timestamp,
+			WorkspaceId:   eventWorkspaceID,
+			RunId:         strings.TrimSpace(item.RunID),
+			Status:        status,
+			MetricsJson:   metricsJSON,
+			PayloadJson:   payloadJSON,
+		})
+	}
+
+	resp, err := h.clients.Chat.ReportPluginUsageEvents(r.Context(), &chatpb.ReportPluginUsageEventsRequest{
+		WorkspaceId: workspaceID,
+		Events:      events,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	writeData(w, http.StatusCreated, map[string]any{
+		"accepted": resp.Accepted,
 	})
 }
 

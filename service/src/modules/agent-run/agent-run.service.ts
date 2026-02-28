@@ -169,6 +169,20 @@ export interface ListUsageRecordsResult {
   sumFailureCount: number;
 }
 
+export interface ReportPluginUsageEventInput {
+  specVersion: string;
+  pluginName: string;
+  pluginVersion: string;
+  eventId: string;
+  eventType: string;
+  timestamp: string;
+  workspaceId: string;
+  runId: string;
+  status: string;
+  metricsJson: string;
+  payloadJson: string;
+}
+
 interface ResolvedLlmConfig {
   model: string;
   llmProviderType: string;
@@ -262,6 +276,8 @@ interface AgentUsageIdentity {
 
 const RUNTIME_PLUGIN_NAME = "runtime.core";
 const RUNTIME_PLUGIN_VERSION = "1.0.0";
+const PLUGIN_USAGE_SPEC_VERSION = "plugin-usage.v1";
+const PLUGIN_USAGE_ALLOWED_STATUSES = new Set(["success", "failure", "partial"]);
 
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const RUN_STATUS_TRANSITIONS: Record<string, Set<string>> = {
@@ -281,6 +297,65 @@ function canTransitionRunStatus(currentStatus: string, nextStatus: string): bool
   const allowed = RUN_STATUS_TRANSITIONS[currentStatus];
   if (!allowed) return false;
   return allowed.has(nextStatus);
+}
+
+function parseJsonObject(raw: string, fieldName: string): Record<string, unknown> {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) {
+    throw Object.assign(new Error(`${fieldName} must be a JSON object`), { code: "INVALID_ARGUMENT" });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw Object.assign(new Error(`${fieldName} must be valid JSON`), { code: "INVALID_ARGUMENT" });
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw Object.assign(new Error(`${fieldName} must be a JSON object`), { code: "INVALID_ARGUMENT" });
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function readObjectStringField(obj: Record<string, unknown>, key: string): string {
+  const value = obj[key];
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function readObjectNonNegativeIntField(obj: Record<string, unknown>, key: string): number {
+  const value = obj[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.max(0, Math.floor(parsed));
+  }
+  return 0;
+}
+
+function parseEventTimestamp(raw: string): string {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) {
+    throw Object.assign(new Error("timestamp is required"), { code: "INVALID_ARGUMENT" });
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw Object.assign(new Error("timestamp must be a valid RFC3339 datetime"), { code: "INVALID_ARGUMENT" });
+  }
+  return parsed.toISOString();
+}
+
+function mapPluginStatus(status: string): string {
+  switch (status) {
+    case "success":
+      return "completed";
+    case "failure":
+      return "failed";
+    default:
+      return "partial";
+  }
 }
 
 function resolveAgentUsageIdentity(agentId?: string | null): AgentUsageIdentity {
@@ -846,6 +921,164 @@ export function listWorkspaceUsageRecords(params: ListUsageRecordsParams): ListU
     sumSuccessCount: sumsRow?.sumSuccessCount ?? 0,
     sumFailureCount: sumsRow?.sumFailureCount ?? 0,
   };
+}
+
+export function reportPluginUsageEvents(
+  workspaceId: string,
+  events: ReportPluginUsageEventInput[]
+): { accepted: number } {
+  const trimmedWorkspaceId = (workspaceId ?? "").trim();
+  if (!trimmedWorkspaceId) {
+    throw Object.assign(new Error("workspaceId is required"), { code: "INVALID_ARGUMENT" });
+  }
+  if (!Array.isArray(events) || events.length === 0) {
+    throw Object.assign(new Error("events is required"), { code: "INVALID_ARGUMENT" });
+  }
+  if (events.length > 1000) {
+    throw Object.assign(new Error("events exceeds limit (max 1000)"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const workspace = db
+    .select({ id: workspaces.id, orgId: workspaces.orgId })
+    .from(workspaces)
+    .where(eq(workspaces.id, trimmedWorkspaceId))
+    .get();
+  if (!workspace) {
+    throw Object.assign(new Error("Workspace not found"), { code: "NOT_FOUND" });
+  }
+
+  let accepted = 0;
+  for (const event of events) {
+    const specVersion = (event.specVersion ?? "").trim();
+    if (specVersion !== PLUGIN_USAGE_SPEC_VERSION) {
+      throw Object.assign(
+        new Error(`specVersion must be "${PLUGIN_USAGE_SPEC_VERSION}"`),
+        { code: "INVALID_ARGUMENT" }
+      );
+    }
+    const pluginName = (event.pluginName ?? "").trim();
+    const pluginVersion = (event.pluginVersion ?? "").trim();
+    const eventId = (event.eventId ?? "").trim();
+    const eventType = (event.eventType ?? "").trim();
+    const eventWorkspaceId = (event.workspaceId ?? "").trim();
+    const runId = (event.runId ?? "").trim();
+    const statusRaw = (event.status ?? "").trim().toLowerCase();
+
+    if (!pluginName || !pluginVersion || !eventId || !eventType || !eventWorkspaceId) {
+      throw Object.assign(
+        new Error("pluginName, pluginVersion, eventId, eventType, workspaceId are required"),
+        { code: "INVALID_ARGUMENT" }
+      );
+    }
+    if (eventWorkspaceId !== trimmedWorkspaceId) {
+      throw Object.assign(new Error("event workspaceId must match request workspaceId"), {
+        code: "INVALID_ARGUMENT",
+      });
+    }
+    if (!PLUGIN_USAGE_ALLOWED_STATUSES.has(statusRaw)) {
+      throw Object.assign(new Error("status must be one of: success, failure, partial"), {
+        code: "INVALID_ARGUMENT",
+      });
+    }
+
+    const timestampIso = parseEventTimestamp(event.timestamp);
+    const metrics = parseJsonObject(event.metricsJson, "metricsJson");
+    const payload = parseJsonObject(event.payloadJson, "payloadJson");
+
+    const inputTokens = readObjectNonNegativeIntField(metrics, "inputTokens");
+    const outputTokens = readObjectNonNegativeIntField(metrics, "outputTokens");
+    const totalTokensRaw = readObjectNonNegativeIntField(metrics, "totalTokens");
+    const totalTokens = totalTokensRaw > 0 ? totalTokensRaw : inputTokens + outputTokens;
+    const successCountRaw = readObjectNonNegativeIntField(metrics, "successCount");
+    const failureCountRaw = readObjectNonNegativeIntField(metrics, "failureCount");
+    const latencyMs = readObjectNonNegativeIntField(metrics, "latencyMs");
+
+    const successCount =
+      successCountRaw > 0 || failureCountRaw > 0
+        ? successCountRaw
+        : statusRaw === "success"
+          ? 1
+          : 0;
+    const failureCount =
+      successCountRaw > 0 || failureCountRaw > 0
+        ? failureCountRaw
+        : statusRaw === "failure"
+          ? 1
+          : 0;
+
+    const recordId = `plugin:${eventId}`;
+    const mappedStatus = mapPluginStatus(statusRaw);
+
+    const startedAt = timestampIso;
+    const endedAt = latencyMs > 0
+      ? new Date(new Date(timestampIso).getTime() + latencyMs).toISOString()
+      : timestampIso;
+
+    const sessionId = readObjectStringField(payload, "sessionId");
+    const taskId = readObjectStringField(payload, "taskId");
+    const recordType = readObjectStringField(payload, "recordType") || "plugin";
+    const scope = readObjectStringField(payload, "scope") || "plugin";
+    const agentId = readObjectStringField(payload, "agentId");
+    const agentName = readObjectStringField(payload, "agentName");
+    const agentRole = readObjectStringField(payload, "agentRole");
+    const providerName = readObjectStringField(payload, "provider");
+    const modelName = readObjectStringField(payload, "model");
+
+    const metadataJson = JSON.stringify({
+      specVersion,
+      pluginName,
+      pluginVersion,
+      eventId,
+      eventType,
+      timestamp: timestampIso,
+      workspaceId: trimmedWorkspaceId,
+      runId,
+      status: statusRaw,
+      metrics,
+      payload,
+    });
+
+    try {
+      db.insert(usageRecords)
+        .values({
+          id: recordId,
+          workspaceId: trimmedWorkspaceId,
+          orgId: workspace.orgId,
+          sessionId: sessionId || null,
+          runId: runId || null,
+          taskId: taskId || null,
+          recordType,
+          scope,
+          status: mappedStatus,
+          agentId: agentId || null,
+          agentName,
+          agentRole,
+          providerId: null,
+          providerName,
+          modelId: null,
+          modelName,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          successCount,
+          failureCount,
+          startedAt,
+          endedAt,
+          recordedAt: timestampIso,
+          metadataJson,
+        })
+        .run();
+      accepted += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("UNIQUE constraint failed: usage_records.id")) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return { accepted };
 }
 
 export function getWorkspaceRuntimeMetrics(workspaceId: string, days = 7): WorkspaceRuntimeMetrics {

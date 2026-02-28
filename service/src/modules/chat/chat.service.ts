@@ -1,7 +1,12 @@
 import { and, desc, eq, gt, inArray, lt, or, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
-import { getWorkspaceRuntimeMetrics, listWorkspaceUsageRecords } from "../agent-run/agent-run.service";
+import {
+  getWorkspaceRuntimeMetrics,
+  listWorkspaceUsageRecords,
+  reportPluginUsageEvents,
+  type ReportPluginUsageEventInput,
+} from "../agent-run/agent-run.service";
 import {
   chatSessions,
   messages,
@@ -321,6 +326,13 @@ export function listUsageRecords(
     startDate: opts?.startDate,
     endDate: opts?.endDate,
   });
+}
+
+export function reportWorkspacePluginUsageEvents(
+  workspaceId: string,
+  events: ReportPluginUsageEventInput[],
+) {
+  return reportPluginUsageEvents(workspaceId, events);
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────

@@ -15,9 +15,14 @@ const (
 )
 
 var pluginUsageReservedMetadataKeys = map[string]struct{}{
+	"specVersion":   {},
 	"pluginName":    {},
 	"pluginVersion": {},
+	"eventId":       {},
 	"eventType":     {},
+	"timestamp":     {},
+	"workspaceId":   {},
+	"runId":         {},
 	"status":        {},
 	"metrics":       {},
 	"payload":       {},
@@ -239,14 +244,25 @@ func buildPluginUsageEvent(src pluginUsageSourceRecord) map[string]any {
 		status = "unknown"
 	}
 
-	eventID := strings.TrimSpace(src.ID)
+	eventID := toStringValue(metadata["eventId"])
+	if eventID == "" {
+		eventID = strings.TrimSpace(src.ID)
+	}
 	if eventID == "" {
 		eventID = fmt.Sprintf("usage-%d", time.Now().UnixNano())
 	}
 
-	timestamp := strings.TrimSpace(src.Timestamp)
+	timestamp := toStringValue(metadata["timestamp"])
+	if timestamp == "" {
+		timestamp = strings.TrimSpace(src.Timestamp)
+	}
 	if timestamp == "" {
 		timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	runID := toStringValue(metadata["runId"])
+	if runID == "" {
+		runID = src.RunID
 	}
 
 	metrics := map[string]any{}
@@ -319,7 +335,7 @@ func buildPluginUsageEvent(src pluginUsageSourceRecord) map[string]any {
 		"eventType":     eventType,
 		"timestamp":     timestamp,
 		"workspaceId":   src.WorkspaceID,
-		"runId":         src.RunID,
+		"runId":         runID,
 		"status":        status,
 		"metrics":       metrics,
 		"payload":       payload,

@@ -33,6 +33,7 @@ import {
 import {
   listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
   getRuntimeMetrics, listUsageRecords,
+  reportWorkspacePluginUsageEvents,
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
 
@@ -711,6 +712,28 @@ export function startGrpcServer(port: number): grpc.Server {
           sumSuccessCount: result.sumSuccessCount,
           sumFailureCount: result.sumFailureCount,
         });
+      } catch (err) { handleError(callback, err); }
+    },
+    reportPluginUsageEvents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const workspaceId = (call.request.workspaceId ?? "").trim();
+        const events = Array.isArray(call.request.events)
+          ? call.request.events.map((item: Record<string, unknown>) => ({
+              specVersion: String(item.specVersion ?? ""),
+              pluginName: String(item.pluginName ?? ""),
+              pluginVersion: String(item.pluginVersion ?? ""),
+              eventId: String(item.eventId ?? ""),
+              eventType: String(item.eventType ?? ""),
+              timestamp: String(item.timestamp ?? ""),
+              workspaceId: String(item.workspaceId ?? ""),
+              runId: String(item.runId ?? ""),
+              status: String(item.status ?? ""),
+              metricsJson: String(item.metricsJson ?? ""),
+              payloadJson: String(item.payloadJson ?? ""),
+            }))
+          : [];
+        const result = reportWorkspacePluginUsageEvents(workspaceId, events);
+        callback(null, { accepted: result.accepted });
       } catch (err) { handleError(callback, err); }
     },
     listAgents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
