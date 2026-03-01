@@ -121,6 +121,7 @@ func main() {
 
 		// Settings — models (match frontend: /workspaces/:wsId/providers/:id/models/*)
 		r.Get("/workspaces/{wsId}/providers/{providerId}/models", settingsHandler.ListModels)
+		r.Get("/workspaces/{wsId}/providers/{providerId}/catalog", settingsHandler.ListModelCatalog)
 		r.Post("/workspaces/{wsId}/providers/{providerId}/models", settingsHandler.CreateModel)
 		r.Patch("/workspaces/{wsId}/providers/{providerId}/models/{modelId}", settingsHandler.UpdateModel)
 		r.Delete("/workspaces/{wsId}/providers/{providerId}/models/{modelId}", settingsHandler.DeleteModel)
