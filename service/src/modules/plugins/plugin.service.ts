@@ -148,6 +148,18 @@ type OpenClawManifest = {
   description?: string;
   version?: string;
   uiHints?: Record<string, unknown>;
+  runtime?: {
+    tool?: {
+      entry: string;
+      exportName: string;
+    };
+  };
+  permissions?: {
+    network?: boolean;
+    fsRead?: string[];
+    fsWrite?: string[];
+    exec?: string[];
+  };
 };
 
 type PackageManifest = {
@@ -647,6 +659,86 @@ function extractString(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function readOptionalObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function normalizeManifestPath(rawPath: string, fieldName: string): string {
+  const normalized = rawPath.trim().replaceAll("\\", "/");
+  if (!normalized) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} is required`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  if (normalized.startsWith("/") || normalized.startsWith("./") || normalized.startsWith("../")) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} must be a safe relative path`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  const segments = normalized.split("/").filter((part) => part.length > 0);
+  if (segments.length === 0 || segments.some((part) => part === "." || part === "..")) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} contains invalid path segments`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  if (!/\.(m?js|cjs)$/i.test(normalized)) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} must target a .js/.mjs/.cjs file`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  return segments.join("/");
+}
+
+function normalizeManifestExportName(rawName: string, fieldName: string): string {
+  const value = rawName.trim();
+  if (!value) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} is required`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  if (value === "default") return value;
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value)) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} must be a valid JS export identifier`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  return value;
+}
+
+function normalizePermissionPathList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value.length > 0);
+}
+
+function requireManifestString(record: Record<string, unknown>, fieldName: string): string {
+  const value = extractString(record[fieldName]);
+  if (!value) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} is required`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  return value;
+}
+
+function resolveManifestEntryPath(rootDir: string, entry: string, fieldName: string): void {
+  const absolutePath = path.resolve(rootDir, entry);
+  if (!isPathInside(rootDir, absolutePath)) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} must stay inside plugin root`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+
+  const stat = fsSync.statSync(absolutePath, { throwIfNoEntry: false });
+  if (!stat || !stat.isFile()) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} ${fieldName} file not found: ${entry}`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+}
+
 function parseOpenClawManifest(rootDir: string): OpenClawManifest {
   const manifestPath = path.join(rootDir, MANIFEST_FILE);
   if (!fsSync.existsSync(manifestPath)) {
@@ -684,6 +776,44 @@ function parseOpenClawManifest(rootDir: string): OpenClawManifest {
         ? (parsed.uiHints as Record<string, unknown>)
         : undefined,
   };
+
+  const normalizedKind = (manifest.kind ?? "tool").trim().toLowerCase();
+  const runtimeObject = readOptionalObject(parsed.runtime);
+  const runtimeToolObject = runtimeObject ? readOptionalObject(runtimeObject.tool) : undefined;
+  if (runtimeToolObject) {
+    const entry = normalizeManifestPath(
+      requireManifestString(runtimeToolObject, "entry"),
+      "runtime.tool.entry",
+    );
+    resolveManifestEntryPath(rootDir, entry, "runtime.tool.entry");
+    const exportName = normalizeManifestExportName(
+      requireManifestString(runtimeToolObject, "exportName"),
+      "runtime.tool.exportName",
+    );
+    manifest.runtime = {
+      tool: {
+        entry,
+        exportName,
+      },
+    };
+  }
+
+  if (normalizedKind === "tool" && !manifest.runtime?.tool) {
+    throw Object.assign(new Error(`${MANIFEST_FILE} runtime.tool.entry/exportName is required for kind=tool`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+
+  const permissionsObject = readOptionalObject(parsed.permissions);
+  if (permissionsObject) {
+    const networkRaw = permissionsObject.network;
+    manifest.permissions = {
+      network: typeof networkRaw === "boolean" ? networkRaw : undefined,
+      fsRead: normalizePermissionPathList(permissionsObject.fsRead),
+      fsWrite: normalizePermissionPathList(permissionsObject.fsWrite),
+      exec: normalizePermissionPathList(permissionsObject.exec),
+    };
+  }
 
   return manifest;
 }

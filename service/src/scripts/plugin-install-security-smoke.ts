@@ -84,6 +84,12 @@ async function writePluginFixture(params: {
         sensitive: true,
       },
     },
+    runtime: {
+      tool: {
+        entry: "dist/tool.js",
+        exportName: "createTool",
+      },
+    },
   };
   const pkg = {
     name: params.pluginId,
@@ -92,6 +98,12 @@ async function writePluginFixture(params: {
   };
   await fs.writeFile(path.join(params.dirPath, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2), "utf-8");
   await fs.writeFile(path.join(params.dirPath, "package.json"), JSON.stringify(pkg, null, 2), "utf-8");
+  await fs.mkdir(path.join(params.dirPath, "dist"), { recursive: true });
+  await fs.writeFile(
+    path.join(params.dirPath, "dist", "tool.js"),
+    "export function createTool() { return { name: 'smoke-tool' }; }\n",
+    "utf-8",
+  );
 }
 
 async function main(): Promise<void> {

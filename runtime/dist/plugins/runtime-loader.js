@@ -20,6 +20,56 @@ function readManifestString(input, key) {
     const value = raw.trim();
     return value.length > 0 ? value : undefined;
 }
+function readManifestObject(input, key) {
+    const raw = input[key];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return undefined;
+    return raw;
+}
+function requireManifestString(input, fieldName) {
+    const value = readManifestString(input, fieldName);
+    if (!value) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} is required`);
+    }
+    return value;
+}
+function normalizeManifestPath(rawPath, fieldName) {
+    const normalized = rawPath.trim().replaceAll("\\", "/");
+    if (!normalized) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} is required`);
+    }
+    if (normalized.startsWith("/") || normalized.startsWith("./") || normalized.startsWith("../")) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} must be a safe relative path`);
+    }
+    const segments = normalized.split("/").filter((part) => part.length > 0);
+    if (segments.length === 0 || segments.some((part) => part === "." || part === "..")) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} contains invalid path segments`);
+    }
+    if (!/\.(m?js|cjs)$/i.test(normalized)) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} must target a .js/.mjs/.cjs file`);
+    }
+    return segments.join("/");
+}
+function normalizeManifestExportName(rawName, fieldName) {
+    const value = rawName.trim();
+    if (!value) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} is required`);
+    }
+    if (value === "default")
+        return value;
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value)) {
+        throw new Error(`${MANIFEST_FILE} ${fieldName} must be a valid JS export identifier`);
+    }
+    return value;
+}
+function isPathInside(rootDir, candidatePath) {
+    const root = path.resolve(rootDir);
+    const candidate = path.resolve(candidatePath);
+    if (root === candidate)
+        return true;
+    const rel = path.relative(root, candidate);
+    return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
 function parsePluginManifest(raw) {
     let parsed;
     try {
@@ -36,11 +86,26 @@ function parsePluginManifest(raw) {
     if (!id) {
         throw new Error(`${MANIFEST_FILE} requires non-empty id`);
     }
+    const kind = readManifestString(record, "kind");
+    const normalizedKind = (kind ?? "tool").trim().toLowerCase();
+    const runtimeObject = readManifestObject(record, "runtime");
+    const runtimeToolObject = runtimeObject ? readManifestObject(runtimeObject, "tool") : undefined;
+    let runtimeTool;
+    if (runtimeToolObject) {
+        runtimeTool = {
+            entry: normalizeManifestPath(requireManifestString(runtimeToolObject, "entry"), "runtime.tool.entry"),
+            exportName: normalizeManifestExportName(requireManifestString(runtimeToolObject, "exportName"), "runtime.tool.exportName"),
+        };
+    }
+    if (normalizedKind === "tool" && !runtimeTool) {
+        throw new Error(`${MANIFEST_FILE} runtime.tool.entry/exportName is required for kind=tool`);
+    }
     return {
         id,
-        kind: readManifestString(record, "kind"),
+        kind,
         name: readManifestString(record, "name"),
         version: readManifestString(record, "version"),
+        runtime: runtimeTool ? { tool: runtimeTool } : undefined,
     };
 }
 async function validateAndLoadPlugin(candidate) {
@@ -64,6 +129,18 @@ async function validateAndLoadPlugin(candidate) {
     if (kind !== "tool") {
         throw new Error(`unsupported plugin kind for runtime loader: ${kind}`);
     }
+    const runtimeTool = manifest.runtime?.tool;
+    if (!runtimeTool) {
+        throw new Error(`missing runtime tool entry in ${MANIFEST_FILE}`);
+    }
+    const runtimeToolEntryPath = path.resolve(installPath, runtimeTool.entry);
+    if (!isPathInside(installPath, runtimeToolEntryPath)) {
+        throw new Error(`runtime tool entry escapes install path: ${runtimeTool.entry}`);
+    }
+    const entryStat = await fs.stat(runtimeToolEntryPath).catch(() => null);
+    if (!entryStat || !entryStat.isFile()) {
+        throw new Error(`runtime tool entry file not found: ${runtimeTool.entry}`);
+    }
     return {
         installedPluginId: candidate.installedPluginId,
         workspaceId: candidate.workspaceId,
@@ -75,6 +152,9 @@ async function validateAndLoadPlugin(candidate) {
         sourceType: candidate.sourceType,
         sourceSpec: candidate.sourceSpec,
         manifest,
+        runtimeToolEntry: runtimeTool.entry,
+        runtimeToolExportName: runtimeTool.exportName,
+        runtimeToolEntryPath,
     };
 }
 async function runSerializedForPlugin(installedPluginId, operation) {
