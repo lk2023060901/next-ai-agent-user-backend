@@ -25,13 +25,13 @@ const DEFAULT_PROVIDER_SPECS: DefaultProviderSpec[] = [
     type: "openai",
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-5.1",
+    model: "gpt-5.2",
   },
   {
     type: "anthropic",
     name: "Anthropic",
     baseUrl: "https://api.anthropic.com/v1",
-    model: "claude-opus-4-1",
+    model: "claude-opus-4-6",
   },
   {
     type: "zhipu",
@@ -240,8 +240,8 @@ export function deleteProvider(id: string) {
 
 // Default test model per provider type
 const DEFAULT_TEST_MODELS: Record<string, string> = {
-  openai: "gpt-5.1",
-  anthropic: "claude-opus-4-1",
+  openai: "gpt-5.2",
+  anthropic: "claude-opus-4-6",
   zhipu: "glm-5",
   qwen: "qwen3.5-plus",
   google: "gemini-1.5-flash",
@@ -258,7 +258,7 @@ export async function testProvider(id: string): Promise<{ success: boolean; mess
   // Resolve test model: prefer first configured model, fall back to known defaults
   const firstModel = db.select({ name: aiModels.name }).from(aiModels)
     .where(eq(aiModels.providerId, id)).get();
-  const modelName = firstModel?.name ?? DEFAULT_TEST_MODELS[providerType] ?? "gpt-5.1";
+  const modelName = firstModel?.name ?? DEFAULT_TEST_MODELS[providerType] ?? "gpt-5.2";
 
   try {
     let model;
