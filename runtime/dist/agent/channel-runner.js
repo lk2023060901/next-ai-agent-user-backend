@@ -20,6 +20,7 @@ export async function runChannelRequest(input) {
         const sandbox = buildSandboxFromAgentConfig(agentCfg);
         await runCoordinator({
             runId,
+            workspaceId: input.workspaceId,
             coordinatorAgentId: input.agentId,
             userMessage: input.message,
             sandbox,

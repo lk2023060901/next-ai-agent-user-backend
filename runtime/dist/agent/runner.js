@@ -13,6 +13,7 @@ export async function startRun(req, emit) {
         const sandbox = buildSandboxFromAgentConfig(agentCfg);
         await runCoordinator({
             runId: req.runId,
+            workspaceId: req.workspaceId,
             coordinatorAgentId: req.coordinatorAgentId,
             userMessage: req.userRequest,
             sandbox,

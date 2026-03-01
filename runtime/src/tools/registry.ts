@@ -8,10 +8,13 @@ import { makeCodeWriteTool } from "./code-write.js";
 import { makeSearchKnowledgeTool } from "./search-knowledge.js";
 import { makeWebSearchTool } from "./web-search.js";
 import { makeDelegateTool } from "./delegate.js";
+import { buildRuntimePluginToolset } from "../plugins/runtime-toolset.js";
 
 export interface ToolRegistryParams {
   runId: string;
   taskId: string;
+  workspaceId: string;
+  agentId: string;
   depth: number;
   sandbox: SandboxPolicy;
   emit: SseEmitter;
@@ -27,6 +30,16 @@ export function buildToolset(params: ToolRegistryParams): Record<string, CoreToo
     web_search: makeWebSearchTool(),
     delegate_to_agent: makeDelegateTool(params),
   };
+
+  const pluginTools = buildRuntimePluginToolset({
+    workspaceId: params.workspaceId,
+    runId: params.runId,
+    taskId: params.taskId,
+    agentId: params.agentId,
+    depth: params.depth,
+    reservedNames: Object.keys(allTools),
+  });
+  Object.assign(allTools, pluginTools);
 
   // Filter by tool policy — deny wins over allow
   const filtered: Record<string, CoreTool> = {};

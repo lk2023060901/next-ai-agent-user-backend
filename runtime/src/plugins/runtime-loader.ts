@@ -1,11 +1,34 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { FastifyBaseLogger } from "fastify";
 import { type RuntimePluginLoadCandidate, grpcClient } from "../grpc/client.js";
 
 const MANIFEST_FILE = "openclaw.plugin.json";
 
 type RuntimePluginSyncAction = "load" | "reload" | "unload" | "bootstrap";
+type RuntimePluginExecuteMode = "openclaw" | "ai-sdk" | "args-only";
+
+export interface RuntimePluginExecutionContext {
+  runId: string;
+  taskId: string;
+  agentId: string;
+  depth: number;
+  workspaceId: string;
+  pluginId: string;
+  installedPluginId: string;
+  pluginName: string;
+  pluginVersion: string;
+  pluginConfig: Record<string, unknown>;
+}
+
+interface RuntimePluginToolDefinition {
+  name: string;
+  description: string;
+  parametersJsonSchema: Record<string, unknown>;
+  executeMode: RuntimePluginExecuteMode;
+  execute: (...args: unknown[]) => unknown | Promise<unknown>;
+}
 
 interface RuntimePluginManifest {
   id: string;
@@ -34,6 +57,8 @@ export interface LoadedRuntimePlugin {
   runtimeToolEntry: string;
   runtimeToolExportName: string;
   runtimeToolEntryPath: string;
+  pluginConfig: Record<string, unknown>;
+  tool: RuntimePluginToolDefinition;
 }
 
 export interface RuntimePluginLoadSummary {
@@ -123,6 +148,140 @@ function isPathInside(rootDir: string, candidatePath: string): boolean {
   if (root === candidate) return true;
   const rel = path.relative(root, candidate);
   return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function parseConfigJson(raw: string | undefined): Record<string, unknown> {
+  if (!raw || raw.trim().length === 0) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function asRecord(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  return input as Record<string, unknown>;
+}
+
+function asString(input: unknown): string | undefined {
+  if (typeof input !== "string") return undefined;
+  const value = input.trim();
+  return value.length > 0 ? value : undefined;
+}
+
+function normalizeToolName(rawName: string | undefined, pluginId: string): string {
+  const fallback = `plugin_${pluginId}`;
+  const base = (rawName && rawName.trim().length > 0 ? rawName.trim() : fallback).replace(
+    /[^A-Za-z0-9_-]/g,
+    "_",
+  );
+  if (!base) return fallback;
+  if (!/^[A-Za-z_]/.test(base)) return `plugin_${base}`;
+  return base;
+}
+
+function normalizeToolParameters(raw: unknown): Record<string, unknown> {
+  const record = asRecord(raw);
+  if (!record) {
+    return {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    };
+  }
+  const hasJsonSchemaShape =
+    "type" in record || "properties" in record || "required" in record || "$schema" in record || "oneOf" in record;
+  if (!hasJsonSchemaShape) {
+    return {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    };
+  }
+  return record;
+}
+
+function normalizeExecuteMode(raw: unknown): RuntimePluginExecuteMode {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (value === "ai-sdk" || value === "aisdk") return "ai-sdk";
+  if (value === "args-only" || value === "argsonly") return "args-only";
+  return "openclaw";
+}
+
+function resolveRuntimeModuleExport(moduleRecord: Record<string, unknown>, exportName: string): unknown {
+  if (exportName === "default") {
+    return moduleRecord.default;
+  }
+
+  if (exportName in moduleRecord) {
+    return moduleRecord[exportName];
+  }
+
+  const defaultExport = moduleRecord.default;
+  const defaultRecord = asRecord(defaultExport);
+  if (defaultRecord && exportName in defaultRecord) {
+    return defaultRecord[exportName];
+  }
+
+  return undefined;
+}
+
+async function resolvePluginToolDefinition(params: {
+  pluginId: string;
+  installPath: string;
+  runtimeToolEntryPath: string;
+  runtimeToolExportName: string;
+  pluginConfig: Record<string, unknown>;
+  workspaceId: string;
+  installedPluginId: string;
+  pluginName: string;
+  pluginVersion: string;
+}): Promise<RuntimePluginToolDefinition> {
+  const moduleUrl = `${pathToFileURL(params.runtimeToolEntryPath).href}?v=${Date.now()}`;
+  const imported = (await import(moduleUrl)) as Record<string, unknown>;
+  const exported = resolveRuntimeModuleExport(imported, params.runtimeToolExportName);
+  if (exported === undefined) {
+    throw new Error(
+      `runtime tool export "${params.runtimeToolExportName}" not found in ${params.runtimeToolEntryPath}`,
+    );
+  }
+
+  let toolCandidate: unknown = exported;
+  if (typeof exported === "function") {
+    toolCandidate = await exported({
+      pluginId: params.pluginId,
+      workspaceId: params.workspaceId,
+      installedPluginId: params.installedPluginId,
+      installPath: params.installPath,
+      config: params.pluginConfig,
+      pluginName: params.pluginName,
+      pluginVersion: params.pluginVersion,
+    });
+  }
+
+  const toolRecord = asRecord(toolCandidate);
+  if (!toolRecord) {
+    throw new Error(`runtime tool export "${params.runtimeToolExportName}" must return a tool object`);
+  }
+
+  const execute = toolRecord.execute;
+  if (typeof execute !== "function") {
+    throw new Error(`runtime tool "${params.pluginId}" must provide execute function`);
+  }
+
+  return {
+    name: normalizeToolName(asString(toolRecord.name) ?? asString(toolRecord.label), params.pluginId),
+    description: asString(toolRecord.description) ?? `Plugin tool from ${params.pluginId}`,
+    parametersJsonSchema: normalizeToolParameters(toolRecord.parameters),
+    executeMode: normalizeExecuteMode(toolRecord.executeMode),
+    execute: (...args: unknown[]) => (execute as (...callArgs: unknown[]) => unknown)(...args),
+  };
 }
 
 function parsePluginManifest(raw: string): RuntimePluginManifest {
@@ -216,6 +375,18 @@ async function validateAndLoadPlugin(candidate: RuntimePluginLoadCandidate): Pro
   if (!entryStat || !entryStat.isFile()) {
     throw new Error(`runtime tool entry file not found: ${runtimeTool.entry}`);
   }
+  const pluginConfig = parseConfigJson(candidate.configJson);
+  const tool = await resolvePluginToolDefinition({
+    pluginId: candidate.pluginId,
+    installPath,
+    runtimeToolEntryPath,
+    runtimeToolExportName: runtimeTool.exportName,
+    pluginConfig,
+    workspaceId: candidate.workspaceId,
+    installedPluginId: candidate.installedPluginId,
+    pluginName: candidate.pluginName,
+    pluginVersion: candidate.pluginVersion,
+  });
 
   return {
     installedPluginId: candidate.installedPluginId,
@@ -231,6 +402,8 @@ async function validateAndLoadPlugin(candidate: RuntimePluginLoadCandidate): Pro
     runtimeToolEntry: runtimeTool.entry,
     runtimeToolExportName: runtimeTool.exportName,
     runtimeToolEntryPath,
+    pluginConfig,
+    tool,
   };
 }
 
@@ -283,6 +456,10 @@ async function applyRuntimePluginAction(
 
 export function listLoadedRuntimePlugins(): LoadedRuntimePlugin[] {
   return Array.from(loadedPlugins.values());
+}
+
+export function listWorkspaceRuntimePlugins(workspaceId: string): LoadedRuntimePlugin[] {
+  return listLoadedRuntimePlugins().filter((item) => item.workspaceId === workspaceId);
 }
 
 async function reportLoadStatusBestEffort(params: {

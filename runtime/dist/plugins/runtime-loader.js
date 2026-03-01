@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 const MANIFEST_FILE = "openclaw.plugin.json";
 const loadedPlugins = new Map();
 const pluginOperationChains = new Map();
@@ -69,6 +70,117 @@ function isPathInside(rootDir, candidatePath) {
         return true;
     const rel = path.relative(root, candidate);
     return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+function parseConfigJson(raw) {
+    if (!raw || raw.trim().length === 0)
+        return {};
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch {
+        return {};
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {};
+    }
+    return parsed;
+}
+function asRecord(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input))
+        return null;
+    return input;
+}
+function asString(input) {
+    if (typeof input !== "string")
+        return undefined;
+    const value = input.trim();
+    return value.length > 0 ? value : undefined;
+}
+function normalizeToolName(rawName, pluginId) {
+    const fallback = `plugin_${pluginId}`;
+    const base = (rawName && rawName.trim().length > 0 ? rawName.trim() : fallback).replace(/[^A-Za-z0-9_-]/g, "_");
+    if (!base)
+        return fallback;
+    if (!/^[A-Za-z_]/.test(base))
+        return `plugin_${base}`;
+    return base;
+}
+function normalizeToolParameters(raw) {
+    const record = asRecord(raw);
+    if (!record) {
+        return {
+            type: "object",
+            properties: {},
+            additionalProperties: true,
+        };
+    }
+    const hasJsonSchemaShape = "type" in record || "properties" in record || "required" in record || "$schema" in record || "oneOf" in record;
+    if (!hasJsonSchemaShape) {
+        return {
+            type: "object",
+            properties: {},
+            additionalProperties: true,
+        };
+    }
+    return record;
+}
+function normalizeExecuteMode(raw) {
+    const value = String(raw ?? "").trim().toLowerCase();
+    if (value === "ai-sdk" || value === "aisdk")
+        return "ai-sdk";
+    if (value === "args-only" || value === "argsonly")
+        return "args-only";
+    return "openclaw";
+}
+function resolveRuntimeModuleExport(moduleRecord, exportName) {
+    if (exportName === "default") {
+        return moduleRecord.default;
+    }
+    if (exportName in moduleRecord) {
+        return moduleRecord[exportName];
+    }
+    const defaultExport = moduleRecord.default;
+    const defaultRecord = asRecord(defaultExport);
+    if (defaultRecord && exportName in defaultRecord) {
+        return defaultRecord[exportName];
+    }
+    return undefined;
+}
+async function resolvePluginToolDefinition(params) {
+    const moduleUrl = `${pathToFileURL(params.runtimeToolEntryPath).href}?v=${Date.now()}`;
+    const imported = (await import(moduleUrl));
+    const exported = resolveRuntimeModuleExport(imported, params.runtimeToolExportName);
+    if (exported === undefined) {
+        throw new Error(`runtime tool export "${params.runtimeToolExportName}" not found in ${params.runtimeToolEntryPath}`);
+    }
+    let toolCandidate = exported;
+    if (typeof exported === "function") {
+        toolCandidate = await exported({
+            pluginId: params.pluginId,
+            workspaceId: params.workspaceId,
+            installedPluginId: params.installedPluginId,
+            installPath: params.installPath,
+            config: params.pluginConfig,
+            pluginName: params.pluginName,
+            pluginVersion: params.pluginVersion,
+        });
+    }
+    const toolRecord = asRecord(toolCandidate);
+    if (!toolRecord) {
+        throw new Error(`runtime tool export "${params.runtimeToolExportName}" must return a tool object`);
+    }
+    const execute = toolRecord.execute;
+    if (typeof execute !== "function") {
+        throw new Error(`runtime tool "${params.pluginId}" must provide execute function`);
+    }
+    return {
+        name: normalizeToolName(asString(toolRecord.name) ?? asString(toolRecord.label), params.pluginId),
+        description: asString(toolRecord.description) ?? `Plugin tool from ${params.pluginId}`,
+        parametersJsonSchema: normalizeToolParameters(toolRecord.parameters),
+        executeMode: normalizeExecuteMode(toolRecord.executeMode),
+        execute: (...args) => execute(...args),
+    };
 }
 function parsePluginManifest(raw) {
     let parsed;
@@ -141,6 +253,18 @@ async function validateAndLoadPlugin(candidate) {
     if (!entryStat || !entryStat.isFile()) {
         throw new Error(`runtime tool entry file not found: ${runtimeTool.entry}`);
     }
+    const pluginConfig = parseConfigJson(candidate.configJson);
+    const tool = await resolvePluginToolDefinition({
+        pluginId: candidate.pluginId,
+        installPath,
+        runtimeToolEntryPath,
+        runtimeToolExportName: runtimeTool.exportName,
+        pluginConfig,
+        workspaceId: candidate.workspaceId,
+        installedPluginId: candidate.installedPluginId,
+        pluginName: candidate.pluginName,
+        pluginVersion: candidate.pluginVersion,
+    });
     return {
         installedPluginId: candidate.installedPluginId,
         workspaceId: candidate.workspaceId,
@@ -155,6 +279,8 @@ async function validateAndLoadPlugin(candidate) {
         runtimeToolEntry: runtimeTool.entry,
         runtimeToolExportName: runtimeTool.exportName,
         runtimeToolEntryPath,
+        pluginConfig,
+        tool,
     };
 }
 async function runSerializedForPlugin(installedPluginId, operation) {
@@ -199,6 +325,9 @@ async function applyRuntimePluginAction(candidate, action) {
 }
 export function listLoadedRuntimePlugins() {
     return Array.from(loadedPlugins.values());
+}
+export function listWorkspaceRuntimePlugins(workspaceId) {
+    return listLoadedRuntimePlugins().filter((item) => item.workspaceId === workspaceId);
 }
 async function reportLoadStatusBestEffort(params) {
     try {

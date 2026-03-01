@@ -34,6 +34,7 @@ export function makeDelegateTool(params) {
                 instruction,
                 taskId,
                 runId: params.runId,
+                workspaceId: params.workspaceId,
                 depth: params.depth + 1,
                 sandbox: narrowedSandbox,
                 emit: params.emit,

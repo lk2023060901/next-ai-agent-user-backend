@@ -8,9 +8,11 @@ import { makeDelegateTool } from "../tools/delegate.js";
 import { makeWebSearchTool } from "../tools/web-search.js";
 import { isToolAllowed } from "../policy/tool-policy.js";
 import { buildModelForAgent } from "../llm/model-factory.js";
+import { buildRuntimePluginToolset } from "../plugins/runtime-toolset.js";
 
 export interface CoordinatorParams {
   runId: string;
+  workspaceId: string;
   coordinatorAgentId: string;
   userMessage: string;
   sandbox: SandboxPolicy;
@@ -106,6 +108,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     tools["delegate_to_agent"] = makeDelegateTool({
       runId: params.runId,
       taskId: rootTaskId,
+      workspaceId: params.workspaceId,
       depth: 0,
       sandbox: params.sandbox,
       emit: params.emit,
@@ -164,6 +167,20 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
 
   if (webSearchAllowed && !shouldForceWebSearch) {
     tools["web_search"] = makeWebSearchTool();
+  }
+
+  const pluginTools = buildRuntimePluginToolset({
+    workspaceId: params.workspaceId,
+    runId: params.runId,
+    taskId: rootTaskId,
+    agentId: params.coordinatorAgentId,
+    depth: 0,
+    reservedNames: Object.keys(tools),
+  });
+  for (const [toolName, pluginTool] of Object.entries(pluginTools)) {
+    if (isToolAllowed(toolName, params.sandbox.toolPolicy)) {
+      tools[toolName] = pluginTool;
+    }
   }
 
   const systemPrompt = [

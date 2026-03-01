@@ -20,6 +20,8 @@ export async function runExecutor(params) {
     const tools = buildToolset({
         runId: params.runId,
         taskId: params.taskId,
+        workspaceId: params.workspaceId,
+        agentId: params.agentId,
         depth: params.depth,
         sandbox: params.sandbox,
         emit: params.emit,

@@ -8,6 +8,7 @@ import { narrowForSubagent } from "../policy/tool-policy.js";
 export interface DelegateParams {
   runId: string;
   taskId: string;
+  workspaceId: string;
   depth: number;
   sandbox: SandboxPolicy;
   emit: SseEmitter;
@@ -58,6 +59,7 @@ export function makeDelegateTool(params: DelegateParams) {
         instruction,
         taskId,
         runId: params.runId,
+        workspaceId: params.workspaceId,
         depth: params.depth + 1,
         sandbox: narrowedSandbox,
         emit: params.emit,

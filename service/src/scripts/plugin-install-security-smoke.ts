@@ -101,7 +101,24 @@ async function writePluginFixture(params: {
   await fs.mkdir(path.join(params.dirPath, "dist"), { recursive: true });
   await fs.writeFile(
     path.join(params.dirPath, "dist", "tool.js"),
-    "export function createTool() { return { name: 'smoke-tool' }; }\n",
+    [
+      "export function createTool() {",
+      "  return {",
+      "    name: 'smoke_tool',",
+      "    description: 'smoke runtime tool',",
+      "    parameters: {",
+      "      type: 'object',",
+      "      properties: { query: { type: 'string' } },",
+      "      required: ['query']",
+      "    },",
+      "    executeMode: 'openclaw',",
+      "    async execute(_toolCallId, args) {",
+      "      return { echoed: String(args?.query ?? '') };",
+      "    }",
+      "  };",
+      "}",
+      "",
+    ].join("\n"),
     "utf-8",
   );
 }

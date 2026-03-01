@@ -38,6 +38,7 @@ export async function runChannelRequest(input: ChannelRunInput): Promise<Channel
 
     await runCoordinator({
       runId,
+      workspaceId: input.workspaceId,
       coordinatorAgentId: input.agentId,
       userMessage: input.message,
       sandbox,

@@ -25,6 +25,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
 
     await runCoordinator({
       runId: req.runId,
+      workspaceId: req.workspaceId,
       coordinatorAgentId: req.coordinatorAgentId,
       userMessage: req.userRequest,
       sandbox,

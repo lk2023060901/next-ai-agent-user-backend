@@ -5,6 +5,7 @@ import { makeDelegateTool } from "../tools/delegate.js";
 import { makeWebSearchTool } from "../tools/web-search.js";
 import { isToolAllowed } from "../policy/tool-policy.js";
 import { buildModelForAgent } from "../llm/model-factory.js";
+import { buildRuntimePluginToolset } from "../plugins/runtime-toolset.js";
 const WEB_SEARCH_PLAN_SCHEMA = z.object({
     needWebSearch: z.boolean(),
     query: z.string().min(1).max(180),
@@ -86,6 +87,7 @@ export async function runCoordinator(params) {
         tools["delegate_to_agent"] = makeDelegateTool({
             runId: params.runId,
             taskId: rootTaskId,
+            workspaceId: params.workspaceId,
             depth: 0,
             sandbox: params.sandbox,
             emit: params.emit,
@@ -141,6 +143,19 @@ export async function runCoordinator(params) {
     }
     if (webSearchAllowed && !shouldForceWebSearch) {
         tools["web_search"] = makeWebSearchTool();
+    }
+    const pluginTools = buildRuntimePluginToolset({
+        workspaceId: params.workspaceId,
+        runId: params.runId,
+        taskId: rootTaskId,
+        agentId: params.coordinatorAgentId,
+        depth: 0,
+        reservedNames: Object.keys(tools),
+    });
+    for (const [toolName, pluginTool] of Object.entries(pluginTools)) {
+        if (isToolAllowed(toolName, params.sandbox.toolPolicy)) {
+            tools[toolName] = pluginTool;
+        }
     }
     const systemPrompt = [
         agentCfg.systemPrompt || "",

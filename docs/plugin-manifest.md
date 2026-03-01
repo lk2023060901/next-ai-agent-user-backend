@@ -41,6 +41,37 @@ This document defines the backend/runtime contract for plugin manifests used by 
   - required
   - either `default` or a valid JS export identifier
 
+## Runtime tool export contract
+
+The export pointed by `runtime.tool.exportName` must be one of:
+
+1. A factory function that returns a tool object (recommended)
+2. A tool object directly
+
+Tool object shape:
+
+```json
+{
+  "name": "my_tool",
+  "description": "Tool description",
+  "parameters": {
+    "type": "object",
+    "properties": {}
+  },
+  "executeMode": "openclaw",
+  "execute": "function"
+}
+```
+
+- `name`: optional, defaults to plugin-derived name
+- `description`: optional
+- `parameters`: optional JSON Schema object; defaults to permissive object schema
+- `executeMode`: optional
+  - `openclaw` (default): `execute(toolCallId, args, context)`
+  - `ai-sdk`: `execute(args, aiOptions, context)`
+  - `args-only`: `execute(args, context)`
+- `execute`: required function
+
 ## Optional permissions block
 
 ```json
@@ -67,4 +98,3 @@ This document defines the backend/runtime contract for plugin manifests used by 
 - Runtime load-time validation (runtime):
   - revalidates manifest and runtime entry fields
   - rechecks runtime entry file exists under installed path
-
