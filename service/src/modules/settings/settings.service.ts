@@ -11,6 +11,159 @@ import { aiProviders, aiModels, apiKeys } from "../../db/schema";
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 
+type DefaultProviderType = "openai" | "anthropic" | "zhipu" | "qwen";
+
+interface DefaultProviderSpec {
+  type: DefaultProviderType;
+  name: string;
+  baseUrl: string;
+  model: string;
+}
+
+const DEFAULT_PROVIDER_SPECS: DefaultProviderSpec[] = [
+  {
+    type: "openai",
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-5.1",
+  },
+  {
+    type: "anthropic",
+    name: "Anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-opus-4-1",
+  },
+  {
+    type: "zhipu",
+    name: "Z-AI (Zhipu)",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4/",
+    model: "glm-5",
+  },
+  {
+    type: "qwen",
+    name: "Qwen DashScope",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen3.5-plus",
+  },
+];
+
+function normalizeProviderType(raw: string | undefined | null): string {
+  return (raw ?? "").trim().toLowerCase();
+}
+
+function inferProviderTypeByName(rawName: string | undefined | null): DefaultProviderType | null {
+  const name = (rawName ?? "").trim().toLowerCase();
+  if (!name) return null;
+  if (name.includes("qwen") || name.includes("dashscope")) return "qwen";
+  if (name.includes("zhipu") || name.includes("z-ai") || name.includes("glm")) return "zhipu";
+  return null;
+}
+
+function ensureProviderHasDefaultModel(providerId: string, modelName: string) {
+  const models = db
+    .select({ id: aiModels.id, name: aiModels.name })
+    .from(aiModels)
+    .where(eq(aiModels.providerId, providerId))
+    .all();
+  const existing = models.find((item) => item.name === modelName);
+  let targetModelId = existing?.id ?? "";
+
+  if (!targetModelId) {
+    targetModelId = uuidv4();
+    db.insert(aiModels)
+      .values({
+        id: targetModelId,
+        providerId,
+        name: modelName,
+        contextWindow: null,
+        costPer1kTokens: null,
+        isDefault: true,
+      })
+      .run();
+  }
+
+  db.update(aiModels)
+    .set({ isDefault: false })
+    .where(eq(aiModels.providerId, providerId))
+    .run();
+  db.update(aiModels)
+    .set({ isDefault: true })
+    .where(eq(aiModels.id, targetModelId))
+    .run();
+}
+
+function ensureWorkspaceDefaultProviders(workspaceId: string) {
+  const existing = db
+    .select({
+      id: aiProviders.id,
+      type: aiProviders.type,
+      name: aiProviders.name,
+      baseUrl: aiProviders.baseUrl,
+    })
+    .from(aiProviders)
+    .where(eq(aiProviders.workspaceId, workspaceId))
+    .all();
+
+  for (const provider of existing) {
+    const normalizedType = normalizeProviderType(provider.type);
+    if (normalizedType !== "openai") continue;
+    const inferred = inferProviderTypeByName(provider.name);
+    if (!inferred) continue;
+    db.update(aiProviders)
+      .set({
+        type: inferred,
+        ...(provider.baseUrl ? {} : { baseUrl: DEFAULT_PROVIDER_SPECS.find((s) => s.type === inferred)?.baseUrl ?? null }),
+      })
+      .where(eq(aiProviders.id, provider.id))
+      .run();
+  }
+
+  const providersAfterNormalization = db
+    .select({
+      id: aiProviders.id,
+      type: aiProviders.type,
+      name: aiProviders.name,
+      baseUrl: aiProviders.baseUrl,
+    })
+    .from(aiProviders)
+    .where(eq(aiProviders.workspaceId, workspaceId))
+    .all();
+
+  const byType = new Map<string, { id: string; type: string; name: string; baseUrl: string | null }>();
+  for (const provider of providersAfterNormalization) {
+    const t = normalizeProviderType(provider.type);
+    if (!byType.has(t)) byType.set(t, provider);
+  }
+
+  for (const spec of DEFAULT_PROVIDER_SPECS) {
+    const existingProvider = byType.get(spec.type);
+    if (!existingProvider) {
+      const id = uuidv4();
+      db.insert(aiProviders)
+        .values({
+          id,
+          workspaceId,
+          name: spec.name,
+          type: spec.type,
+          baseUrl: spec.baseUrl,
+          apiKeyEncrypted: null,
+          status: "active",
+        })
+        .run();
+      ensureProviderHasDefaultModel(id, spec.model);
+      continue;
+    }
+
+    if (!existingProvider.baseUrl) {
+      db.update(aiProviders)
+        .set({ baseUrl: spec.baseUrl })
+        .where(eq(aiProviders.id, existingProvider.id))
+        .run();
+    }
+    ensureProviderHasDefaultModel(existingProvider.id, spec.model);
+  }
+}
+
 function encryptKey(key: string): string {
   // Simple XOR-based obfuscation for local dev; replace with proper encryption in prod
   return Buffer.from(key).toString("base64");
@@ -21,6 +174,7 @@ function decryptKey(encrypted: string): string {
 }
 
 export function listProviders(workspaceId: string) {
+  ensureWorkspaceDefaultProviders(workspaceId);
   return db.select({
     id: aiProviders.id,
     workspaceId: aiProviders.workspaceId,
@@ -40,14 +194,22 @@ export function createProvider(data: {
   baseUrl?: string;
 }) {
   const id = uuidv4();
+  const normalizedType = normalizeProviderType(data.type);
+  const matchedDefault = DEFAULT_PROVIDER_SPECS.find((item) => item.type === normalizedType);
+  const baseUrl = data.baseUrl ?? matchedDefault?.baseUrl ?? null;
+
   db.insert(aiProviders).values({
     id,
     workspaceId: data.workspaceId,
     name: data.name,
-    type: data.type,
+    type: normalizedType || data.type,
     apiKeyEncrypted: data.apiKey ? encryptKey(data.apiKey) : null,
-    baseUrl: data.baseUrl ?? null,
+    baseUrl,
   }).run();
+
+  if (matchedDefault) {
+    ensureProviderHasDefaultModel(id, matchedDefault.model);
+  }
   return listProviders(data.workspaceId).find((p) => p.id === id)!;
 }
 
@@ -78,8 +240,10 @@ export function deleteProvider(id: string) {
 
 // Default test model per provider type
 const DEFAULT_TEST_MODELS: Record<string, string> = {
-  openai: "gpt-4o-mini",
-  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-5.1",
+  anthropic: "claude-opus-4-1",
+  zhipu: "glm-5",
+  qwen: "qwen3.5-plus",
   google: "gemini-1.5-flash",
   mistral: "mistral-small-latest",
 };
@@ -89,15 +253,16 @@ export async function testProvider(id: string): Promise<{ success: boolean; mess
   if (!provider) throw Object.assign(new Error("Provider not found"), { code: "NOT_FOUND" });
 
   const apiKey = provider.apiKeyEncrypted ? decryptKey(provider.apiKeyEncrypted) : "";
+  const providerType = normalizeProviderType(provider.type);
 
   // Resolve test model: prefer first configured model, fall back to known defaults
   const firstModel = db.select({ name: aiModels.name }).from(aiModels)
     .where(eq(aiModels.providerId, id)).get();
-  const modelName = firstModel?.name ?? DEFAULT_TEST_MODELS[provider.type] ?? "gpt-4o-mini";
+  const modelName = firstModel?.name ?? DEFAULT_TEST_MODELS[providerType] ?? "gpt-5.1";
 
   try {
     let model;
-    const type = provider.type.toLowerCase();
+    const type = providerType;
 
     if (type === "anthropic") {
       const anthropic = createAnthropic({ apiKey });
@@ -109,7 +274,7 @@ export async function testProvider(id: string): Promise<{ success: boolean; mess
       const mistral = createMistral({ apiKey });
       model = mistral(modelName);
     } else {
-      // openai-compatible (openai, azure, custom)
+      // OpenAI-compatible (openai, qwen, zhipu, azure, custom)
       const openai = createOpenAI({
         apiKey,
         ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),

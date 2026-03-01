@@ -6,6 +6,10 @@ function hasWorkspaceLlmConfig(cfg) {
 }
 function defaultBaseUrlForProvider(providerType) {
     switch (providerType) {
+        case "qwen":
+            return "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        case "zhipu":
+            return "https://open.bigmodel.cn/api/paas/v4/";
         case "mistral":
             return "https://api.mistral.ai/v1";
         default:

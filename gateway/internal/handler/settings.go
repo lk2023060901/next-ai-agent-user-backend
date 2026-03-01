@@ -65,6 +65,10 @@ func providerDefaults(providerType string) (icon string, supportsOAuth bool, aut
 		return "☁️", true, "api_key"
 	case "deepseek":
 		return "🔍", false, "api_key"
+	case "zhipu":
+		return "🧪", false, "api_key"
+	case "qwen":
+		return "🌀", false, "api_key"
 	default:
 		return "⚙️", false, "api_key"
 	}

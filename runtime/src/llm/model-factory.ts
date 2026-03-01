@@ -9,6 +9,10 @@ function hasWorkspaceLlmConfig(cfg: AgentConfig): boolean {
 
 function defaultBaseUrlForProvider(providerType: string): string | undefined {
   switch (providerType) {
+    case "qwen":
+      return "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    case "zhipu":
+      return "https://open.bigmodel.cn/api/paas/v4/";
     case "mistral":
       return "https://api.mistral.ai/v1";
     default:
