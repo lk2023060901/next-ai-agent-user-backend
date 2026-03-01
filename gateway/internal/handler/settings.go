@@ -31,6 +31,24 @@ type providerView struct {
 	CreatedAt     string `json:"createdAt"`
 }
 
+type modelView struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"displayName"`
+	ContextWindow int32    `json:"contextWindow"`
+	MaxOutput     int32    `json:"maxOutput"`
+	InputPrice    float64  `json:"inputPrice"`
+	OutputPrice   float64  `json:"outputPrice"`
+	Capabilities  []string `json:"capabilities"`
+	Enabled       bool     `json:"enabled"`
+}
+
+type modelSeriesView struct {
+	ID     string      `json:"id"`
+	Name   string      `json:"name"`
+	Models []modelView `json:"models"`
+}
+
 func NewSettingsHandler(clients *grpcclient.Clients) *SettingsHandler {
 	return &SettingsHandler{clients: clients}
 }
@@ -80,6 +98,46 @@ func mapProviderToView(p *settingspb.Provider, modelCount int32) providerView {
 		ModelCount:    modelCount,
 		CreatedAt:     p.GetCreatedAt(),
 	}
+}
+
+func mapSeriesToView(series []*settingspb.ModelSeries) []modelSeriesView {
+	out := make([]modelSeriesView, 0, len(series))
+	for _, s := range series {
+		if s == nil {
+			continue
+		}
+		models := s.GetModels()
+		modelOut := make([]modelView, 0, len(models))
+		for _, m := range models {
+			if m == nil {
+				continue
+			}
+			capabilities := m.GetCapabilities()
+			if capabilities == nil {
+				capabilities = []string{}
+			}
+			modelOut = append(modelOut, modelView{
+				ID:            m.GetId(),
+				Name:          m.GetName(),
+				DisplayName:   m.GetDisplayName(),
+				ContextWindow: m.GetContextWindow(),
+				MaxOutput:     m.GetMaxOutput(),
+				InputPrice:    m.GetInputPrice(),
+				OutputPrice:   m.GetOutputPrice(),
+				Capabilities:  capabilities,
+				Enabled:       m.GetEnabled(),
+			})
+		}
+		out = append(out, modelSeriesView{
+			ID:     s.GetId(),
+			Name:   s.GetName(),
+			Models: modelOut,
+		})
+	}
+	if out == nil {
+		return []modelSeriesView{}
+	}
+	return out
 }
 
 func (h *SettingsHandler) userCtx(r *http.Request) *commonpb.UserContext {
@@ -219,7 +277,7 @@ func (h *SettingsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp.Series)
+	writeData(w, http.StatusOK, mapSeriesToView(resp.GetSeries()))
 }
 
 func (h *SettingsHandler) ListModelCatalog(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +288,7 @@ func (h *SettingsHandler) ListModelCatalog(w http.ResponseWriter, r *http.Reques
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp.Series)
+	writeData(w, http.StatusOK, mapSeriesToView(resp.GetSeries()))
 }
 
 func (h *SettingsHandler) ListAllModels(w http.ResponseWriter, r *http.Request) {
