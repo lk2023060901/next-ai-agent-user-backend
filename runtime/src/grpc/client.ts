@@ -73,6 +73,15 @@ export interface RuntimePluginLoadCandidate {
   sourceSpec: string;
 }
 
+export interface ContinueContext {
+  runId: string;
+  sessionId: string;
+  workspaceId: string;
+  coordinatorAgentId: string;
+  userRequest: string;
+  assistantContent: string;
+}
+
 export interface PluginUsageEvent {
   specVersion: string;
   pluginName: string;
@@ -90,6 +99,18 @@ export interface PluginUsageEvent {
 export const grpcClient = {
   getAgentConfig(agentId: string): Promise<AgentConfig> {
     return promisify<AgentConfig>(agentRunClient, "getAgentConfig", { agentId });
+  },
+
+  getContinueContextByMessage(assistantMessageId: string): Promise<ContinueContext> {
+    return promisify<ContinueContext>(agentRunClient, "getContinueContextByMessage", {
+      assistantMessageId,
+    });
+  },
+
+  getContinueContextByRun(runId: string): Promise<ContinueContext> {
+    return promisify<ContinueContext>(agentRunClient, "getContinueContextByRun", {
+      runId,
+    });
   },
 
   createRun(params: {

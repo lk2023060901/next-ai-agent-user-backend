@@ -31,6 +31,7 @@ import {
 import {
   getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
   recordRunUsage, recordTaskUsage, reportPluginUsageEvents as reportPluginUsageEventsFromAgentRun,
+  getContinueContextByMessageId, getContinueContextByRunId,
 } from "../modules/agent-run/agent-run.service";
 import {
   listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
@@ -640,6 +641,32 @@ export function startGrpcServer(port: number): grpc.Server {
             llmBaseUrl: item.llmBaseUrl,
             llmApiKey: item.llmApiKey,
           })),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    getContinueContextByMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = getContinueContextByMessageId(call.request.assistantMessageId);
+        callback(null, {
+          runId: result.runId,
+          sessionId: result.sessionId,
+          workspaceId: result.workspaceId,
+          coordinatorAgentId: result.coordinatorAgentId,
+          userRequest: result.userRequest,
+          assistantContent: result.assistantContent,
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    getContinueContextByRun(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const result = getContinueContextByRunId(call.request.runId);
+        callback(null, {
+          runId: result.runId,
+          sessionId: result.sessionId,
+          workspaceId: result.workspaceId,
+          coordinatorAgentId: result.coordinatorAgentId,
+          userRequest: result.userRequest,
+          assistantContent: result.assistantContent,
         });
       } catch (err) { handleError(callback, err); }
     },

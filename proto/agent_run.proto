@@ -4,11 +4,22 @@ package agent_run;
 option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/agent_run";
 
 message GetAgentConfigRequest { string agent_id = 1; }
+message GetContinueContextRequest { string assistant_message_id = 1; }
+message GetContinueContextByRunRequest { string run_id = 1; }
 message LlmCandidate {
   string model = 1;
   string llm_provider_type = 2;
   string llm_base_url = 3;
   string llm_api_key = 4;
+}
+
+message ContinueContext {
+  string run_id = 1;
+  string session_id = 2;
+  string workspace_id = 3;
+  string coordinator_agent_id = 4;
+  string user_request = 5;
+  string assistant_content = 6;
 }
 
 message AgentConfig {
@@ -144,6 +155,8 @@ message Empty {}
 
 service AgentRunService {
   rpc GetAgentConfig  (GetAgentConfigRequest)  returns (AgentConfig);
+  rpc GetContinueContextByMessage (GetContinueContextRequest) returns (ContinueContext);
+  rpc GetContinueContextByRun (GetContinueContextByRunRequest) returns (ContinueContext);
   rpc CreateRun       (CreateRunRequest)        returns (CreateRunResponse);
   rpc AppendMessage   (AppendMessageRequest)    returns (AppendMessageResponse);
   rpc UpdateRunStatus (UpdateRunStatusRequest)  returns (Empty);

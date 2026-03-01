@@ -32,6 +32,16 @@ export const grpcClient = {
     getAgentConfig(agentId) {
         return promisify(agentRunClient, "getAgentConfig", { agentId });
     },
+    getContinueContextByMessage(assistantMessageId) {
+        return promisify(agentRunClient, "getContinueContextByMessage", {
+            assistantMessageId,
+        });
+    },
+    getContinueContextByRun(runId) {
+        return promisify(agentRunClient, "getContinueContextByRun", {
+            runId,
+        });
+    },
     createRun(params) {
         return promisify(agentRunClient, "createRun", params);
     },

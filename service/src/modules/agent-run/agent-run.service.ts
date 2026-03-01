@@ -54,6 +54,15 @@ export interface AppendMessageParams {
   parentId?: string;
 }
 
+export interface ContinueContextResult {
+  runId: string;
+  sessionId: string;
+  workspaceId: string;
+  coordinatorAgentId: string;
+  userRequest: string;
+  assistantContent: string;
+}
+
 export interface CreateTaskParams {
   runId: string;
   agentId: string;
@@ -839,6 +848,7 @@ export function appendMessage(params: AppendMessageParams): { messageId: string 
     .values({
       id: messageId,
       sessionId: run.sessionId,
+      runId: run.id,
       role: params.role,
       content: params.content,
       agentId: params.agentId ?? null,
@@ -857,6 +867,92 @@ export function appendMessage(params: AppendMessageParams): { messageId: string 
     .run();
 
   return { messageId };
+}
+
+export function getContinueContextByMessageId(assistantMessageId: string): ContinueContextResult {
+  const messageId = (assistantMessageId ?? "").trim();
+  if (!messageId) {
+    throw Object.assign(new Error("assistant message id is required"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const assistantMessage = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!assistantMessage) {
+    throw Object.assign(new Error("Assistant message not found"), { code: "NOT_FOUND" });
+  }
+  if ((assistantMessage.role ?? "").toLowerCase() !== "assistant") {
+    throw Object.assign(new Error("Message is not an assistant response"), { code: "INVALID_ARGUMENT" });
+  }
+
+  let run = assistantMessage.runId
+    ? db.select().from(agentRuns).where(eq(agentRuns.id, assistantMessage.runId)).get()
+    : undefined;
+
+  if (!run) {
+    const sessionRuns = db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.sessionId, assistantMessage.sessionId))
+      .orderBy(desc(agentRuns.createdAt))
+      .all();
+    run = sessionRuns.find(
+      (item) =>
+        (item.createdAt ?? "") <= (assistantMessage.createdAt ?? "") &&
+        (item.coordinatorAgentId ?? "").trim().length > 0,
+    );
+  }
+
+  if (!run) {
+    throw Object.assign(new Error("Run context not found for assistant message"), { code: "NOT_FOUND" });
+  }
+
+  const coordinatorAgentId = (run.coordinatorAgentId ?? "").trim();
+  const userRequest = (run.userRequest ?? "").trim();
+  if (!coordinatorAgentId || !userRequest) {
+    throw Object.assign(new Error("Run context is incomplete"), { code: "INVALID_ARGUMENT" });
+  }
+
+  return {
+    runId: run.id,
+    sessionId: run.sessionId,
+    workspaceId: run.workspaceId,
+    coordinatorAgentId,
+    userRequest,
+    assistantContent: assistantMessage.content ?? "",
+  };
+}
+
+export function getContinueContextByRunId(runId: string): ContinueContextResult {
+  const normalizedRunId = (runId ?? "").trim();
+  if (!normalizedRunId) {
+    throw Object.assign(new Error("run id is required"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const run = db.select().from(agentRuns).where(eq(agentRuns.id, normalizedRunId)).get();
+  if (!run) {
+    throw Object.assign(new Error("Run not found"), { code: "NOT_FOUND" });
+  }
+
+  const coordinatorAgentId = (run.coordinatorAgentId ?? "").trim();
+  const userRequest = (run.userRequest ?? "").trim();
+  if (!coordinatorAgentId || !userRequest) {
+    throw Object.assign(new Error("Run context is incomplete"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const latestAssistantMessage = db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.runId, normalizedRunId), eq(messages.role, "assistant")))
+    .orderBy(desc(messages.createdAt))
+    .get();
+
+  return {
+    runId: run.id,
+    sessionId: run.sessionId,
+    workspaceId: run.workspaceId,
+    coordinatorAgentId,
+    userRequest,
+    assistantContent: latestAssistantMessage?.content ?? "",
+  };
 }
 
 export function updateRunStatus(runId: string, status: string): void {

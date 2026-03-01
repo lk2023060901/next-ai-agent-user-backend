@@ -33,7 +33,7 @@ func main() {
 	r.Use(cors.New(cors.Options{
 		AllowedOrigins:   cfg.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID", "X-Runtime-Secret"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID", "X-Runtime-Secret"},
 		AllowCredentials: true,
 	}).Handler)
 

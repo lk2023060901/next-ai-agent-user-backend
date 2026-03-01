@@ -158,6 +158,7 @@ export const messages = sqliteTable("messages", {
   sessionId: text("session_id")
     .notNull()
     .references(() => chatSessions.id, { onDelete: "cascade" }),
+  runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
   role: text("role").notNull(), // user | assistant | tool
   content: text("content"),
   agentId: text("agent_id"),
@@ -166,7 +167,9 @@ export const messages = sqliteTable("messages", {
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxRun: index("messages_run_id_idx").on(t.runId),
+}));
 
 export const toolCalls = sqliteTable("tool_calls", {
   id: text("id").primaryKey(),

@@ -102,40 +102,118 @@ function firstHeaderValue(value) {
         return value[0] ?? "";
     return value ?? "";
 }
+function buildContinueRequest(userRequest, assistantContent) {
+    return [
+        "请继续你上一条中断的回答。",
+        "要求：不要重复已经输出的内容，直接从中断处续写并完成回答。",
+        `用户原始问题：${userRequest}`,
+        "你已经输出的部分（用于对齐上下文）：",
+        assistantContent.trim().length > 0 ? assistantContent : "(空)",
+    ].join("\n\n");
+}
+function extractRunIdFromLocalMessageId(messageId) {
+    const normalized = messageId.trim();
+    const matched = /^run-([0-9a-fA-F-]{36})-\d+$/.exec(normalized);
+    return matched?.[1] ?? null;
+}
 app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
     const { wsId } = request.params;
     const { sessionId, userRequest, coordinatorAgentId } = request.body;
+    const resumeFromMessageId = (request.body.resumeFromMessageId ?? "").trim();
+    const explicitResumeFromRunId = (request.body.resumeFromRunId ?? "").trim();
+    const resumeFromRunId = explicitResumeFromRunId || extractRunIdFromLocalMessageId(resumeFromMessageId || "") || "";
+    const resumeMode = request.body.resumeMode === "regenerate" ? "regenerate" : "continue";
+    let effectiveSessionId = (sessionId ?? "").trim();
+    let effectiveUserRequest = (userRequest ?? "").trim();
+    let effectiveCoordinatorAgentId = (coordinatorAgentId ?? "").trim();
+    if (resumeFromMessageId || resumeFromRunId) {
+        let context = null;
+        let messageLookupErrorCode;
+        if (resumeFromMessageId) {
+            try {
+                context = await grpcClient.getContinueContextByMessage(resumeFromMessageId);
+            }
+            catch (error) {
+                const code = error?.code;
+                messageLookupErrorCode = code;
+                if (code === 3) {
+                    return reply.status(400).send({ error: "invalid assistant message id" });
+                }
+                if (code !== 5 || !resumeFromRunId) {
+                    if (code === 5) {
+                        return reply.status(404).send({ error: "assistant message not found" });
+                    }
+                    throw error;
+                }
+            }
+        }
+        if (!context && resumeFromRunId) {
+            try {
+                context = await grpcClient.getContinueContextByRun(resumeFromRunId);
+            }
+            catch (error) {
+                const code = error?.code;
+                if (code === 3) {
+                    return reply.status(400).send({ error: "invalid run id" });
+                }
+                if (code === 5) {
+                    if (messageLookupErrorCode === 5 && resumeFromMessageId) {
+                        return reply.status(404).send({ error: "assistant message and run context not found" });
+                    }
+                    return reply.status(404).send({ error: "run context not found" });
+                }
+                throw error;
+            }
+        }
+        if (!context) {
+            return reply.status(404).send({ error: "resume context not found" });
+        }
+        if ((context.workspaceId ?? "").trim() !== wsId) {
+            return reply.status(400).send({ error: "resume context does not belong to workspace" });
+        }
+        effectiveSessionId = (context.sessionId ?? "").trim();
+        effectiveCoordinatorAgentId = (context.coordinatorAgentId ?? "").trim();
+        effectiveUserRequest =
+            resumeMode === "regenerate"
+                ? (context.userRequest ?? "").trim()
+                : buildContinueRequest(context.userRequest ?? "", context.assistantContent ?? "");
+    }
     const startCandidateOffset = typeof request.body.startCandidateOffset === "number" && Number.isFinite(request.body.startCandidateOffset)
         ? Math.max(0, Math.floor(request.body.startCandidateOffset))
-        : undefined;
-    if (!sessionId || !userRequest || !coordinatorAgentId) {
+        : (resumeFromMessageId || resumeFromRunId) && resumeMode === "continue"
+            ? 1
+            : undefined;
+    if (!effectiveSessionId || !effectiveUserRequest || !effectiveCoordinatorAgentId) {
         return reply.status(400).send({ error: "sessionId, userRequest, coordinatorAgentId required" });
     }
     const idempotencyHeader = firstHeaderValue(request.headers["idempotency-key"]);
     const idempotencyKey = (request.body.idempotencyKey ?? idempotencyHeader).trim() || undefined;
     const fingerprint = JSON.stringify({
-        sessionId,
+        sessionId: effectiveSessionId,
         workspaceId: wsId,
-        userRequest,
-        coordinatorAgentId,
+        userRequest: effectiveUserRequest,
+        coordinatorAgentId: effectiveCoordinatorAgentId,
         startCandidateOffset: startCandidateOffset ?? 0,
+        resumeFromMessageId: resumeFromMessageId || "",
+        resumeFromRunId: resumeFromRunId || "",
+        resumeMode,
     });
     try {
         const createResult = await runStore.createRuntimeRun({
             params: {
-                sessionId,
+                sessionId: effectiveSessionId,
                 workspaceId: wsId,
-                userRequest,
-                coordinatorAgentId,
+                userRequest: effectiveUserRequest,
+                coordinatorAgentId: effectiveCoordinatorAgentId,
                 startCandidateOffset,
             },
             idempotencyKey,
             fingerprint,
             createRun: () => grpcClient.createRun({
-                sessionId,
+                sessionId: effectiveSessionId,
                 workspaceId: wsId,
-                userRequest,
-                coordinatorAgentId,
+                userRequest: effectiveUserRequest,
+                coordinatorAgentId: effectiveCoordinatorAgentId,
             }),
         });
         setImmediate(() => {
