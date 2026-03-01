@@ -4,6 +4,13 @@ package agent_run;
 option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/agent_run";
 
 message GetAgentConfigRequest { string agent_id = 1; }
+message LlmCandidate {
+  string model = 1;
+  string llm_provider_type = 2;
+  string llm_base_url = 3;
+  string llm_api_key = 4;
+}
+
 message AgentConfig {
   string id = 1;
   string name = 2;
@@ -23,6 +30,7 @@ message AgentConfig {
   string llm_provider_type = 16;
   string llm_base_url = 17;
   string llm_api_key = 18;
+  repeated LlmCandidate llm_candidates = 19;
 }
 
 message CreateRunRequest {

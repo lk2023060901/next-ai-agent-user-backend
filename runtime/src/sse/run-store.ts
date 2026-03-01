@@ -7,6 +7,7 @@ export interface RunParams {
   workspaceId: string;
   userRequest: string;
   coordinatorAgentId: string;
+  startCandidateOffset?: number;
 }
 
 interface StoredEvent {

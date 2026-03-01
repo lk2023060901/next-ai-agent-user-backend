@@ -105,6 +105,9 @@ function firstHeaderValue(value) {
 app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
     const { wsId } = request.params;
     const { sessionId, userRequest, coordinatorAgentId } = request.body;
+    const startCandidateOffset = typeof request.body.startCandidateOffset === "number" && Number.isFinite(request.body.startCandidateOffset)
+        ? Math.max(0, Math.floor(request.body.startCandidateOffset))
+        : undefined;
     if (!sessionId || !userRequest || !coordinatorAgentId) {
         return reply.status(400).send({ error: "sessionId, userRequest, coordinatorAgentId required" });
     }
@@ -115,6 +118,7 @@ app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
         workspaceId: wsId,
         userRequest,
         coordinatorAgentId,
+        startCandidateOffset: startCandidateOffset ?? 0,
     });
     try {
         const createResult = await runStore.createRuntimeRun({
@@ -123,6 +127,7 @@ app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
                 workspaceId: wsId,
                 userRequest,
                 coordinatorAgentId,
+                startCandidateOffset,
             },
             idempotencyKey,
             fingerprint,

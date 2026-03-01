@@ -113,6 +113,8 @@ func main() {
 		r.Delete("/workspaces/{wsId}/plugins/{pluginId}", pluginHandler.UninstallWorkspacePlugin)
 
 		// Settings — providers (match frontend: /workspaces/:wsId/providers/*)
+		r.Get("/workspaces/{wsId}/settings", settingsHandler.GetWorkspaceSettings)
+		r.Patch("/workspaces/{wsId}/settings", settingsHandler.UpdateWorkspaceSettings)
 		r.Get("/workspaces/{wsId}/providers", settingsHandler.ListProviders)
 		r.Post("/workspaces/{wsId}/providers", settingsHandler.CreateProvider)
 		r.Patch("/workspaces/{wsId}/providers/{providerId}", settingsHandler.UpdateProvider)

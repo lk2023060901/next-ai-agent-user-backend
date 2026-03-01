@@ -16,6 +16,7 @@ export async function startRun(req, emit) {
             workspaceId: req.workspaceId,
             coordinatorAgentId: req.coordinatorAgentId,
             userMessage: req.userRequest,
+            startCandidateOffset: req.startCandidateOffset,
             sandbox,
             emit,
             grpc: grpcClient,

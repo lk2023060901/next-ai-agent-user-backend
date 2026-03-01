@@ -527,6 +527,26 @@ export const aiModels = sqliteTable("ai_models", {
   isDefault: integer("is_default", { mode: "boolean" }).default(false),
 });
 
+export const workspaceSettings = sqliteTable("workspace_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  defaultModel: text("default_model").default(""),
+  defaultTemperature: real("default_temperature").default(0.7),
+  maxTokensPerRequest: integer("max_tokens_per_request").default(8192),
+  assistantModelIds: text("assistant_model_ids").default("[]"),
+  fallbackModelIds: text("fallback_model_ids").default("[]"),
+  codeModelIds: text("code_model_ids").default("[]"),
+  agentModelIds: text("agent_model_ids").default("[]"),
+  subAgentModelIds: text("sub_agent_model_ids").default("[]"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")

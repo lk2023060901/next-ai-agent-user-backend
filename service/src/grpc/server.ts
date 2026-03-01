@@ -10,6 +10,8 @@ import {
   deleteWorkspace,
 } from "../modules/workspace/workspace.service";
 import {
+  getWorkspaceSettings,
+  updateWorkspaceSettings,
   listProviders, createProvider, updateProvider, deleteProvider, testProvider,
   listModels, listAllModels, createModel, updateModel, deleteModel, listModelSeries, listModelCatalog,
   listApiKeys, createApiKey, deleteApiKey,
@@ -311,6 +313,37 @@ export function startGrpcServer(port: number): grpc.Server {
   // ── Settings ──────────────────────────────────────────────────────────────
   const settingsPkg = grpc.loadPackageDefinition(loadProto("settings.proto")) as any;
   server.addService(settingsPkg.settings.SettingsService.service, {
+    getWorkspaceSettings(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, getWorkspaceSettings(call.request.workspaceId));
+      } catch (err) { handleError(callback, err); }
+    },
+    updateWorkspaceSettings(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, updateWorkspaceSettings(call.request.workspaceId, {
+          name: call.request.name,
+          description: call.request.description,
+          defaultModel: call.request.defaultModel,
+          defaultTemperature: call.request.defaultTemperature,
+          maxTokensPerRequest: call.request.maxTokensPerRequest,
+          assistantModelIds: call.request.assistantModelIds,
+          fallbackModelIds: call.request.fallbackModelIds,
+          codeModelIds: call.request.codeModelIds,
+          agentModelIds: call.request.agentModelIds,
+          subAgentModelIds: call.request.subAgentModelIds,
+          setName: call.request.setName,
+          setDescription: call.request.setDescription,
+          setDefaultModel: call.request.setDefaultModel,
+          setDefaultTemperature: call.request.setDefaultTemperature,
+          setMaxTokensPerRequest: call.request.setMaxTokensPerRequest,
+          setAssistantModelIds: call.request.setAssistantModelIds,
+          setFallbackModelIds: call.request.setFallbackModelIds,
+          setCodeModelIds: call.request.setCodeModelIds,
+          setAgentModelIds: call.request.setAgentModelIds,
+          setSubAgentModelIds: call.request.setSubAgentModelIds,
+        }));
+      } catch (err) { handleError(callback, err); }
+    },
     listProviders(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, { providers: listProviders(call.request.workspaceId) }); }
       catch (err) { handleError(callback, err); }
@@ -601,6 +634,12 @@ export function startGrpcServer(port: number): grpc.Server {
           llmProviderType: result.llmProviderType,
           llmBaseUrl: result.llmBaseUrl,
           llmApiKey: result.llmApiKey,
+          llmCandidates: result.llmCandidates.map((item) => ({
+            model: item.model,
+            llmProviderType: item.llmProviderType,
+            llmBaseUrl: item.llmBaseUrl,
+            llmApiKey: item.llmApiKey,
+          })),
         });
       } catch (err) { handleError(callback, err); }
     },

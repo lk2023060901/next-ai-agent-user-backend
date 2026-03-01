@@ -49,6 +49,20 @@ type modelSeriesView struct {
 	Models []modelView `json:"models"`
 }
 
+type workspaceSettingsView struct {
+	ID                  string  `json:"id"`
+	Name                string  `json:"name"`
+	Description         string  `json:"description"`
+	DefaultModel        string  `json:"defaultModel"`
+	DefaultTemperature  float64 `json:"defaultTemperature"`
+	MaxTokensPerRequest int32   `json:"maxTokensPerRequest"`
+	AssistantModelID    any     `json:"assistantModelId"`
+	FastModelID         any     `json:"fastModelId"`
+	CodeModelID         any     `json:"codeModelId"`
+	AgentModelID        any     `json:"agentModelId"`
+	SubAgentModelID     any     `json:"subAgentModelId"`
+}
+
 func NewSettingsHandler(clients *grpcclient.Clients) *SettingsHandler {
 	return &SettingsHandler{clients: clients}
 }
@@ -154,6 +168,201 @@ func (h *SettingsHandler) wsReq(r *http.Request) *settingspb.WorkspaceRequest {
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		UserContext: h.userCtx(r),
 	}
+}
+
+func modelFieldValue(ids []string) any {
+	if len(ids) == 1 {
+		return ids[0]
+	}
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
+func mapWorkspaceSettingsToView(resp *settingspb.WorkspaceSettings) workspaceSettingsView {
+	return workspaceSettingsView{
+		ID:                  resp.GetId(),
+		Name:                resp.GetName(),
+		Description:         resp.GetDescription(),
+		DefaultModel:        resp.GetDefaultModel(),
+		DefaultTemperature:  resp.GetDefaultTemperature(),
+		MaxTokensPerRequest: resp.GetMaxTokensPerRequest(),
+		AssistantModelID:    modelFieldValue(resp.GetAssistantModelIds()),
+		FastModelID:         modelFieldValue(resp.GetFallbackModelIds()),
+		CodeModelID:         modelFieldValue(resp.GetCodeModelIds()),
+		AgentModelID:        modelFieldValue(resp.GetAgentModelIds()),
+		SubAgentModelID:     modelFieldValue(resp.GetSubAgentModelIds()),
+	}
+}
+
+func readStringField(body map[string]any, key string) (string, bool) {
+	raw, ok := body[key]
+	if !ok {
+		return "", false
+	}
+	if value, ok := raw.(string); ok {
+		return strings.TrimSpace(value), true
+	}
+	return "", true
+}
+
+func readFloatField(body map[string]any, key string) (float64, bool) {
+	raw, ok := body[key]
+	if !ok {
+		return 0, false
+	}
+	switch value := raw.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int32:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	default:
+		return 0, true
+	}
+}
+
+func readInt32Field(body map[string]any, key string) (int32, bool) {
+	raw, ok := body[key]
+	if !ok {
+		return 0, false
+	}
+	switch value := raw.(type) {
+	case float64:
+		return int32(value), true
+	case float32:
+		return int32(value), true
+	case int:
+		return int32(value), true
+	case int32:
+		return value, true
+	case int64:
+		return int32(value), true
+	default:
+		return 0, true
+	}
+}
+
+func readStringListField(body map[string]any, key string) ([]string, bool) {
+	raw, ok := body[key]
+	if !ok {
+		return nil, false
+	}
+
+	normalize := func(items []string) []string {
+		out := make([]string, 0, len(items))
+		seen := make(map[string]struct{}, len(items))
+		for _, item := range items {
+			normalized := strings.TrimSpace(item)
+			if normalized == "" {
+				continue
+			}
+			if _, exists := seen[normalized]; exists {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			out = append(out, normalized)
+		}
+		return out
+	}
+
+	switch value := raw.(type) {
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return []string{}, true
+		}
+		return []string{strings.TrimSpace(value)}, true
+	case []string:
+		return normalize(value), true
+	case []any:
+		items := make([]string, 0, len(value))
+		for _, item := range value {
+			if s, ok := item.(string); ok {
+				items = append(items, s)
+			}
+		}
+		return normalize(items), true
+	default:
+		return []string{}, true
+	}
+}
+
+// ── Workspace Settings ───────────────────────────────────────────────────────
+
+func (h *SettingsHandler) GetWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.clients.Settings.GetWorkspaceSettings(r.Context(), h.wsReq(r))
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, mapWorkspaceSettingsToView(resp))
+}
+
+func (h *SettingsHandler) UpdateWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req := &settingspb.UpdateWorkspaceSettingsRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		UserContext: h.userCtx(r),
+	}
+
+	if value, ok := readStringField(body, "name"); ok {
+		req.Name = value
+		req.SetName = true
+	}
+	if value, ok := readStringField(body, "description"); ok {
+		req.Description = value
+		req.SetDescription = true
+	}
+	if value, ok := readStringField(body, "defaultModel"); ok {
+		req.DefaultModel = value
+		req.SetDefaultModel = true
+	}
+	if value, ok := readFloatField(body, "defaultTemperature"); ok {
+		req.DefaultTemperature = value
+		req.SetDefaultTemperature = true
+	}
+	if value, ok := readInt32Field(body, "maxTokensPerRequest"); ok {
+		req.MaxTokensPerRequest = value
+		req.SetMaxTokensPerRequest = true
+	}
+	if value, ok := readStringListField(body, "assistantModelId"); ok {
+		req.AssistantModelIds = value
+		req.SetAssistantModelIds = true
+	}
+	if value, ok := readStringListField(body, "fastModelId"); ok {
+		req.FallbackModelIds = value
+		req.SetFallbackModelIds = true
+	}
+	if value, ok := readStringListField(body, "codeModelId"); ok {
+		req.CodeModelIds = value
+		req.SetCodeModelIds = true
+	}
+	if value, ok := readStringListField(body, "agentModelId"); ok {
+		req.AgentModelIds = value
+		req.SetAgentModelIds = true
+	}
+	if value, ok := readStringListField(body, "subAgentModelId"); ok {
+		req.SubAgentModelIds = value
+		req.SetSubAgentModelIds = true
+	}
+
+	resp, err := h.clients.Settings.UpdateWorkspaceSettings(r.Context(), req)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, mapWorkspaceSettingsToView(resp))
 }
 
 // ── Providers ─────────────────────────────────────────────────────────────────

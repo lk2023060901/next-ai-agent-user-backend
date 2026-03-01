@@ -51,6 +51,12 @@ export interface AgentConfig {
   llmProviderType: string;
   llmBaseUrl: string;
   llmApiKey: string;
+  llmCandidates?: Array<{
+    model: string;
+    llmProviderType: string;
+    llmBaseUrl: string;
+    llmApiKey: string;
+  }>;
 }
 
 export interface RuntimePluginLoadCandidate {

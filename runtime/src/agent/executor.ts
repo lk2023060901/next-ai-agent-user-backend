@@ -4,7 +4,7 @@ import type { SandboxPolicy } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import type { grpcClient as GrpcClientType } from "../grpc/client.js";
 import { buildToolset } from "../tools/registry.js";
-import { buildModelForAgent } from "../llm/model-factory.js";
+import { buildModelForAgent, getLlmCandidates } from "../llm/model-factory.js";
 
 export interface ExecutorParams {
   agentId: string;
@@ -50,6 +50,7 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
 
   let fullText = "";
   let result: ReturnType<typeof streamText> | null = null;
+  const llmCandidates = getLlmCandidates(agentCfg);
   const resolveUsage = async () => {
     if (!result) return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     try {
@@ -64,77 +65,122 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
   };
 
   try {
-    result = streamText({
-      model: buildModelForAgent(agentCfg),
-      system: agentCfg.systemPrompt || undefined,
-      messages: [{ role: "user", content: params.instruction }],
-      tools: Object.keys(tools).length > 0 ? tools : undefined,
-      maxSteps: params.sandbox.maxTurns,
-    });
+    const candidates = llmCandidates.length > 0 ? llmCandidates : [undefined];
+    let streamError: unknown = null;
 
-    for await (const chunk of result.fullStream) {
-      const c = chunk as {
-        type: string;
-        textDelta?: string;
-        text?: string;
-        reasoning?: string;
-        toolCallId?: string;
-        toolName?: string;
-        args?: unknown;
-        result?: unknown;
-      };
-      if (c.type === "text-delta" && c.textDelta !== undefined) {
-        fullText += c.textDelta;
-        params.emit({
-          type: "text-delta",
-          runId: params.runId,
-          messageId,
-          text: c.textDelta,
-          delta: c.textDelta,
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      let emittedStreamData = false;
+      fullText = "";
+      pendingToolCalls.clear();
+
+      try {
+        result = streamText({
+          model: buildModelForAgent(agentCfg, candidate),
+          system: agentCfg.systemPrompt || undefined,
+          messages: [{ role: "user", content: params.instruction }],
+          tools: Object.keys(tools).length > 0 ? tools : undefined,
+          maxSteps: params.sandbox.maxTurns,
         });
-      } else if (c.type === "reasoning-delta") {
-        const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
-        if (text) {
-          params.emit({
-            type: "reasoning-delta",
-            runId: params.runId,
-            messageId,
-            text,
-            delta: text,
-          });
+
+        for await (const chunk of result.fullStream) {
+          const c = chunk as {
+            type: string;
+            textDelta?: string;
+            text?: string;
+            reasoning?: string;
+            toolCallId?: string;
+            toolName?: string;
+            args?: unknown;
+            result?: unknown;
+          };
+          if (c.type === "text-delta" && c.textDelta !== undefined) {
+            emittedStreamData = true;
+            fullText += c.textDelta;
+            params.emit({
+              type: "text-delta",
+              runId: params.runId,
+              messageId,
+              text: c.textDelta,
+              delta: c.textDelta,
+            });
+          } else if (c.type === "reasoning-delta") {
+            const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
+            if (text) {
+              emittedStreamData = true;
+              params.emit({
+                type: "reasoning-delta",
+                runId: params.runId,
+                messageId,
+                text,
+                delta: text,
+              });
+            }
+          } else if (c.type === "reasoning") {
+            const text = c.text ?? c.reasoning ?? "";
+            if (text) {
+              emittedStreamData = true;
+              params.emit({ type: "reasoning", runId: params.runId, messageId, text });
+            }
+          } else if (c.type === "tool-call") {
+            emittedStreamData = true;
+            const toolName = c.toolName ?? "unknown_tool";
+            const toolCallId = c.toolCallId ?? uuidv4();
+            const queue = pendingToolCalls.get(toolName) ?? [];
+            queue.push(toolCallId);
+            pendingToolCalls.set(toolName, queue);
+            params.emit({
+              type: "tool-call",
+              runId: params.runId,
+              messageId,
+              toolCallId,
+              toolName,
+              args: c.args ?? {},
+            });
+          } else if (c.type === "tool-result") {
+            emittedStreamData = true;
+            const toolName = c.toolName ?? "unknown_tool";
+            const queue = pendingToolCalls.get(toolName);
+            const queuedToolCallId = queue && queue.length > 0 ? queue.shift() : undefined;
+            if (queue && queue.length === 0) pendingToolCalls.delete(toolName);
+            params.emit({
+              type: "tool-result",
+              runId: params.runId,
+              messageId,
+              toolCallId: c.toolCallId ?? queuedToolCallId,
+              toolName,
+              result: c.result ?? "",
+              status: "success",
+            });
+          }
         }
-      } else if (c.type === "reasoning") {
-        const text = c.text ?? c.reasoning ?? "";
-        if (text) params.emit({ type: "reasoning", runId: params.runId, messageId, text });
-      } else if (c.type === "tool-call") {
-        const toolName = c.toolName ?? "unknown_tool";
-        const toolCallId = c.toolCallId ?? uuidv4();
-        const queue = pendingToolCalls.get(toolName) ?? [];
-        queue.push(toolCallId);
-        pendingToolCalls.set(toolName, queue);
-        params.emit({
-          type: "tool-call",
-          runId: params.runId,
-          messageId,
-          toolCallId,
-          toolName,
-          args: c.args ?? {},
-        });
-      } else if (c.type === "tool-result") {
-        const toolName = c.toolName ?? "unknown_tool";
-        const queue = pendingToolCalls.get(toolName);
-        const queuedToolCallId = queue && queue.length > 0 ? queue.shift() : undefined;
-        if (queue && queue.length === 0) pendingToolCalls.delete(toolName);
-        params.emit({
-          type: "tool-result",
-          runId: params.runId,
-          messageId,
-          toolCallId: c.toolCallId ?? queuedToolCallId,
-          toolName,
-          result: c.result ?? "",
-          status: "success",
-        });
+
+        streamError = null;
+        break;
+      } catch (err) {
+        streamError = err;
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        const hasNextCandidate = index + 1 < candidates.length;
+        if (hasNextCandidate && !emittedStreamData && fullText.trim().length === 0) {
+          console.warn(
+            `[executor] model failed before streaming, retrying fallback (${index + 1}/${candidates.length})`,
+            {
+              runId: params.runId,
+              taskId: params.taskId,
+              agentId: params.agentId,
+              provider: candidate?.llmProviderType ?? agentCfg.llmProviderType,
+              model: candidate?.model ?? agentCfg.model,
+              error: errorMessage,
+            }
+          );
+          continue;
+        }
+        break;
       }
+    }
+
+    if (streamError) {
+      throw streamError;
     }
 
     const usage = await resolveUsage();
@@ -210,6 +256,18 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
     }
 
     const msg = err instanceof Error ? err.message : String(err);
+    if (fullText.trim().length > 0) {
+      try {
+        await params.grpc.appendMessage({
+          runId: params.runId,
+          role: "assistant",
+          content: fullText,
+          agentId: params.agentId,
+        });
+      } catch {
+        // best effort
+      }
+    }
     await params.grpc.updateTask({
       taskId: params.taskId,
       status: "failed",

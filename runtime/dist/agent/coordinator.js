@@ -4,7 +4,7 @@ import { z } from "zod";
 import { makeDelegateTool } from "../tools/delegate.js";
 import { makeWebSearchTool } from "../tools/web-search.js";
 import { isToolAllowed } from "../policy/tool-policy.js";
-import { buildModelForAgent } from "../llm/model-factory.js";
+import { buildModelForAgent, getLlmCandidates } from "../llm/model-factory.js";
 import { buildRuntimePluginToolset } from "../plugins/runtime-toolset.js";
 const WEB_SEARCH_PLAN_SCHEMA = z.object({
     needWebSearch: z.boolean(),
@@ -71,7 +71,8 @@ function formatWebSearchContext(result) {
 }
 export async function runCoordinator(params) {
     const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId);
-    const model = buildModelForAgent(agentCfg);
+    const llmCandidates = getLlmCandidates(agentCfg);
+    const planningModel = buildModelForAgent(agentCfg, llmCandidates[0]);
     let fullText = "";
     const messageId = uuidv4();
     const pendingToolCalls = new Map();
@@ -98,7 +99,7 @@ export async function runCoordinator(params) {
     const webSearchAllowed = isToolAllowed("web_search", params.sandbox.toolPolicy);
     let webSearchContext = "";
     const searchPlan = webSearchAllowed
-        ? await decideWebSearch(model, params.userMessage, agentCfg.systemPrompt || "")
+        ? await decideWebSearch(planningModel, params.userMessage, agentCfg.systemPrompt || "")
         : null;
     const shouldForceWebSearch = Boolean(searchPlan?.needWebSearch) &&
         Boolean(searchPlan?.query?.trim()) &&
@@ -172,16 +173,11 @@ export async function runCoordinator(params) {
         .filter((part) => part.trim().length > 0)
         .join("\n\n");
     const userMessage = params.userMessage;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-    const result = streamText({
-        model,
-        system: systemPrompt || undefined,
-        messages: [{ role: "user", content: userMessage }],
-        tools: Object.keys(tools).length > 0 ? tools : undefined,
-        maxSteps: params.sandbox.maxTurns,
-    });
+    let result = null;
     const resolveUsage = async () => {
         try {
+            if (!result)
+                return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
             const usage = await result.usage;
             const inputTokens = Math.max(0, usage.promptTokens ?? 0);
             const outputTokens = Math.max(0, usage.completionTokens ?? 0);
@@ -193,69 +189,116 @@ export async function runCoordinator(params) {
         }
     };
     try {
-        for await (const chunk of result.fullStream) {
-            const c = chunk;
-            if (c.type === "text-delta" && c.textDelta !== undefined) {
-                fullText += c.textDelta;
-                params.emit({
-                    type: "text-delta",
-                    runId: params.runId,
-                    messageId,
-                    text: c.textDelta,
-                    delta: c.textDelta,
+        const orderedCandidates = llmCandidates.length > 0 ? llmCandidates : [undefined];
+        const rawStartOffset = params.startCandidateOffset ?? 0;
+        const safeStartOffset = Math.max(0, Math.min(Math.floor(rawStartOffset), Math.max(orderedCandidates.length - 1, 0)));
+        const candidates = orderedCandidates.slice(safeStartOffset);
+        let streamError = null;
+        for (let index = 0; index < candidates.length; index += 1) {
+            const candidate = candidates[index];
+            let emittedStreamData = false;
+            fullText = "";
+            pendingToolCalls.clear();
+            try {
+                result = streamText({
+                    model: buildModelForAgent(agentCfg, candidate),
+                    system: systemPrompt || undefined,
+                    messages: [{ role: "user", content: userMessage }],
+                    tools: Object.keys(tools).length > 0 ? tools : undefined,
+                    maxSteps: params.sandbox.maxTurns,
                 });
-            }
-            else if (c.type === "reasoning-delta") {
-                const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
-                if (text) {
-                    params.emit({
-                        type: "reasoning-delta",
-                        runId: params.runId,
-                        messageId,
-                        text,
-                        delta: text,
-                    });
+                for await (const chunk of result.fullStream) {
+                    const c = chunk;
+                    if (c.type === "text-delta" && c.textDelta !== undefined) {
+                        emittedStreamData = true;
+                        fullText += c.textDelta;
+                        params.emit({
+                            type: "text-delta",
+                            runId: params.runId,
+                            messageId,
+                            text: c.textDelta,
+                            delta: c.textDelta,
+                        });
+                    }
+                    else if (c.type === "reasoning-delta") {
+                        const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
+                        if (text) {
+                            emittedStreamData = true;
+                            params.emit({
+                                type: "reasoning-delta",
+                                runId: params.runId,
+                                messageId,
+                                text,
+                                delta: text,
+                            });
+                        }
+                    }
+                    else if (c.type === "reasoning") {
+                        const text = c.text ?? c.reasoning ?? "";
+                        if (text) {
+                            emittedStreamData = true;
+                            params.emit({ type: "reasoning", runId: params.runId, messageId, text });
+                        }
+                    }
+                    else if (c.type === "tool-call") {
+                        emittedStreamData = true;
+                        const toolName = c.toolName ?? "unknown_tool";
+                        const toolCallId = c.toolCallId ?? uuidv4();
+                        const queue = pendingToolCalls.get(toolName) ?? [];
+                        queue.push(toolCallId);
+                        pendingToolCalls.set(toolName, queue);
+                        params.emit({
+                            type: "tool-call",
+                            runId: params.runId,
+                            messageId,
+                            toolCallId,
+                            toolName,
+                            args: c.args ?? {},
+                        });
+                    }
+                    else if (c.type === "tool-result") {
+                        emittedStreamData = true;
+                        const toolName = c.toolName ?? "unknown_tool";
+                        const queue = pendingToolCalls.get(toolName);
+                        const queuedToolCallId = queue && queue.length > 0 ? queue.shift() : undefined;
+                        if (queue && queue.length === 0)
+                            pendingToolCalls.delete(toolName);
+                        params.emit({
+                            type: "tool-result",
+                            runId: params.runId,
+                            messageId,
+                            toolCallId: c.toolCallId ?? queuedToolCallId,
+                            toolName,
+                            result: c.result ?? "",
+                            status: "success",
+                        });
+                    }
+                    else if (c.type === "error") {
+                        throw new Error(String(c.error));
+                    }
                 }
+                streamError = null;
+                break;
             }
-            else if (c.type === "reasoning") {
-                const text = c.text ?? c.reasoning ?? "";
-                if (text)
-                    params.emit({ type: "reasoning", runId: params.runId, messageId, text });
+            catch (err) {
+                streamError = err;
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                const hasNextCandidate = index + 1 < candidates.length;
+                if (hasNextCandidate && !emittedStreamData && fullText.trim().length === 0) {
+                    console.warn(`[coordinator] primary model failed before streaming, retrying fallback (${index + 1}/${candidates.length})`, {
+                        runId: params.runId,
+                        agentId: params.coordinatorAgentId,
+                        provider: candidate?.llmProviderType ?? agentCfg.llmProviderType,
+                        model: candidate?.model ?? agentCfg.model,
+                        error: errorMessage,
+                    });
+                    continue;
+                }
+                break;
             }
-            else if (c.type === "tool-call") {
-                const toolName = c.toolName ?? "unknown_tool";
-                const toolCallId = c.toolCallId ?? uuidv4();
-                const queue = pendingToolCalls.get(toolName) ?? [];
-                queue.push(toolCallId);
-                pendingToolCalls.set(toolName, queue);
-                params.emit({
-                    type: "tool-call",
-                    runId: params.runId,
-                    messageId,
-                    toolCallId,
-                    toolName,
-                    args: c.args ?? {},
-                });
-            }
-            else if (c.type === "tool-result") {
-                const toolName = c.toolName ?? "unknown_tool";
-                const queue = pendingToolCalls.get(toolName);
-                const queuedToolCallId = queue && queue.length > 0 ? queue.shift() : undefined;
-                if (queue && queue.length === 0)
-                    pendingToolCalls.delete(toolName);
-                params.emit({
-                    type: "tool-result",
-                    runId: params.runId,
-                    messageId,
-                    toolCallId: c.toolCallId ?? queuedToolCallId,
-                    toolName,
-                    result: c.result ?? "",
-                    status: "success",
-                });
-            }
-            else if (c.type === "error") {
-                throw new Error(String(c.error));
-            }
+        }
+        if (streamError) {
+            throw streamError;
         }
     }
     catch (err) {
@@ -282,6 +325,19 @@ export async function runCoordinator(params) {
             // best effort
         }
         const msg = err instanceof Error ? err.message : String(err);
+        if (fullText.trim().length > 0) {
+            try {
+                await params.grpc.appendMessage({
+                    runId: params.runId,
+                    role: "assistant",
+                    content: fullText,
+                    agentId: params.coordinatorAgentId,
+                });
+            }
+            catch {
+                // best effort
+            }
+        }
         params.emit({ type: "task-failed", runId: params.runId, messageId, taskId: params.runId, error: msg });
         params.emit({ type: "message-end", runId: params.runId, messageId });
         throw err;

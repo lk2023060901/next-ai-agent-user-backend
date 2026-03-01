@@ -7,7 +7,191 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { db } from "../../db";
-import { aiProviders, aiModels, apiKeys } from "../../db/schema";
+import { aiProviders, aiModels, apiKeys, workspaceSettings, workspaces } from "../../db/schema";
+
+// ─── Workspace Settings ──────────────────────────────────────────────────────
+
+export interface WorkspaceSettingsView {
+  id: string;
+  name: string;
+  description: string;
+  defaultModel: string;
+  defaultTemperature: number;
+  maxTokensPerRequest: number;
+  assistantModelIds: string[];
+  fallbackModelIds: string[];
+  codeModelIds: string[];
+  agentModelIds: string[];
+  subAgentModelIds: string[];
+}
+
+function parseModelIdList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const dedup = new Set<string>();
+    for (const item of parsed) {
+      if (typeof item !== "string") continue;
+      const normalized = item.trim();
+      if (!normalized) continue;
+      dedup.add(normalized);
+    }
+    return Array.from(dedup);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeModelIdList(raw: string[] | undefined): string[] {
+  if (!raw || raw.length === 0) return [];
+  const dedup = new Set<string>();
+  for (const item of raw) {
+    const normalized = typeof item === "string" ? item.trim() : "";
+    if (!normalized) continue;
+    dedup.add(normalized);
+  }
+  return Array.from(dedup);
+}
+
+function ensureWorkspaceSettingsRow(workspaceId: string) {
+  const workspace = db
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      description: workspaces.description,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .get();
+  if (!workspace) throw Object.assign(new Error("Workspace not found"), { code: "NOT_FOUND" });
+
+  let row = db
+    .select()
+    .from(workspaceSettings)
+    .where(eq(workspaceSettings.workspaceId, workspaceId))
+    .get();
+
+  if (!row) {
+    db.insert(workspaceSettings)
+      .values({
+        workspaceId,
+        defaultModel: "",
+        defaultTemperature: 0.7,
+        maxTokensPerRequest: 8192,
+        assistantModelIds: "[]",
+        fallbackModelIds: "[]",
+        codeModelIds: "[]",
+        agentModelIds: "[]",
+        subAgentModelIds: "[]",
+      })
+      .run();
+    row = db
+      .select()
+      .from(workspaceSettings)
+      .where(eq(workspaceSettings.workspaceId, workspaceId))
+      .get();
+  }
+
+  if (!row) throw Object.assign(new Error("Workspace settings init failed"), { code: "INTERNAL" });
+  return { workspace, row };
+}
+
+function toWorkspaceSettingsView(
+  workspace: { id: string; name: string; description: string | null },
+  row: typeof workspaceSettings.$inferSelect,
+): WorkspaceSettingsView {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    description: workspace.description ?? "",
+    defaultModel: row.defaultModel ?? "",
+    defaultTemperature: row.defaultTemperature ?? 0.7,
+    maxTokensPerRequest: row.maxTokensPerRequest ?? 8192,
+    assistantModelIds: parseModelIdList(row.assistantModelIds),
+    fallbackModelIds: parseModelIdList(row.fallbackModelIds),
+    codeModelIds: parseModelIdList(row.codeModelIds),
+    agentModelIds: parseModelIdList(row.agentModelIds),
+    subAgentModelIds: parseModelIdList(row.subAgentModelIds),
+  };
+}
+
+export function getWorkspaceSettings(workspaceId: string): WorkspaceSettingsView {
+  const { workspace, row } = ensureWorkspaceSettingsRow(workspaceId);
+  return toWorkspaceSettingsView(workspace, row);
+}
+
+export function updateWorkspaceSettings(
+  workspaceId: string,
+  data: {
+    name?: string;
+    description?: string;
+    defaultModel?: string;
+    defaultTemperature?: number;
+    maxTokensPerRequest?: number;
+    assistantModelIds?: string[];
+    fallbackModelIds?: string[];
+    codeModelIds?: string[];
+    agentModelIds?: string[];
+    subAgentModelIds?: string[];
+    setName?: boolean;
+    setDescription?: boolean;
+    setDefaultModel?: boolean;
+    setDefaultTemperature?: boolean;
+    setMaxTokensPerRequest?: boolean;
+    setAssistantModelIds?: boolean;
+    setFallbackModelIds?: boolean;
+    setCodeModelIds?: boolean;
+    setAgentModelIds?: boolean;
+    setSubAgentModelIds?: boolean;
+  },
+): WorkspaceSettingsView {
+  ensureWorkspaceSettingsRow(workspaceId);
+
+  const now = new Date().toISOString();
+
+  const workspacePatch: Partial<typeof workspaces.$inferInsert> = {};
+  if (data.setName) workspacePatch.name = (data.name ?? "").trim();
+  if (data.setDescription) workspacePatch.description = (data.description ?? "").trim();
+  if (Object.keys(workspacePatch).length > 0) {
+    workspacePatch.updatedAt = now;
+    db.update(workspaces)
+      .set(workspacePatch)
+      .where(eq(workspaces.id, workspaceId))
+      .run();
+  }
+
+  const settingsPatch: Partial<typeof workspaceSettings.$inferInsert> = {};
+  if (data.setDefaultModel) settingsPatch.defaultModel = (data.defaultModel ?? "").trim();
+  if (data.setDefaultTemperature) settingsPatch.defaultTemperature = data.defaultTemperature ?? 0.7;
+  if (data.setMaxTokensPerRequest) {
+    settingsPatch.maxTokensPerRequest = Math.max(1, data.maxTokensPerRequest ?? 8192);
+  }
+  if (data.setAssistantModelIds) {
+    settingsPatch.assistantModelIds = JSON.stringify(normalizeModelIdList(data.assistantModelIds));
+  }
+  if (data.setFallbackModelIds) {
+    settingsPatch.fallbackModelIds = JSON.stringify(normalizeModelIdList(data.fallbackModelIds));
+  }
+  if (data.setCodeModelIds) {
+    settingsPatch.codeModelIds = JSON.stringify(normalizeModelIdList(data.codeModelIds));
+  }
+  if (data.setAgentModelIds) {
+    settingsPatch.agentModelIds = JSON.stringify(normalizeModelIdList(data.agentModelIds));
+  }
+  if (data.setSubAgentModelIds) {
+    settingsPatch.subAgentModelIds = JSON.stringify(normalizeModelIdList(data.subAgentModelIds));
+  }
+  if (Object.keys(settingsPatch).length > 0) {
+    settingsPatch.updatedAt = now;
+    db.update(workspaceSettings)
+      .set(settingsPatch)
+      .where(eq(workspaceSettings.workspaceId, workspaceId))
+      .run();
+  }
+
+  return getWorkspaceSettings(workspaceId);
+}
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 

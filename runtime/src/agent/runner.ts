@@ -9,6 +9,7 @@ export interface RunRequest {
   workspaceId: string;
   userRequest: string;
   coordinatorAgentId: string;
+  startCandidateOffset?: number;
 }
 
 /**
@@ -28,6 +29,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
       workspaceId: req.workspaceId,
       coordinatorAgentId: req.coordinatorAgentId,
       userMessage: req.userRequest,
+      startCandidateOffset: req.startCandidateOffset,
       sandbox,
       emit,
       grpc: grpcClient,

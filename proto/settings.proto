@@ -7,6 +7,10 @@ option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/intern
 import "common.proto";
 
 service SettingsService {
+  // Workspace-level settings
+  rpc GetWorkspaceSettings(WorkspaceRequest) returns (WorkspaceSettings);
+  rpc UpdateWorkspaceSettings(UpdateWorkspaceSettingsRequest) returns (WorkspaceSettings);
+
   // AI Providers
   rpc ListProviders(WorkspaceRequest) returns (ListProvidersResponse);
   rpc CreateProvider(CreateProviderRequest) returns (Provider);
@@ -27,6 +31,48 @@ service SettingsService {
   rpc ListApiKeys(WorkspaceRequest) returns (ListApiKeysResponse);
   rpc CreateApiKey(CreateApiKeyRequest) returns (CreateApiKeyResponse);
   rpc DeleteApiKey(ResourceRequest) returns (common.Empty);
+}
+
+message WorkspaceSettings {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string default_model = 4;
+  double default_temperature = 5;
+  int32 max_tokens_per_request = 6;
+  repeated string assistant_model_ids = 7;
+  repeated string fallback_model_ids = 8;
+  repeated string code_model_ids = 9;
+  repeated string agent_model_ids = 10;
+  repeated string sub_agent_model_ids = 11;
+}
+
+message UpdateWorkspaceSettingsRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+
+  string name = 3;
+  string description = 4;
+  string default_model = 5;
+  double default_temperature = 6;
+  int32 max_tokens_per_request = 7;
+
+  repeated string assistant_model_ids = 8;
+  repeated string fallback_model_ids = 9;
+  repeated string code_model_ids = 10;
+  repeated string agent_model_ids = 11;
+  repeated string sub_agent_model_ids = 12;
+
+  bool set_name = 13;
+  bool set_description = 14;
+  bool set_default_model = 15;
+  bool set_default_temperature = 16;
+  bool set_max_tokens_per_request = 17;
+  bool set_assistant_model_ids = 18;
+  bool set_fallback_model_ids = 19;
+  bool set_code_model_ids = 20;
+  bool set_agent_model_ids = 21;
+  bool set_sub_agent_model_ids = 22;
 }
 
 message WorkspaceRequest {

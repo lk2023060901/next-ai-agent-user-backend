@@ -12,6 +12,7 @@ import {
   aiProviders,
   usageRecords,
   workspaces,
+  workspaceSettings,
 } from "../../db/schema";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ export interface AgentConfigResult {
   llmProviderType: string;
   llmBaseUrl: string;
   llmApiKey: string;
+  llmCandidates: ResolvedLlmConfig[];
 }
 
 export interface CreateRunParams {
@@ -226,6 +228,24 @@ function buildRecentDateKeys(days: number): string[] {
   return out;
 }
 
+function parseStringListJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const dedup = new Set<string>();
+    for (const item of parsed) {
+      if (typeof item !== "string") continue;
+      const normalized = item.trim();
+      if (!normalized) continue;
+      dedup.add(normalized);
+    }
+    return Array.from(dedup);
+  } catch {
+    return [];
+  }
+}
+
 function resolveLlmConfigForAgent(workspaceId: string, modelId: string | null): ResolvedLlmConfig {
   if (!modelId) {
     throw Object.assign(new Error("Agent modelId is required"), { code: "INVALID_ARGUMENT" });
@@ -262,6 +282,97 @@ function resolveLlmConfigForAgent(workspaceId: string, modelId: string | null): 
     llmBaseUrl: provider.baseUrl ?? "",
     llmApiKey: decryptKey(provider.apiKeyEncrypted),
   };
+}
+
+function getWorkspaceFallbackModelIds(workspaceId: string): string[] {
+  const row = db
+    .select({
+      fallbackModelIds: workspaceSettings.fallbackModelIds,
+      agentModelIds: workspaceSettings.agentModelIds,
+      subAgentModelIds: workspaceSettings.subAgentModelIds,
+    })
+    .from(workspaceSettings)
+    .where(eq(workspaceSettings.workspaceId, workspaceId))
+    .get();
+  return parseStringListJson(row?.fallbackModelIds);
+}
+
+function normalizeAgentRole(raw: string | null | undefined): string {
+  return (raw ?? "").trim().toLowerCase();
+}
+
+function isCoordinatorAgentRole(role: string | null | undefined): boolean {
+  const normalized = normalizeAgentRole(role);
+  return normalized === "coordinator" || normalized.includes("协调");
+}
+
+function getWorkspacePrimaryModelIdsForAgent(
+  workspaceId: string,
+  role: string | null | undefined,
+): string[] {
+  const row = db
+    .select({
+      agentModelIds: workspaceSettings.agentModelIds,
+      subAgentModelIds: workspaceSettings.subAgentModelIds,
+    })
+    .from(workspaceSettings)
+    .where(eq(workspaceSettings.workspaceId, workspaceId))
+    .get();
+  if (!row) return [];
+
+  if (isCoordinatorAgentRole(role)) {
+    return parseStringListJson(row.agentModelIds);
+  }
+  return parseStringListJson(row.subAgentModelIds);
+}
+
+function resolveLlmCandidatesForAgent(params: {
+  workspaceId: string;
+  role?: string | null;
+  modelId?: string | null;
+}): ResolvedLlmConfig[] {
+  const candidates: ResolvedLlmConfig[] = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (candidate: ResolvedLlmConfig) => {
+    const key = `${candidate.llmProviderType}|${candidate.llmBaseUrl}|${candidate.model}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(candidate);
+  };
+
+  const primaryModelIds = getWorkspacePrimaryModelIdsForAgent(params.workspaceId, params.role);
+  if (primaryModelIds.length === 0 && params.modelId) {
+    primaryModelIds.push(params.modelId);
+  } else if (params.modelId && !primaryModelIds.includes(params.modelId)) {
+    // Keep explicit agent model as a last primary fallback for backward compatibility.
+    primaryModelIds.push(params.modelId);
+  }
+
+  for (const modelId of primaryModelIds) {
+    try {
+      pushCandidate(resolveLlmConfigForAgent(params.workspaceId, modelId));
+    } catch {
+      // Skip invalid primary candidates and continue, as long as at least one candidate remains.
+    }
+  }
+
+  const fallbackIds = getWorkspaceFallbackModelIds(params.workspaceId);
+  for (const fallbackModelId of fallbackIds) {
+    try {
+      pushCandidate(resolveLlmConfigForAgent(params.workspaceId, fallbackModelId));
+    } catch {
+      // Skip invalid fallback candidates to avoid breaking agent execution.
+    }
+  }
+
+  if (candidates.length === 0) {
+    throw Object.assign(new Error("No valid model candidates configured for agent"), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+
+  return candidates;
 }
 
 interface AgentUsageIdentity {
@@ -621,7 +732,12 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
 
   const tools = db.select().from(agentTools).where(eq(agentTools.agentId, agentId)).all();
   const toolIds = tools.map((t) => t.toolId);
-  const llm = resolveLlmConfigForAgent(agent.workspaceId, agent.modelId ?? null);
+  const llmCandidates = resolveLlmCandidatesForAgent({
+    workspaceId: agent.workspaceId,
+    role: agent.role,
+    modelId: agent.modelId,
+  });
+  const llm = llmCandidates[0]!;
 
   return {
     id: agent.id,
@@ -642,6 +758,7 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
     llmProviderType: llm.llmProviderType,
     llmBaseUrl: llm.llmBaseUrl,
     llmApiKey: llm.llmApiKey,
+    llmCandidates,
   };
 }
 
@@ -683,7 +800,11 @@ export function createRun(params: CreateRunParams): { runId: string } {
       );
     }
     // Fail fast before creating the run when model/provider configuration is invalid.
-    resolveLlmConfigForAgent(params.workspaceId, coordinator.modelId ?? null);
+    resolveLlmCandidatesForAgent({
+      workspaceId: params.workspaceId,
+      role: coordinator.role,
+      modelId: coordinator.modelId,
+    });
   }
 
   const runId = uuidv4();
