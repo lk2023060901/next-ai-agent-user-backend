@@ -15,69 +15,8 @@ type SettingsHandler struct {
 	clients *grpcclient.Clients
 }
 
-type modelView struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	DisplayName   string   `json:"displayName"`
-	ContextWindow int32    `json:"contextWindow"`
-	MaxOutput     int32    `json:"maxOutput"`
-	InputPrice    float64  `json:"inputPrice"`
-	OutputPrice   float64  `json:"outputPrice"`
-	Capabilities  []string `json:"capabilities"`
-	Enabled       bool     `json:"enabled"`
-}
-
-type modelSeriesView struct {
-	ID     string      `json:"id"`
-	Name   string      `json:"name"`
-	Models []modelView `json:"models"`
-}
-
 func NewSettingsHandler(clients *grpcclient.Clients) *SettingsHandler {
 	return &SettingsHandler{clients: clients}
-}
-
-func toModelSeries(providerID string, models []*settingspb.Model) []modelSeriesView {
-	mapped := make([]modelView, 0, len(models))
-	for _, m := range models {
-		if m == nil {
-			continue
-		}
-		contextWindow := m.GetContextWindow()
-		if contextWindow <= 0 {
-			contextWindow = 4096
-		}
-		maxOutput := contextWindow
-		if maxOutput > 8192 {
-			maxOutput = 8192
-		}
-		price := m.GetCostPer_1KTokens()
-		if price < 0 {
-			price = 0
-		}
-		mapped = append(mapped, modelView{
-			ID:            m.GetId(),
-			Name:          m.GetName(),
-			DisplayName:   m.GetName(),
-			ContextWindow: contextWindow,
-			MaxOutput:     maxOutput,
-			InputPrice:    price,
-			OutputPrice:   price,
-			Capabilities:  []string{"text"},
-			Enabled:       true,
-		})
-	}
-	if len(mapped) == 0 {
-		return []modelSeriesView{}
-	}
-
-	return []modelSeriesView{
-		{
-			ID:     "series-" + providerID,
-			Name:   "Configured Models",
-			Models: mapped,
-		},
-	}
 }
 
 func (h *SettingsHandler) userCtx(r *http.Request) *commonpb.UserContext {
@@ -170,27 +109,25 @@ func (h *SettingsHandler) DeleteProvider(w http.ResponseWriter, r *http.Request)
 // ── Models ────────────────────────────────────────────────────────────────────
 
 func (h *SettingsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
-	providerID := chi.URLParam(r, "providerId")
-	resp, err := h.clients.Settings.ListModels(r.Context(), &settingspb.ListModelsRequest{
-		ProviderId: providerID, WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+	resp, err := h.clients.Settings.ListModelSeries(r.Context(), &settingspb.ListModelsRequest{
+		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, toModelSeries(providerID, resp.Models))
+	writeData(w, http.StatusOK, resp.Series)
 }
 
 func (h *SettingsHandler) ListModelCatalog(w http.ResponseWriter, r *http.Request) {
-	providerID := chi.URLParam(r, "providerId")
-	resp, err := h.clients.Settings.ListModels(r.Context(), &settingspb.ListModelsRequest{
-		ProviderId: providerID, WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+	resp, err := h.clients.Settings.ListModelCatalog(r.Context(), &settingspb.ListModelsRequest{
+		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, toModelSeries(providerID, resp.Models))
+	writeData(w, http.StatusOK, resp.Series)
 }
 
 func (h *SettingsHandler) ListAllModels(w http.ResponseWriter, r *http.Request) {

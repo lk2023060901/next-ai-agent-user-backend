@@ -131,6 +131,57 @@ export function listModels(providerId: string) {
   return db.select().from(aiModels).where(eq(aiModels.providerId, providerId)).all();
 }
 
+export interface UIModelView {
+  id: string;
+  name: string;
+  displayName: string;
+  contextWindow: number;
+  maxOutput: number;
+  inputPrice: number;
+  outputPrice: number;
+  capabilities: string[];
+  enabled: boolean;
+}
+
+export interface ModelSeriesView {
+  id: string;
+  name: string;
+  models: UIModelView[];
+}
+
+function toUiModelView(model: ReturnType<typeof listModels>[number]): UIModelView {
+  const contextWindow = Math.max(1, model.contextWindow ?? 4096);
+  const maxOutput = Math.min(contextWindow, 8192);
+  const price = Math.max(0, model.costPer1kTokens ?? 0);
+  return {
+    id: model.id,
+    name: model.name,
+    displayName: model.name,
+    contextWindow,
+    maxOutput,
+    inputPrice: price,
+    outputPrice: price,
+    capabilities: ["text"],
+    enabled: true,
+  };
+}
+
+export function listModelSeries(providerId: string): ModelSeriesView[] {
+  const models = listModels(providerId).map(toUiModelView);
+  if (models.length === 0) return [];
+  return [
+    {
+      id: `series-${providerId}`,
+      name: "Configured Models",
+      models,
+    },
+  ];
+}
+
+export function listModelCatalog(providerId: string): ModelSeriesView[] {
+  return listModelSeries(providerId);
+}
+
 export function listAllModels(workspaceId: string) {
   const providerIds = db
     .select({ id: aiProviders.id })

@@ -11,7 +11,7 @@ import {
 } from "../modules/workspace/workspace.service";
 import {
   listProviders, createProvider, updateProvider, deleteProvider, testProvider,
-  listModels, listAllModels, createModel, updateModel, deleteModel,
+  listModels, listAllModels, createModel, updateModel, deleteModel, listModelSeries, listModelCatalog,
   listApiKeys, createApiKey, deleteApiKey,
 } from "../modules/settings/settings.service";
 import {
@@ -343,6 +343,14 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     listModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { callback(null, { models: listModels(call.request.providerId) }); }
+      catch (err) { handleError(callback, err); }
+    },
+    listModelSeries(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, { series: listModelSeries(call.request.providerId) }); }
+      catch (err) { handleError(callback, err); }
+    },
+    listModelCatalog(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, { series: listModelCatalog(call.request.providerId) }); }
       catch (err) { handleError(callback, err); }
     },
     listAllModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {

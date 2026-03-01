@@ -16,6 +16,8 @@ service SettingsService {
 
   // AI Models
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  rpc ListModelSeries(ListModelsRequest) returns (ListModelSeriesResponse);
+  rpc ListModelCatalog(ListModelsRequest) returns (ListModelSeriesResponse);
   rpc CreateModel(CreateModelRequest) returns (Model);
   rpc UpdateModel(UpdateModelRequest) returns (Model);
   rpc DeleteModel(ResourceRequest) returns (common.Empty);
@@ -88,6 +90,28 @@ message ListModelsRequest {
 
 message ListModelsResponse {
   repeated Model models = 1;
+}
+
+message UIModel {
+  string id = 1;
+  string name = 2;
+  string display_name = 3;
+  int32 context_window = 4;
+  int32 max_output = 5;
+  double input_price = 6;
+  double output_price = 7;
+  repeated string capabilities = 8;
+  bool enabled = 9;
+}
+
+message ModelSeries {
+  string id = 1;
+  string name = 2;
+  repeated UIModel models = 3;
+}
+
+message ListModelSeriesResponse {
+  repeated ModelSeries series = 1;
 }
 
 message CreateModelRequest {
