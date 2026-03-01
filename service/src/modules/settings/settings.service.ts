@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 import { generateText } from "ai";
@@ -17,7 +17,8 @@ interface DefaultProviderSpec {
   type: DefaultProviderType;
   name: string;
   baseUrl: string;
-  model: string;
+  defaultModel: string;
+  requiredModels: string[];
 }
 
 const DEFAULT_PROVIDER_SPECS: DefaultProviderSpec[] = [
@@ -25,25 +26,29 @@ const DEFAULT_PROVIDER_SPECS: DefaultProviderSpec[] = [
     type: "openai",
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-5.2",
+    defaultModel: "gpt-5.3",
+    requiredModels: ["gpt-5.3", "gpt-5.2"],
   },
   {
     type: "anthropic",
     name: "Anthropic",
     baseUrl: "https://api.anthropic.com/v1",
-    model: "claude-opus-4-6",
+    defaultModel: "claude-sonnet-4-6",
+    requiredModels: ["claude-sonnet-4-6", "claude-opus-4-6"],
   },
   {
     type: "zhipu",
     name: "Z-AI (Zhipu)",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4/",
-    model: "glm-5",
+    defaultModel: "glm-5",
+    requiredModels: ["glm-5"],
   },
   {
     type: "qwen",
     name: "Qwen DashScope",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen3.5-plus",
+    defaultModel: "qwen3.5-plus",
+    requiredModels: ["qwen3.5-plus"],
   },
 ];
 
@@ -59,28 +64,40 @@ function inferProviderTypeByName(rawName: string | undefined | null): DefaultPro
   return null;
 }
 
-function ensureProviderHasDefaultModel(providerId: string, modelName: string) {
+function ensureProviderRequiredModels(
+  providerId: string,
+  requiredModels: string[],
+  defaultModelName: string,
+) {
   const models = db
     .select({ id: aiModels.id, name: aiModels.name })
     .from(aiModels)
     .where(eq(aiModels.providerId, providerId))
     .all();
-  const existing = models.find((item) => item.name === modelName);
-  let targetModelId = existing?.id ?? "";
+  const byName = new Map(models.map((item) => [item.name, item.id]));
 
-  if (!targetModelId) {
-    targetModelId = uuidv4();
+  const ensureModel = (modelName: string): string => {
+    const existingId = byName.get(modelName);
+    if (existingId) return existingId;
+    const insertedId = uuidv4();
     db.insert(aiModels)
       .values({
-        id: targetModelId,
+        id: insertedId,
         providerId,
         name: modelName,
         contextWindow: null,
         costPer1kTokens: null,
-        isDefault: true,
+        isDefault: false,
       })
       .run();
+    byName.set(modelName, insertedId);
+    return insertedId;
+  };
+
+  for (const modelName of requiredModels) {
+    ensureModel(modelName);
   }
+  const targetModelId = ensureModel(defaultModelName);
 
   db.update(aiModels)
     .set({ isDefault: false })
@@ -150,7 +167,7 @@ function ensureWorkspaceDefaultProviders(workspaceId: string) {
           status: "active",
         })
         .run();
-      ensureProviderHasDefaultModel(id, spec.model);
+      ensureProviderRequiredModels(id, spec.requiredModels, spec.defaultModel);
       continue;
     }
 
@@ -160,7 +177,11 @@ function ensureWorkspaceDefaultProviders(workspaceId: string) {
         .where(eq(aiProviders.id, existingProvider.id))
         .run();
     }
-    ensureProviderHasDefaultModel(existingProvider.id, spec.model);
+    ensureProviderRequiredModels(
+      existingProvider.id,
+      spec.requiredModels,
+      spec.defaultModel,
+    );
   }
 }
 
@@ -208,7 +229,11 @@ export function createProvider(data: {
   }).run();
 
   if (matchedDefault) {
-    ensureProviderHasDefaultModel(id, matchedDefault.model);
+    ensureProviderRequiredModels(
+      id,
+      matchedDefault.requiredModels,
+      matchedDefault.defaultModel,
+    );
   }
   return listProviders(data.workspaceId).find((p) => p.id === id)!;
 }
@@ -240,8 +265,8 @@ export function deleteProvider(id: string) {
 
 // Default test model per provider type
 const DEFAULT_TEST_MODELS: Record<string, string> = {
-  openai: "gpt-5.2",
-  anthropic: "claude-opus-4-6",
+  openai: "gpt-5.3",
+  anthropic: "claude-sonnet-4-6",
   zhipu: "glm-5",
   qwen: "qwen3.5-plus",
   google: "gemini-1.5-flash",
@@ -256,9 +281,18 @@ export async function testProvider(id: string): Promise<{ success: boolean; mess
   const providerType = normalizeProviderType(provider.type);
 
   // Resolve test model: prefer first configured model, fall back to known defaults
+  const defaultModel = db
+    .select({ name: aiModels.name })
+    .from(aiModels)
+    .where(and(eq(aiModels.providerId, id), eq(aiModels.isDefault, true)))
+    .get();
   const firstModel = db.select({ name: aiModels.name }).from(aiModels)
     .where(eq(aiModels.providerId, id)).get();
-  const modelName = firstModel?.name ?? DEFAULT_TEST_MODELS[providerType] ?? "gpt-5.2";
+  const modelName =
+    defaultModel?.name ??
+    firstModel?.name ??
+    DEFAULT_TEST_MODELS[providerType] ??
+    "gpt-5.3";
 
   try {
     let model;
