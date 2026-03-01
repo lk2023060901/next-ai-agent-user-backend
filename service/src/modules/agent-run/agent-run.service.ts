@@ -358,6 +358,16 @@ function mapPluginStatus(status: string): string {
   }
 }
 
+function normalizePluginRecordType(raw: string): string {
+  const value = raw.trim().toLowerCase();
+  return value || "plugin";
+}
+
+function normalizePluginScope(raw: string): string {
+  const value = raw.trim().toLowerCase();
+  return value || "plugin";
+}
+
 function resolveAgentUsageIdentity(agentId?: string | null): AgentUsageIdentity {
   if (!agentId) {
     return {
@@ -1015,14 +1025,15 @@ export function reportPluginUsageEvents(
       : timestampIso;
 
     const sessionId = readObjectStringField(payload, "sessionId");
-    const taskId = readObjectStringField(payload, "taskId");
-    const recordType = readObjectStringField(payload, "recordType") || "plugin";
-    const scope = readObjectStringField(payload, "scope") || "plugin";
+    const taskIdFromPayload = readObjectStringField(payload, "taskId");
+    const recordType = normalizePluginRecordType(readObjectStringField(payload, "recordType"));
+    const scope = normalizePluginScope(readObjectStringField(payload, "scope"));
     const agentId = readObjectStringField(payload, "agentId");
     const agentName = readObjectStringField(payload, "agentName");
     const agentRole = readObjectStringField(payload, "agentRole");
     const providerName = readObjectStringField(payload, "provider");
     const modelName = readObjectStringField(payload, "model");
+    const taskIdColumn = recordType === "plugin" ? null : (taskIdFromPayload || null);
 
     const metadataJson = JSON.stringify({
       specVersion,
@@ -1034,6 +1045,17 @@ export function reportPluginUsageEvents(
       workspaceId: trimmedWorkspaceId,
       runId,
       status: statusRaw,
+      core: {
+        specVersion,
+        pluginName,
+        pluginVersion,
+        eventId,
+        eventType,
+        timestamp: timestampIso,
+        workspaceId: trimmedWorkspaceId,
+        runId,
+        status: statusRaw,
+      },
       metrics,
       payload,
     });
@@ -1046,7 +1068,7 @@ export function reportPluginUsageEvents(
           orgId: workspace.orgId,
           sessionId: sessionId || null,
           runId: runId || null,
-          taskId: taskId || null,
+          taskId: taskIdColumn,
           recordType,
           scope,
           status: mappedStatus,

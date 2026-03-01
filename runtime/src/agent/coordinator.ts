@@ -174,6 +174,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     runId: params.runId,
     taskId: rootTaskId,
     agentId: params.coordinatorAgentId,
+    agentModel: agentCfg.model,
     depth: 0,
     reservedNames: Object.keys(tools),
   });

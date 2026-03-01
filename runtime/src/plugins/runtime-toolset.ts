@@ -1,11 +1,14 @@
 import { jsonSchema, tool, type CoreTool } from "ai";
 import { listWorkspaceRuntimePlugins, type LoadedRuntimePlugin, type RuntimePluginExecutionContext } from "./runtime-loader.js";
+import { grpcClient } from "../grpc/client.js";
+import { reportPluginToolUsageEvent } from "./plugin-usage-reporter.js";
 
 export interface RuntimePluginToolsetParams {
   workspaceId: string;
   runId: string;
   taskId: string;
   agentId: string;
+  agentModel: string;
   depth: number;
   reservedNames?: string[];
 }
@@ -36,12 +39,14 @@ function buildExecutionContext(params: {
   runId: string;
   taskId: string;
   agentId: string;
+  agentModel: string;
   depth: number;
 }): RuntimePluginExecutionContext {
   return {
     runId: params.runId,
     taskId: params.taskId,
     agentId: params.agentId,
+    agentModel: params.agentModel,
     depth: params.depth,
     workspaceId: params.plugin.workspaceId,
     pluginId: params.plugin.pluginId,
@@ -82,6 +87,7 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
       runId: params.runId,
       taskId: params.taskId,
       agentId: params.agentId,
+      agentModel: params.agentModel,
       depth: params.depth,
     });
 
@@ -89,15 +95,37 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
       description: plugin.tool.description,
       parameters: jsonSchema(plugin.tool.parametersJsonSchema as any),
       execute: async (args, options) => {
+        const startedAtMs = Date.now();
         try {
-          return await executePluginTool({
+          const result = await executePluginTool({
             plugin,
             args,
             options,
             context: executionContext,
           });
+          void reportPluginToolUsageEvent({
+            grpc: grpcClient,
+            plugin,
+            context: executionContext,
+            toolName,
+            toolCallId: options.toolCallId,
+            startedAtMs,
+            endedAtMs: Date.now(),
+            result,
+          }).catch(() => undefined);
+          return result;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          void reportPluginToolUsageEvent({
+            grpc: grpcClient,
+            plugin,
+            context: executionContext,
+            toolName,
+            toolCallId: options.toolCallId,
+            startedAtMs,
+            endedAtMs: Date.now(),
+            errorMessage: message,
+          }).catch(() => undefined);
           return {
             error: message,
             pluginId: plugin.pluginId,

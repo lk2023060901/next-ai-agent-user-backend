@@ -67,6 +67,20 @@ export interface RuntimePluginLoadCandidate {
   sourceSpec: string;
 }
 
+export interface PluginUsageEvent {
+  specVersion: string;
+  pluginName: string;
+  pluginVersion: string;
+  eventId: string;
+  eventType: string;
+  timestamp: string;
+  workspaceId: string;
+  runId: string;
+  status: "success" | "failure" | "partial";
+  metricsJson: string;
+  payloadJson: string;
+}
+
 export const grpcClient = {
   getAgentConfig(agentId: string): Promise<AgentConfig> {
     return promisify<AgentConfig>(agentRunClient, "getAgentConfig", { agentId });
@@ -139,6 +153,16 @@ export const grpcClient = {
       inputTokens: params.inputTokens,
       outputTokens: params.outputTokens,
       totalTokens: params.totalTokens,
+    });
+  },
+
+  reportPluginUsageEvents(params: {
+    workspaceId: string;
+    events: PluginUsageEvent[];
+  }): Promise<{ accepted: number }> {
+    return promisify(agentRunClient, "reportPluginUsageEvents", {
+      workspaceId: params.workspaceId,
+      events: params.events,
     });
   },
 

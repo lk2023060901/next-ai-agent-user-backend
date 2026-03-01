@@ -28,7 +28,7 @@ import {
 } from "../modules/scheduler/scheduler.service";
 import {
   getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
-  recordRunUsage, recordTaskUsage,
+  recordRunUsage, recordTaskUsage, reportPluginUsageEvents as reportPluginUsageEventsFromAgentRun,
 } from "../modules/agent-run/agent-run.service";
 import {
   listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
@@ -668,6 +668,28 @@ export function startGrpcServer(port: number): grpc.Server {
           totalTokens: call.request.totalTokens,
         });
         callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+    reportPluginUsageEvents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const workspaceId = String(call.request.workspaceId ?? "");
+        const events = Array.isArray(call.request.events)
+          ? call.request.events.map((item: Record<string, unknown>) => ({
+              specVersion: String(item.specVersion ?? ""),
+              pluginName: String(item.pluginName ?? ""),
+              pluginVersion: String(item.pluginVersion ?? ""),
+              eventId: String(item.eventId ?? ""),
+              eventType: String(item.eventType ?? ""),
+              timestamp: String(item.timestamp ?? ""),
+              workspaceId: String(item.workspaceId ?? ""),
+              runId: String(item.runId ?? ""),
+              status: String(item.status ?? ""),
+              metricsJson: String(item.metricsJson ?? ""),
+              payloadJson: String(item.payloadJson ?? ""),
+            }))
+          : [];
+        const result = reportPluginUsageEventsFromAgentRun(workspaceId, events);
+        callback(null, { accepted: result.accepted });
       } catch (err) { handleError(callback, err); }
     },
     listRuntimePlugins(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {

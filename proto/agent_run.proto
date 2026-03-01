@@ -77,6 +77,29 @@ message RecordTaskUsageRequest {
   int32 total_tokens = 4;
 }
 
+message PluginUsageEvent {
+  string spec_version = 1;
+  string plugin_name = 2;
+  string plugin_version = 3;
+  string event_id = 4;
+  string event_type = 5;
+  string timestamp = 6;
+  string workspace_id = 7;
+  string run_id = 8;
+  string status = 9;
+  string metrics_json = 10;
+  string payload_json = 11;
+}
+
+message ReportPluginUsageEventsRequest {
+  string workspace_id = 1;
+  repeated PluginUsageEvent events = 2;
+}
+
+message ReportPluginUsageEventsResponse {
+  int32 accepted = 1;
+}
+
 message RuntimePluginLoadCandidate {
   string installed_plugin_id = 1;
   string workspace_id = 2;
@@ -120,6 +143,7 @@ service AgentRunService {
   rpc UpdateTask      (UpdateTaskRequest)       returns (Empty);
   rpc RecordRunUsage  (RecordRunUsageRequest)   returns (Empty);
   rpc RecordTaskUsage (RecordTaskUsageRequest)  returns (Empty);
+  rpc ReportPluginUsageEvents (ReportPluginUsageEventsRequest) returns (ReportPluginUsageEventsResponse);
   rpc ListRuntimePlugins (ListRuntimePluginsRequest) returns (ListRuntimePluginsResponse);
   rpc ReportRuntimePluginLoad (ReportRuntimePluginLoadRequest) returns (ReportRuntimePluginLoadResponse);
 }

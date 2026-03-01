@@ -18,6 +18,7 @@ export function buildToolset(params) {
         runId: params.runId,
         taskId: params.taskId,
         agentId: params.agentId,
+        agentModel: params.agentConfigModel,
         depth: params.depth,
         reservedNames: Object.keys(allTools),
     });

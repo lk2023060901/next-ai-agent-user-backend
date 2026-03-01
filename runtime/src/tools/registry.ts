@@ -36,6 +36,7 @@ export function buildToolset(params: ToolRegistryParams): Record<string, CoreToo
     runId: params.runId,
     taskId: params.taskId,
     agentId: params.agentId,
+    agentModel: params.agentConfigModel,
     depth: params.depth,
     reservedNames: Object.keys(allTools),
   });

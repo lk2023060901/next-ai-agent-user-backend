@@ -13,6 +13,7 @@ export interface RuntimePluginExecutionContext {
   runId: string;
   taskId: string;
   agentId: string;
+  agentModel: string;
   depth: number;
   workspaceId: string;
   pluginId: string;

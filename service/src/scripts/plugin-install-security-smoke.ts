@@ -134,6 +134,7 @@ async function main(): Promise<void> {
   const { db } = await import("../db/index");
   const schema = await import("../db/schema");
   const pluginService = await import("../modules/plugins/plugin.service");
+  const agentRunService = await import("../modules/agent-run/agent-run.service");
 
   migrate(db, { migrationsFolder });
 
@@ -290,11 +291,49 @@ async function main(): Promise<void> {
   assertTrue(runtimeLoadAudits.some((row) => row.status === "failure"), "missing runtime_load failure audit");
   assertTrue(runtimeLoadAudits.some((row) => row.status === "success"), "missing runtime_load success audit");
 
+  const pluginUsageResult = agentRunService.reportPluginUsageEvents(wsSuccess, [
+    {
+      specVersion: "plugin-usage.v1",
+      pluginName: "smoke-plugin-ok",
+      pluginVersion: "1.0.0",
+      eventId: "smoke-plugin-event-1",
+      eventType: "plugin.tool.smoke",
+      timestamp: new Date().toISOString(),
+      workspaceId: wsSuccess,
+      runId: "run-smoke-plugin-usage",
+      status: "success",
+      metricsJson: JSON.stringify({
+        inputTokens: 11,
+        outputTokens: 22,
+        totalTokens: 33,
+        latencyMs: 44,
+        successCount: 1,
+      }),
+      payloadJson: JSON.stringify({
+        recordType: "plugin",
+        scope: "coordinator",
+        taskId: "task-should-stay-in-payload-only",
+        pluginId: "smoke-plugin-ok",
+        toolName: "smoke_tool",
+      }),
+    },
+  ]);
+  assertTrue(pluginUsageResult.accepted === 1, "plugin usage event should be accepted");
+
+  const pluginUsageRow = db.select().from(schema.usageRecords)
+    .where(eq(schema.usageRecords.id, "plugin:smoke-plugin-event-1"))
+    .get();
+  assertTrue(Boolean(pluginUsageRow), "plugin usage row should be inserted");
+  assertTrue(pluginUsageRow?.recordType === "plugin", "plugin usage recordType should be plugin");
+  assertTrue(pluginUsageRow?.taskId == null, "plugin usage row taskId should stay null to avoid uniq conflict");
+  assertTrue((pluginUsageRow?.metadataJson ?? "").includes("task-should-stay-in-payload-only"), "plugin usage metadata should keep payload taskId");
+
   console.log(`[PASS] happy path install with integrity check (${okInstall.pluginId})`);
   console.log("[PASS] integrity mismatch is rejected and no installed row created");
   console.log("[PASS] rollback cleans install path on source install failure");
   console.log("[PASS] audit trail written for success/failure/rollback");
   console.log("[PASS] runtime loader candidate list + status report + runtime_load audit");
+  console.log("[PASS] plugin usage event schema accepted and persisted with extensible payload");
   console.log(`Smoke DB: ${dbPath}`);
 }
 

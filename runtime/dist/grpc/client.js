@@ -63,6 +63,12 @@ export const grpcClient = {
             totalTokens: params.totalTokens,
         });
     },
+    reportPluginUsageEvents(params) {
+        return promisify(agentRunClient, "reportPluginUsageEvents", {
+            workspaceId: params.workspaceId,
+            events: params.events,
+        });
+    },
     listRuntimePlugins() {
         return promisify(agentRunClient, "listRuntimePlugins", {});
     },

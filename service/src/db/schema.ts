@@ -604,8 +604,8 @@ export const usageRecords = sqliteTable("usage_records", {
   sessionId: text("session_id"),
   runId: text("run_id"),
   taskId: text("task_id"),
-  recordType: text("record_type").notNull(), // run | task
-  scope: text("scope").notNull(), // coordinator | sub_agent
+  recordType: text("record_type").notNull(), // run | task | plugin
+  scope: text("scope").notNull(), // coordinator | sub_agent | plugin
   status: text("status").notNull(), // completed | failed | cancelled | blocked
   agentId: text("agent_id"),
   agentName: text("agent_name").notNull().default(""),

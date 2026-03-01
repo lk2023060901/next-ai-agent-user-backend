@@ -1,5 +1,7 @@
 import { jsonSchema, tool } from "ai";
 import { listWorkspaceRuntimePlugins } from "./runtime-loader.js";
+import { grpcClient } from "../grpc/client.js";
+import { reportPluginToolUsageEvent } from "./plugin-usage-reporter.js";
 function uniqueToolName(base, occupied) {
     if (!occupied.has(base)) {
         occupied.add(base);
@@ -18,6 +20,7 @@ function buildExecutionContext(params) {
         runId: params.runId,
         taskId: params.taskId,
         agentId: params.agentId,
+        agentModel: params.agentModel,
         depth: params.depth,
         workspaceId: params.plugin.workspaceId,
         pluginId: params.plugin.pluginId,
@@ -49,22 +52,45 @@ export function buildRuntimePluginToolset(params) {
             runId: params.runId,
             taskId: params.taskId,
             agentId: params.agentId,
+            agentModel: params.agentModel,
             depth: params.depth,
         });
         out[toolName] = tool({
             description: plugin.tool.description,
             parameters: jsonSchema(plugin.tool.parametersJsonSchema),
             execute: async (args, options) => {
+                const startedAtMs = Date.now();
                 try {
-                    return await executePluginTool({
+                    const result = await executePluginTool({
                         plugin,
                         args,
                         options,
                         context: executionContext,
                     });
+                    void reportPluginToolUsageEvent({
+                        grpc: grpcClient,
+                        plugin,
+                        context: executionContext,
+                        toolName,
+                        toolCallId: options.toolCallId,
+                        startedAtMs,
+                        endedAtMs: Date.now(),
+                        result,
+                    }).catch(() => undefined);
+                    return result;
                 }
                 catch (err) {
                     const message = err instanceof Error ? err.message : String(err);
+                    void reportPluginToolUsageEvent({
+                        grpc: grpcClient,
+                        plugin,
+                        context: executionContext,
+                        toolName,
+                        toolCallId: options.toolCallId,
+                        startedAtMs,
+                        endedAtMs: Date.now(),
+                        errorMessage: message,
+                    }).catch(() => undefined);
                     return {
                         error: message,
                         pluginId: plugin.pluginId,
