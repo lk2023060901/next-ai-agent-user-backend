@@ -90,6 +90,14 @@ export async function reportPluginToolUsageEvent(params) {
     metrics.failureCount = toNonNegativeInt(metrics.failureCount);
     metrics.latencyMs = toNonNegativeInt(metrics.latencyMs);
     metrics.durationMs = toNonNegativeInt(metrics.durationMs);
+    if (params.guardAudit) {
+        metrics.guardQueueWaitMs = toNonNegativeInt(params.guardAudit.queueWaitMs);
+        metrics.guardExecutionMs = toNonNegativeInt(params.guardAudit.executionMs);
+        metrics.guardTimeoutMs = toNonNegativeInt(params.guardAudit.timeoutMs);
+        metrics.guardMaxConcurrency = toNonNegativeInt(params.guardAudit.maxConcurrency);
+        metrics.guardFailureStreak = toNonNegativeInt(params.guardAudit.failureStreak);
+        metrics.guardCooldownRemainingMs = toNonNegativeInt(params.guardAudit.cooldownRemainingMs);
+    }
     const scope = params.context.depth > 0 ? "sub_agent" : "coordinator";
     const payload = {
         recordType: "plugin",
@@ -105,7 +113,18 @@ export async function reportPluginToolUsageEvent(params) {
         model: params.context.agentModel,
         provider: "",
         errorMessage: params.errorMessage ?? "",
+        errorCode: params.errorCode ?? "",
     };
+    if (params.guardAudit) {
+        payload.guardCode = params.guardAudit.code ?? "";
+        payload.guardQueueWaitMs = toNonNegativeInt(params.guardAudit.queueWaitMs);
+        payload.guardExecutionMs = toNonNegativeInt(params.guardAudit.executionMs);
+        payload.guardTimeoutMs = toNonNegativeInt(params.guardAudit.timeoutMs);
+        payload.guardMaxConcurrency = toNonNegativeInt(params.guardAudit.maxConcurrency);
+        payload.guardFailureStreak = toNonNegativeInt(params.guardAudit.failureStreak);
+        payload.guardCooldownUntilMs = toNonNegativeInt(params.guardAudit.cooldownUntilMs);
+        payload.guardCooldownRemainingMs = toNonNegativeInt(params.guardAudit.cooldownRemainingMs);
+    }
     if (meta.payload) {
         for (const [key, value] of Object.entries(meta.payload)) {
             payload[key] = value;

@@ -2,6 +2,7 @@ import { jsonSchema, tool } from "ai";
 import { listWorkspaceRuntimePlugins } from "./runtime-loader.js";
 import { grpcClient } from "../grpc/client.js";
 import { reportPluginToolUsageEvent } from "./plugin-usage-reporter.js";
+import { isPluginExecutionGuardError, runtimePluginExecutionGuard } from "./plugin-execution-guard.js";
 function uniqueToolName(base, occupied) {
     if (!occupied.has(base)) {
         occupied.add(base);
@@ -61,12 +62,16 @@ export function buildRuntimePluginToolset(params) {
             execute: async (args, options) => {
                 const startedAtMs = Date.now();
                 try {
-                    const result = await executePluginTool({
-                        plugin,
-                        args,
-                        options,
-                        context: executionContext,
+                    const guarded = await runtimePluginExecutionGuard.run({
+                        pluginKey: plugin.installedPluginId,
+                        execute: () => executePluginTool({
+                            plugin,
+                            args,
+                            options,
+                            context: executionContext,
+                        }),
                     });
+                    const result = guarded.result;
                     void reportPluginToolUsageEvent({
                         grpc: grpcClient,
                         plugin,
@@ -76,11 +81,14 @@ export function buildRuntimePluginToolset(params) {
                         startedAtMs,
                         endedAtMs: Date.now(),
                         result,
+                        guardAudit: guarded.guardMeta,
                     }).catch(() => undefined);
                     return result;
                 }
                 catch (err) {
-                    const message = err instanceof Error ? err.message : String(err);
+                    const guardError = isPluginExecutionGuardError(err) ? err : null;
+                    const message = guardError?.message ?? (err instanceof Error ? err.message : String(err));
+                    const errorCode = guardError?.code ?? "plugin_execution_error";
                     void reportPluginToolUsageEvent({
                         grpc: grpcClient,
                         plugin,
@@ -90,9 +98,12 @@ export function buildRuntimePluginToolset(params) {
                         startedAtMs,
                         endedAtMs: Date.now(),
                         errorMessage: message,
+                        errorCode,
+                        guardAudit: guardError?.meta,
                     }).catch(() => undefined);
                     return {
                         error: message,
+                        errorCode,
                         pluginId: plugin.pluginId,
                         toolName,
                     };

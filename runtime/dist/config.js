@@ -19,6 +19,11 @@ export const config = {
     runRetentionMs: getIntEnv("RUN_RETENTION_MS", 30 * 60_000),
     runStoreCleanupIntervalMs: getIntEnv("RUN_STORE_CLEANUP_INTERVAL_MS", 30_000),
     runIdempotencyTtlMs: getIntEnv("RUN_IDEMPOTENCY_TTL_MS", 10 * 60_000),
+    pluginToolTimeoutMs: Math.max(1_000, getIntEnv("PLUGIN_TOOL_TIMEOUT_MS", 30_000)),
+    pluginToolQueueTimeoutMs: Math.max(100, getIntEnv("PLUGIN_TOOL_QUEUE_TIMEOUT_MS", 5_000)),
+    pluginToolMaxConcurrencyPerPlugin: Math.max(1, getIntEnv("PLUGIN_TOOL_MAX_CONCURRENCY_PER_PLUGIN", 2)),
+    pluginToolFailureThreshold: Math.max(1, getIntEnv("PLUGIN_TOOL_FAILURE_THRESHOLD", 5)),
+    pluginToolFailureCooldownMs: Math.max(1_000, getIntEnv("PLUGIN_TOOL_FAILURE_COOLDOWN_MS", 60_000)),
     protoDir: getEnv("PROTO_DIR", `${import.meta.dirname}/../../proto`),
     // LLM direct access (bypasses Bifrost). Set both to skip Bifrost.
     // For BigModel: LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4

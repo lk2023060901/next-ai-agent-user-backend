@@ -1,11 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import type { grpcClient as GrpcClientType } from "../grpc/client.js";
 import type { LoadedRuntimePlugin, RuntimePluginExecutionContext } from "./runtime-loader.js";
+import type { PluginExecutionGuardMeta } from "./plugin-execution-guard.js";
 
 const PLUGIN_USAGE_SPEC_VERSION = "plugin-usage.v1";
 const ALLOWED_PLUGIN_USAGE_STATUSES = new Set(["success", "failure", "partial"]);
 
 type JsonRecord = Record<string, unknown>;
+
+export interface PluginToolGuardAudit extends Partial<PluginExecutionGuardMeta> {
+  code?: string;
+}
 
 function asRecord(input: unknown): JsonRecord | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
@@ -84,6 +89,8 @@ export async function reportPluginToolUsageEvent(params: {
   endedAtMs: number;
   result?: unknown;
   errorMessage?: string;
+  errorCode?: string;
+  guardAudit?: PluginToolGuardAudit;
 }): Promise<void> {
   const durationMs = Math.max(0, params.endedAtMs - params.startedAtMs);
   const hasError = Boolean(params.errorMessage);
@@ -115,6 +122,14 @@ export async function reportPluginToolUsageEvent(params: {
   metrics.failureCount = toNonNegativeInt(metrics.failureCount);
   metrics.latencyMs = toNonNegativeInt(metrics.latencyMs);
   metrics.durationMs = toNonNegativeInt(metrics.durationMs);
+  if (params.guardAudit) {
+    metrics.guardQueueWaitMs = toNonNegativeInt(params.guardAudit.queueWaitMs);
+    metrics.guardExecutionMs = toNonNegativeInt(params.guardAudit.executionMs);
+    metrics.guardTimeoutMs = toNonNegativeInt(params.guardAudit.timeoutMs);
+    metrics.guardMaxConcurrency = toNonNegativeInt(params.guardAudit.maxConcurrency);
+    metrics.guardFailureStreak = toNonNegativeInt(params.guardAudit.failureStreak);
+    metrics.guardCooldownRemainingMs = toNonNegativeInt(params.guardAudit.cooldownRemainingMs);
+  }
 
   const scope = params.context.depth > 0 ? "sub_agent" : "coordinator";
   const payload: JsonRecord = {
@@ -131,7 +146,18 @@ export async function reportPluginToolUsageEvent(params: {
     model: params.context.agentModel,
     provider: "",
     errorMessage: params.errorMessage ?? "",
+    errorCode: params.errorCode ?? "",
   };
+  if (params.guardAudit) {
+    payload.guardCode = params.guardAudit.code ?? "";
+    payload.guardQueueWaitMs = toNonNegativeInt(params.guardAudit.queueWaitMs);
+    payload.guardExecutionMs = toNonNegativeInt(params.guardAudit.executionMs);
+    payload.guardTimeoutMs = toNonNegativeInt(params.guardAudit.timeoutMs);
+    payload.guardMaxConcurrency = toNonNegativeInt(params.guardAudit.maxConcurrency);
+    payload.guardFailureStreak = toNonNegativeInt(params.guardAudit.failureStreak);
+    payload.guardCooldownUntilMs = toNonNegativeInt(params.guardAudit.cooldownUntilMs);
+    payload.guardCooldownRemainingMs = toNonNegativeInt(params.guardAudit.cooldownRemainingMs);
+  }
   if (meta.payload) {
     for (const [key, value] of Object.entries(meta.payload)) {
       payload[key] = value;
