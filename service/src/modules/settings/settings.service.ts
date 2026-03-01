@@ -314,7 +314,87 @@ export interface ModelSeriesView {
   models: UIModelView[];
 }
 
-function toUiModelView(model: ReturnType<typeof listModels>[number]): UIModelView {
+function inferModelCapabilities(providerTypeRaw: string, modelNameRaw: string): string[] {
+  const providerType = normalizeProviderType(providerTypeRaw);
+  const modelName = (modelNameRaw ?? "").trim().toLowerCase();
+  const caps = new Set<string>(["text"]);
+
+  const add = (...items: string[]) => {
+    for (const item of items) {
+      if (item) caps.add(item);
+    }
+  };
+
+  switch (providerType) {
+    case "openai": {
+      add("tools", "json");
+      if (
+        modelName.startsWith("gpt-5") ||
+        modelName.startsWith("gpt-4o") ||
+        modelName.startsWith("gpt-4.1") ||
+        modelName.includes("vision")
+      ) {
+        add("vision");
+      }
+      if (
+        modelName.startsWith("gpt-5") ||
+        modelName.startsWith("o1") ||
+        modelName.startsWith("o3") ||
+        modelName.includes("reason")
+      ) {
+        add("reasoning");
+      }
+      break;
+    }
+    case "anthropic": {
+      add("vision", "tools", "reasoning");
+      if (
+        modelName.includes("claude-opus-4") ||
+        modelName.includes("claude-sonnet-4") ||
+        modelName.includes("claude-3-7-sonnet")
+      ) {
+        add("computer_use");
+      }
+      break;
+    }
+    case "zhipu": {
+      add("tools", "reasoning", "json");
+      break;
+    }
+    case "qwen": {
+      add("tools", "reasoning", "json");
+      if (
+        modelName.startsWith("qwen3.5-plus") ||
+        modelName.startsWith("qwen-vl") ||
+        modelName.includes("-vl")
+      ) {
+        add("vision");
+      }
+      break;
+    }
+    case "google": {
+      add("vision", "tools");
+      break;
+    }
+    case "deepseek": {
+      add("tools");
+      if (modelName.includes("reasoner") || modelName.includes("r1")) {
+        add("reasoning");
+      }
+      break;
+    }
+    default: {
+      if (modelName.includes("vision") || modelName.includes("-vl")) add("vision");
+      if (modelName.includes("reason") || modelName.includes("thinking")) add("reasoning");
+      if (modelName.includes("tool") || modelName.includes("function")) add("tools");
+      break;
+    }
+  }
+
+  return Array.from(caps);
+}
+
+function toUiModelView(model: ReturnType<typeof listModels>[number], providerType: string): UIModelView {
   const contextWindow = Math.max(1, model.contextWindow ?? 4096);
   const maxOutput = Math.min(contextWindow, 8192);
   const price = Math.max(0, model.costPer1kTokens ?? 0);
@@ -326,13 +406,19 @@ function toUiModelView(model: ReturnType<typeof listModels>[number]): UIModelVie
     maxOutput,
     inputPrice: price,
     outputPrice: price,
-    capabilities: ["text"],
+    capabilities: inferModelCapabilities(providerType, model.name),
     enabled: true,
   };
 }
 
 export function listModelSeries(providerId: string): ModelSeriesView[] {
-  const models = listModels(providerId).map(toUiModelView);
+  const provider = db
+    .select({ type: aiProviders.type })
+    .from(aiProviders)
+    .where(eq(aiProviders.id, providerId))
+    .get();
+  const providerType = normalizeProviderType(provider?.type);
+  const models = listModels(providerId).map((model) => toUiModelView(model, providerType));
   if (models.length === 0) return [];
   return [
     {
