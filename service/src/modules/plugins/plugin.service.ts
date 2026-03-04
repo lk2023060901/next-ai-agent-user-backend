@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
@@ -10,9 +10,12 @@ import { config } from "../../config";
 import { db } from "../../db";
 import {
   installedPlugins,
+  pluginFavorites,
   pluginInstallAudits,
   pluginInstallRecords,
+  pluginReviews,
   plugins,
+  users,
   workspaces,
 } from "../../db/schema";
 
@@ -29,6 +32,7 @@ const ALLOWED_PLUGIN_TYPES = new Set([
 const ALLOWED_PRICING_MODELS = new Set(["free", "one_time", "subscription", "usage_based"]);
 const ALLOWED_CONFIG_FIELD_TYPES = new Set(["text", "password", "number", "boolean", "select"]);
 const ALLOWED_INSTALL_SOURCE_TYPES = new Set(["npm", "path", "archive"]);
+let pluginSocialSchemaReady = false;
 
 export type PluginConfigFieldOption = {
   value: string;
@@ -64,6 +68,9 @@ export type PluginMarketplaceItem = {
   rating: number;
   reviewCount: number;
   installCount: number;
+  favoriteCount: number;
+  isFavorited: boolean;
+  myRating?: number;
   tags: string[];
   permissions: string[];
   configSchema: PluginConfigField[];
@@ -88,10 +95,12 @@ export type InstalledPluginItem = {
 export type PluginReviewItem = {
   id: string;
   pluginId: string;
+  userId: string;
   authorName: string;
   rating: number;
   content: string;
   createdAt: string;
+  updatedAt: string;
 };
 
 export type ListMarketplacePluginsParams = {
@@ -101,6 +110,20 @@ export type ListMarketplacePluginsParams = {
   sort?: string;
   page?: number;
   pageSize?: number;
+  currentUserId?: string;
+};
+
+export type SetPluginFavoriteParams = {
+  pluginId: string;
+  userId: string;
+  favorited: boolean;
+};
+
+export type UpsertPluginReviewParams = {
+  pluginId: string;
+  userId: string;
+  rating: number;
+  content?: string;
 };
 
 export type InstallWorkspacePluginParams = {
@@ -144,6 +167,8 @@ type OpenClawManifest = {
   id: string;
   configSchema: Record<string, unknown>;
   kind?: string;
+  channels?: string[];
+  skills?: string[];
   name?: string;
   description?: string;
   version?: string;
@@ -220,6 +245,175 @@ type NpmPackMetadata = {
   shasum?: string;
 };
 
+type MarketplaceSeedRecord = {
+  row: {
+    id: string;
+    name: string;
+    type: string;
+    description: string;
+    author: string;
+    version: string;
+    pricingModel: string;
+    price: number;
+    rating: number;
+    iconUrl: string;
+  };
+  metadata: PluginMetadataFile;
+  legacyIds?: string[];
+};
+
+const BUILTIN_MARKETPLACE_RECORDS: MarketplaceSeedRecord[] = [
+  {
+    row: {
+      id: "wecom",
+      name: "openclaw-wecom-channel",
+      type: "channel",
+      description: "企业微信渠道连接器。",
+      author: "OpenClaw",
+      version: "builtin",
+      pricingModel: "free",
+      price: 0,
+      rating: 5,
+      iconUrl: "💼",
+    },
+    metadata: {
+      displayName: "企业微信渠道插件",
+      longDescription: "安装后可在频道页面启用企业微信渠道配置与连接。",
+      tags: ["channel", "wecom", "企业微信"],
+      permissions: [],
+      screenshots: [],
+      publishedAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    },
+  },
+  {
+    row: {
+      id: "feishu",
+      name: "openclaw-feishu-channel",
+      type: "channel",
+      description: "飞书渠道连接器。",
+      author: "OpenClaw",
+      version: "builtin",
+      pricingModel: "free",
+      price: 0,
+      rating: 5,
+      iconUrl: "💬",
+    },
+    metadata: {
+      displayName: "飞书渠道插件",
+      longDescription: "安装后可在频道页面启用飞书渠道配置与连接。",
+      tags: ["channel", "feishu", "飞书"],
+      permissions: [],
+      screenshots: [],
+      publishedAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    },
+    legacyIds: ["openclaw.feishu"],
+  },
+  {
+    row: {
+      id: "dingtalk",
+      name: "openclaw-dingtalk-channel",
+      type: "channel",
+      description: "钉钉渠道连接器。",
+      author: "OpenClaw",
+      version: "builtin",
+      pricingModel: "free",
+      price: 0,
+      rating: 5,
+      iconUrl: "📱",
+    },
+    metadata: {
+      displayName: "钉钉渠道插件",
+      longDescription: "安装后可在频道页面启用钉钉渠道配置与连接。",
+      tags: ["channel", "dingtalk", "钉钉"],
+      permissions: [],
+      screenshots: [],
+      publishedAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    },
+  },
+  {
+    row: {
+      id: "discord",
+      name: "openclaw-discord-channel",
+      type: "channel",
+      description: "Discord 渠道连接器。",
+      author: "OpenClaw",
+      version: "builtin",
+      pricingModel: "free",
+      price: 0,
+      rating: 5,
+      iconUrl: "🎮",
+    },
+    metadata: {
+      displayName: "Discord 渠道插件",
+      longDescription: "安装后可在频道页面启用 Discord 渠道配置与连接。",
+      tags: ["channel", "discord"],
+      permissions: [],
+      screenshots: [],
+      publishedAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    },
+  },
+  {
+    row: {
+      id: "telegram",
+      name: "openclaw-telegram-channel",
+      type: "channel",
+      description: "Telegram 渠道连接器。",
+      author: "OpenClaw",
+      version: "builtin",
+      pricingModel: "free",
+      price: 0,
+      rating: 5,
+      iconUrl: "✈️",
+    },
+    metadata: {
+      displayName: "Telegram 渠道插件",
+      longDescription: "安装后可在频道页面启用 Telegram 渠道配置与连接。",
+      tags: ["channel", "telegram"],
+      permissions: [],
+      screenshots: [],
+      publishedAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    },
+  },
+  {
+    row: {
+      id: "slack",
+      name: "openclaw-slack-channel",
+      type: "channel",
+      description: "Slack 渠道连接器。",
+      author: "OpenClaw",
+      version: "builtin",
+      pricingModel: "free",
+      price: 0,
+      rating: 5,
+      iconUrl: "🧩",
+    },
+    metadata: {
+      displayName: "Slack 渠道插件",
+      longDescription: "安装后可在频道页面启用 Slack 渠道配置与连接。",
+      tags: ["channel", "slack"],
+      permissions: [],
+      screenshots: [],
+      publishedAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    },
+  },
+];
+
+let builtinMarketplaceBootstrapPromise: Promise<void> | null = null;
+let orphanInstallDirCleanupPromise: Promise<void> | null = null;
+
+function normalizeSourceKey(sourceType: string | null | undefined, sourceSpec: string | null | undefined): string | null {
+  const type = (sourceType ?? "").trim().toLowerCase();
+  const spec = (sourceSpec ?? "").trim();
+  if (!type || !spec) return null;
+  return `${type}::${spec}`;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -241,6 +435,48 @@ function resolvePluginMetadataDir(): string {
   const configured = process.env.PLUGINS_METADATA_DIR?.trim();
   if (configured) return path.resolve(configured);
   return path.join(resolveDataDir(), "plugins", "metadata");
+}
+
+async function cleanupOrphanInstallDirectoriesOnce(): Promise<void> {
+  if (orphanInstallDirCleanupPromise) {
+    await orphanInstallDirCleanupPromise;
+    return;
+  }
+
+  orphanInstallDirCleanupPromise = (async () => {
+    const root = resolvePluginExtensionsDir();
+    let dirEntries: fsSync.Dirent[] = [];
+    try {
+      dirEntries = await fs.readdir(root, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const installedRows = db
+      .select({ pluginId: installedPlugins.pluginId })
+      .from(installedPlugins)
+      .all();
+    const installedPluginIds = new Set(
+      installedRows
+        .map((row) => row.pluginId?.trim())
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    for (const entry of dirEntries) {
+      if (!entry.isDirectory()) continue;
+      const pluginId = entry.name.trim();
+      if (!pluginId || installedPluginIds.has(pluginId)) continue;
+      const candidate = path.join(root, entry.name);
+      if (!isPathInside(root, candidate)) continue;
+      try {
+        await fs.rm(candidate, { recursive: true, force: true });
+      } catch {
+        // best-effort orphan cleanup
+      }
+    }
+  })();
+
+  await orphanInstallDirCleanupPromise;
 }
 
 function normalizeInstalledStatus(raw: string | null | undefined): "enabled" | "disabled" | "error" | "updating" {
@@ -482,6 +718,39 @@ function validatePluginId(pluginId: string): string {
     });
   }
   return normalized;
+}
+
+function ensurePluginSocialSchema(): void {
+  if (pluginSocialSchemaReady) return;
+
+  db.run(sql`CREATE TABLE IF NOT EXISTS plugin_favorites (
+    id text PRIMARY KEY NOT NULL,
+    plugin_id text NOT NULL REFERENCES plugins(id) ON DELETE cascade ON UPDATE no action,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE cascade ON UPDATE no action,
+    created_at text NOT NULL DEFAULT (datetime('now'))
+  )`);
+  db.run(
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS plugin_favorites_plugin_user_uniq ON plugin_favorites (plugin_id, user_id)`,
+  );
+  db.run(sql`CREATE INDEX IF NOT EXISTS plugin_favorites_plugin_idx ON plugin_favorites (plugin_id)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS plugin_favorites_user_idx ON plugin_favorites (user_id)`);
+
+  db.run(sql`CREATE TABLE IF NOT EXISTS plugin_reviews (
+    id text PRIMARY KEY NOT NULL,
+    plugin_id text NOT NULL REFERENCES plugins(id) ON DELETE cascade ON UPDATE no action,
+    user_id text NOT NULL REFERENCES users(id) ON DELETE cascade ON UPDATE no action,
+    rating real NOT NULL,
+    content text NOT NULL DEFAULT '',
+    created_at text NOT NULL DEFAULT (datetime('now')),
+    updated_at text NOT NULL DEFAULT (datetime('now'))
+  )`);
+  db.run(
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS plugin_reviews_plugin_user_uniq ON plugin_reviews (plugin_id, user_id)`,
+  );
+  db.run(sql`CREATE INDEX IF NOT EXISTS plugin_reviews_plugin_idx ON plugin_reviews (plugin_id)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS plugin_reviews_user_idx ON plugin_reviews (user_id)`);
+
+  pluginSocialSchemaReady = true;
 }
 
 function validateRegistryNpmSpec(spec: string): void {
@@ -764,10 +1033,17 @@ function parseOpenClawManifest(rootDir: string): OpenClawManifest {
     });
   }
 
+  const declaredChannels = readStringArray(parsed.channels);
+  const declaredSkills = readStringArray(parsed.skills);
+  const rawKind = extractString(parsed.kind)?.toLowerCase();
+  const inferredKind = rawKind ?? (declaredChannels.length > 0 ? "channel" : declaredSkills.length > 0 ? "skill" : "tool");
+
   const manifest: OpenClawManifest = {
     id,
     configSchema: configSchemaRaw as Record<string, unknown>,
-    kind: extractString(parsed.kind),
+    kind: inferredKind,
+    channels: declaredChannels.length > 0 ? declaredChannels : undefined,
+    skills: declaredSkills.length > 0 ? declaredSkills : undefined,
     name: extractString(parsed.name),
     description: extractString(parsed.description),
     version: extractString(parsed.version),
@@ -1020,6 +1296,107 @@ async function writePluginMetadata(pluginId: string, metadata: PluginMetadataFil
   await fs.writeFile(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
 
+function mergeMetadataWithDefaults(
+  current: PluginMetadataFile,
+  defaults: PluginMetadataFile,
+): PluginMetadataFile {
+  return {
+    displayName: current.displayName ?? defaults.displayName,
+    longDescription: current.longDescription ?? defaults.longDescription,
+    configSchema:
+      current.configSchema && current.configSchema.length > 0
+        ? current.configSchema
+        : defaults.configSchema,
+    tags: current.tags && current.tags.length > 0 ? current.tags : defaults.tags,
+    permissions:
+      current.permissions && current.permissions.length > 0
+        ? current.permissions
+        : defaults.permissions,
+    screenshots:
+      current.screenshots && current.screenshots.length > 0
+        ? current.screenshots
+        : defaults.screenshots,
+    publishedAt: current.publishedAt ?? defaults.publishedAt,
+    updatedAt: current.updatedAt ?? defaults.updatedAt,
+    sourceType: current.sourceType ?? defaults.sourceType,
+    sourceSpec: current.sourceSpec ?? defaults.sourceSpec,
+    installPath: current.installPath,
+  };
+}
+
+async function ensureBuiltinMarketplaceRecords(): Promise<void> {
+  if (builtinMarketplaceBootstrapPromise) {
+    await builtinMarketplaceBootstrapPromise;
+    return;
+  }
+
+  builtinMarketplaceBootstrapPromise = (async () => {
+    for (const seed of BUILTIN_MARKETPLACE_RECORDS) {
+      const existing = db.select({ id: plugins.id }).from(plugins).where(eq(plugins.id, seed.row.id)).get();
+      if (!existing) {
+        db.insert(plugins)
+          .values({
+            id: seed.row.id,
+            name: seed.row.name,
+            type: seed.row.type,
+            description: seed.row.description,
+            author: seed.row.author,
+            version: seed.row.version,
+            pricingModel: seed.row.pricingModel,
+            price: seed.row.price,
+            rating: seed.row.rating,
+            iconUrl: seed.row.iconUrl,
+            installCount: 0,
+          })
+          .run();
+      } else {
+        db.update(plugins)
+          .set({
+            name: seed.row.name,
+            type: seed.row.type,
+            description: seed.row.description,
+            author: seed.row.author,
+            version: seed.row.version,
+            pricingModel: seed.row.pricingModel,
+            price: seed.row.price,
+            rating: seed.row.rating,
+            iconUrl: seed.row.iconUrl,
+          })
+          .where(eq(plugins.id, seed.row.id))
+          .run();
+      }
+
+      const metadata = await loadPluginMetadata(seed.row.id);
+      const merged = mergeMetadataWithDefaults(metadata, seed.metadata);
+      await writePluginMetadata(seed.row.id, merged);
+
+      for (const legacyId of seed.legacyIds ?? []) {
+        if (!legacyId || legacyId === seed.row.id) continue;
+        const legacyRow = db.select({ id: plugins.id }).from(plugins).where(eq(plugins.id, legacyId)).get();
+        if (!legacyRow) continue;
+
+        const legacyInUse = db
+          .select({ id: installedPlugins.id })
+          .from(installedPlugins)
+          .where(eq(installedPlugins.pluginId, legacyId))
+          .get();
+        if (legacyInUse) continue;
+
+        db.delete(plugins).where(eq(plugins.id, legacyId)).run();
+        const legacyMetadataPath = path.join(resolvePluginMetadataDir(), `${legacyId}.json`);
+        await fs.rm(legacyMetadataPath, { force: true });
+      }
+    }
+  })();
+
+  try {
+    await builtinMarketplaceBootstrapPromise;
+  } catch (err) {
+    builtinMarketplaceBootstrapPromise = null;
+    throw err;
+  }
+}
+
 function buildPluginItemFromRow(params: {
   row: typeof plugins.$inferSelect;
   metadata: PluginMetadataFile;
@@ -1046,6 +1423,8 @@ function buildPluginItemFromRow(params: {
     rating: row.rating != null ? Number(row.rating) : 0,
     reviewCount: 0,
     installCount: row.installCount != null ? Number(row.installCount) : 0,
+    favoriteCount: 0,
+    isFavorited: false,
     tags: metadata.tags ?? [],
     permissions: metadata.permissions ?? [],
     configSchema: metadata.configSchema ?? [],
@@ -1057,10 +1436,102 @@ function buildPluginItemFromRow(params: {
   };
 }
 
+function applyMarketplaceRuntimeStats(items: PluginMarketplaceItem[], currentUserId?: string): PluginMarketplaceItem[] {
+  if (items.length === 0) return items;
+  ensurePluginSocialSchema();
+
+  const pluginIds = new Set(items.map((item) => item.id.trim()).filter((value) => value.length > 0));
+  const normalizedCurrentUserId = (currentUserId ?? "").trim();
+
+  const favoriteCountByPluginId = new Map<string, number>();
+  const favoritedByCurrentUser = new Set<string>();
+  const ratingSumByPluginId = new Map<string, number>();
+  const reviewCountByPluginId = new Map<string, number>();
+  const myRatingByPluginId = new Map<string, number>();
+  const installTotalByPluginId = new Map<string, number>();
+  const installTotalBySourceKey = new Map<string, number>();
+
+  const favoriteRows = db.select().from(pluginFavorites).all();
+  for (const row of favoriteRows) {
+    const pluginId = row.pluginId?.trim();
+    const userId = row.userId?.trim();
+    if (!pluginId || !pluginIds.has(pluginId)) continue;
+    favoriteCountByPluginId.set(pluginId, (favoriteCountByPluginId.get(pluginId) ?? 0) + 1);
+    if (normalizedCurrentUserId && userId === normalizedCurrentUserId) {
+      favoritedByCurrentUser.add(pluginId);
+    }
+  }
+
+  const reviewRows = db.select().from(pluginReviews).all();
+  for (const row of reviewRows) {
+    const pluginId = row.pluginId?.trim();
+    const userId = row.userId?.trim();
+    const rating = Number(row.rating ?? 0);
+    if (!pluginId || !pluginIds.has(pluginId)) continue;
+    reviewCountByPluginId.set(pluginId, (reviewCountByPluginId.get(pluginId) ?? 0) + 1);
+    ratingSumByPluginId.set(pluginId, (ratingSumByPluginId.get(pluginId) ?? 0) + rating);
+    if (normalizedCurrentUserId && userId === normalizedCurrentUserId) {
+      myRatingByPluginId.set(pluginId, rating);
+    }
+  }
+
+  const installAudits = db
+    .select()
+    .from(pluginInstallAudits)
+    .where(and(eq(pluginInstallAudits.action, "install"), eq(pluginInstallAudits.status, "success")))
+    .all();
+  for (const row of installAudits) {
+    const pluginId = row.pluginId?.trim();
+    if (pluginId) {
+      installTotalByPluginId.set(pluginId, (installTotalByPluginId.get(pluginId) ?? 0) + 1);
+    }
+
+    const sourceKey = normalizeSourceKey(row.sourceType, row.sourceSpec);
+    if (sourceKey) {
+      installTotalBySourceKey.set(sourceKey, (installTotalBySourceKey.get(sourceKey) ?? 0) + 1);
+    }
+  }
+
+  return items.map((item) => {
+    const sourceKey = normalizeSourceKey(item.sourceType, item.sourceSpec);
+    const reviewCount = reviewCountByPluginId.get(item.id) ?? 0;
+    const ratingSum = ratingSumByPluginId.get(item.id) ?? 0;
+    const avgRating = reviewCount > 0 ? Number((ratingSum / reviewCount).toFixed(2)) : item.rating;
+
+    const installsById = installTotalByPluginId.get(item.id) ?? 0;
+    const installsBySource = sourceKey ? installTotalBySourceKey.get(sourceKey) ?? 0 : 0;
+    const dynamicInstallCount = Math.max(item.installCount ?? 0, installsById, installsBySource, 0);
+    const favoriteCount = favoriteCountByPluginId.get(item.id) ?? 0;
+    const isFavorited = favoritedByCurrentUser.has(item.id);
+    const myRating = myRatingByPluginId.get(item.id);
+
+    return {
+      ...item,
+      rating: avgRating,
+      reviewCount,
+      installCount: dynamicInstallCount,
+      favoriteCount,
+      isFavorited,
+      ...(myRating != null ? { myRating } : {}),
+    };
+  });
+}
+
 async function ensureWorkspaceExists(workspaceId: string): Promise<void> {
   const ws = db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.id, workspaceId)).get();
   if (!ws) {
     throw Object.assign(new Error("Workspace not found"), { code: "NOT_FOUND" });
+  }
+}
+
+function ensureUserExists(userId: string): void {
+  const normalized = userId.trim();
+  if (!normalized) {
+    throw Object.assign(new Error("userId is required"), { code: "UNAUTHENTICATED" });
+  }
+  const row = db.select({ id: users.id }).from(users).where(eq(users.id, normalized)).get();
+  if (!row) {
+    throw Object.assign(new Error("User not found"), { code: "UNAUTHENTICATED" });
   }
 }
 
@@ -1481,6 +1952,127 @@ async function cleanupInstalledPath(installedSource: InstalledSourcePackage | nu
   }
 }
 
+async function cleanupOrphanInstallPath(installPathRaw: string | null | undefined): Promise<{
+  attempted: boolean;
+  removed: boolean;
+  skippedShared: boolean;
+  skippedUnsafe: boolean;
+  error?: string;
+}> {
+  const installPath = (installPathRaw ?? "").trim();
+  if (!installPath) {
+    return {
+      attempted: false,
+      removed: false,
+      skippedShared: false,
+      skippedUnsafe: false,
+    };
+  }
+
+  const resolvedInstallPath = path.resolve(installPath);
+  const extensionsRoot = resolvePluginExtensionsDir();
+  if (!isPathInside(extensionsRoot, resolvedInstallPath)) {
+    return {
+      attempted: false,
+      removed: false,
+      skippedShared: false,
+      skippedUnsafe: true,
+    };
+  }
+
+  const remainingRefs = db
+    .select({ id: pluginInstallRecords.id })
+    .from(pluginInstallRecords)
+    .where(eq(pluginInstallRecords.installPath, installPath))
+    .all();
+  if (remainingRefs.length > 0) {
+    return {
+      attempted: false,
+      removed: false,
+      skippedShared: true,
+      skippedUnsafe: false,
+    };
+  }
+
+  try {
+    await fs.rm(resolvedInstallPath, { recursive: true, force: true });
+    return {
+      attempted: true,
+      removed: true,
+      skippedShared: false,
+      skippedUnsafe: false,
+    };
+  } catch (err) {
+    return {
+      attempted: true,
+      removed: false,
+      skippedShared: false,
+      skippedUnsafe: false,
+      error: err instanceof Error ? err.message : "failed to remove install path",
+    };
+  }
+}
+
+async function cleanupOrphanInstallPathByPluginId(pluginIdRaw: string): Promise<{
+  attempted: boolean;
+  removed: boolean;
+  skippedShared: boolean;
+  skippedUnsafe: boolean;
+  error?: string;
+}> {
+  const pluginId = pluginIdRaw.trim();
+  if (!pluginId) {
+    return {
+      attempted: false,
+      removed: false,
+      skippedShared: false,
+      skippedUnsafe: false,
+    };
+  }
+
+  const remainingInstalls = db
+    .select({ id: installedPlugins.id })
+    .from(installedPlugins)
+    .where(eq(installedPlugins.pluginId, pluginId))
+    .all();
+  if (remainingInstalls.length > 0) {
+    return {
+      attempted: false,
+      removed: false,
+      skippedShared: true,
+      skippedUnsafe: false,
+    };
+  }
+
+  const resolvedInstallPath = path.join(resolvePluginExtensionsDir(), pluginId);
+  if (!isPathInside(resolvePluginExtensionsDir(), resolvedInstallPath)) {
+    return {
+      attempted: false,
+      removed: false,
+      skippedShared: false,
+      skippedUnsafe: true,
+    };
+  }
+
+  try {
+    await fs.rm(resolvedInstallPath, { recursive: true, force: true });
+    return {
+      attempted: true,
+      removed: true,
+      skippedShared: false,
+      skippedUnsafe: false,
+    };
+  } catch (err) {
+    return {
+      attempted: true,
+      removed: false,
+      skippedShared: false,
+      skippedUnsafe: false,
+      error: err instanceof Error ? err.message : "failed to remove plugin install path",
+    };
+  }
+}
+
 function normalizeRuntimeSyncOperation(raw: string | undefined): RuntimePluginSyncOperation {
   const value = (raw ?? "").trim().toLowerCase();
   if (value === "reload") return "reload";
@@ -1611,6 +2203,8 @@ async function buildInstalledPluginItem(row: typeof installedPlugins.$inferSelec
 }
 
 export async function listMarketplacePlugins(params: ListMarketplacePluginsParams) {
+  await ensureBuiltinMarketplaceRecords();
+
   const page = Math.max(1, params.page ?? 1);
   const pageSize = Math.max(1, Math.min(100, params.pageSize ?? 24));
 
@@ -1620,13 +2214,14 @@ export async function listMarketplacePlugins(params: ListMarketplacePluginsParam
     const metadata = await loadPluginMetadata(row.id);
     enriched.push(buildPluginItemFromRow({ row, metadata }));
   }
+  const withStats = applyMarketplaceRuntimeStats(enriched, params.currentUserId);
 
   const type = (params.type ?? "").trim().toLowerCase();
   const pricingModel = (params.pricingModel ?? "").trim().toLowerCase();
   const search = (params.search ?? "").trim().toLowerCase();
   const sort = (params.sort ?? "").trim().toLowerCase();
 
-  let filtered = enriched;
+  let filtered = withStats;
   if (type) {
     filtered = filtered.filter((plugin) => plugin.type === type);
   }
@@ -1664,25 +2259,162 @@ export async function listMarketplacePlugins(params: ListMarketplacePluginsParam
   };
 }
 
-export async function getMarketplacePlugin(pluginId: string): Promise<PluginMarketplaceItem> {
+export async function getMarketplacePlugin(pluginId: string, currentUserId?: string): Promise<PluginMarketplaceItem> {
+  await ensureBuiltinMarketplaceRecords();
+
   const normalizedId = validatePluginId(pluginId);
   const row = db.select().from(plugins).where(eq(plugins.id, normalizedId)).get();
   if (!row) {
     throw Object.assign(new Error("Plugin not found"), { code: "NOT_FOUND" });
   }
-
   const metadata = await loadPluginMetadata(normalizedId);
-  return buildPluginItemFromRow({ row, metadata });
+  const item = buildPluginItemFromRow({ row, metadata });
+  return applyMarketplaceRuntimeStats([item], currentUserId)[0]!;
 }
 
 export function listPluginReviews(pluginId: string): PluginReviewItem[] {
+  ensurePluginSocialSchema();
   const normalizedId = pluginId.trim();
   if (!normalizedId) return [];
-  return [];
+
+  const row = db.select({ id: plugins.id }).from(plugins).where(eq(plugins.id, normalizedId)).get();
+  if (!row) {
+    throw Object.assign(new Error("Plugin not found"), { code: "NOT_FOUND" });
+  }
+
+  const reviews = db
+    .select()
+    .from(pluginReviews)
+    .where(eq(pluginReviews.pluginId, normalizedId))
+    .all()
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const userIds = Array.from(new Set(reviews.map((item) => item.userId).filter(Boolean)));
+  const userNameById = new Map<string, string>();
+  if (userIds.length > 0) {
+    const rows = db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(inArray(users.id, userIds))
+      .all();
+    for (const user of rows) {
+      userNameById.set(user.id, user.name?.trim() || "匿名用户");
+    }
+  }
+
+  return reviews.map((item) => ({
+    id: item.id,
+    pluginId: item.pluginId,
+    userId: item.userId,
+    authorName: userNameById.get(item.userId) ?? "匿名用户",
+    rating: Number(item.rating ?? 0),
+    content: item.content ?? "",
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  }));
+}
+
+export async function setPluginFavorite(params: SetPluginFavoriteParams): Promise<PluginMarketplaceItem> {
+  ensurePluginSocialSchema();
+  const pluginId = validatePluginId(params.pluginId);
+  const userId = params.userId.trim();
+  ensureUserExists(userId);
+
+  const pluginRow = db.select({ id: plugins.id }).from(plugins).where(eq(plugins.id, pluginId)).get();
+  if (!pluginRow) {
+    throw Object.assign(new Error("Plugin not found"), { code: "NOT_FOUND" });
+  }
+
+  if (params.favorited) {
+    db.insert(pluginFavorites)
+      .values({
+        id: uuidv4(),
+        pluginId,
+        userId,
+      })
+      .onConflictDoNothing()
+      .run();
+  } else {
+    db.delete(pluginFavorites)
+      .where(and(eq(pluginFavorites.pluginId, pluginId), eq(pluginFavorites.userId, userId)))
+      .run();
+  }
+
+  return await getMarketplacePlugin(pluginId, userId);
+}
+
+export async function upsertPluginReview(params: UpsertPluginReviewParams): Promise<PluginReviewItem> {
+  ensurePluginSocialSchema();
+  const pluginId = validatePluginId(params.pluginId);
+  const userId = params.userId.trim();
+  ensureUserExists(userId);
+
+  const pluginRow = db.select({ id: plugins.id }).from(plugins).where(eq(plugins.id, pluginId)).get();
+  if (!pluginRow) {
+    throw Object.assign(new Error("Plugin not found"), { code: "NOT_FOUND" });
+  }
+
+  const rating = Number(params.rating);
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    throw Object.assign(new Error("rating must be between 1 and 5"), { code: "INVALID_ARGUMENT" });
+  }
+
+  const content = (params.content ?? "").trim();
+  const now = nowIso();
+  const existing = db
+    .select()
+    .from(pluginReviews)
+    .where(and(eq(pluginReviews.pluginId, pluginId), eq(pluginReviews.userId, userId)))
+    .get();
+
+  if (existing) {
+    db.update(pluginReviews)
+      .set({
+        rating,
+        content,
+        updatedAt: now,
+      })
+      .where(eq(pluginReviews.id, existing.id))
+      .run();
+  } else {
+    db.insert(pluginReviews)
+      .values({
+        id: uuidv4(),
+        pluginId,
+        userId,
+        rating,
+        content,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
+
+  const updated = db
+    .select()
+    .from(pluginReviews)
+    .where(and(eq(pluginReviews.pluginId, pluginId), eq(pluginReviews.userId, userId)))
+    .get();
+  if (!updated) {
+    throw Object.assign(new Error("Review not found"), { code: "INTERNAL" });
+  }
+
+  const user = db.select({ name: users.name }).from(users).where(eq(users.id, userId)).get();
+  return {
+    id: updated.id,
+    pluginId: updated.pluginId,
+    userId: updated.userId,
+    authorName: user?.name?.trim() || "匿名用户",
+    rating: Number(updated.rating ?? 0),
+    content: updated.content ?? "",
+    createdAt: updated.createdAt,
+    updatedAt: updated.updatedAt,
+  };
 }
 
 export async function listWorkspaceInstalledPlugins(workspaceId: string): Promise<InstalledPluginItem[]> {
   await ensureWorkspaceExists(workspaceId);
+  await cleanupOrphanInstallDirectoriesOnce();
   const rows = db
     .select()
     .from(installedPlugins)
@@ -1791,7 +2523,6 @@ export async function installWorkspacePlugin(params: InstallWorkspacePluginParam
     if (!pluginRow) {
       throw Object.assign(new Error("Plugin not found"), { code: "NOT_FOUND" });
     }
-
     const exists = db
       .select({ id: installedPlugins.id })
       .from(installedPlugins)
@@ -2014,16 +2745,8 @@ export async function uninstallWorkspacePlugin(
 
   try {
     db.transaction((tx) => {
+      tx.delete(pluginInstallRecords).where(eq(pluginInstallRecords.installedPluginId, row.id)).run();
       tx.delete(installedPlugins).where(eq(installedPlugins.id, row.id)).run();
-
-      const currentPluginRow = tx.select().from(plugins).where(eq(plugins.id, row.pluginId)).get();
-      if (currentPluginRow) {
-        const nextInstallCount = Math.max(0, Number(currentPluginRow.installCount ?? 0) - 1);
-        tx.update(plugins)
-          .set({ installCount: nextInstallCount })
-          .where(eq(plugins.id, currentPluginRow.id))
-          .run();
-      }
     });
   } catch (err) {
     writePluginInstallAudit({
@@ -2044,6 +2767,41 @@ export async function uninstallWorkspacePlugin(
     throw err;
   }
 
+  const primaryInstallPathCleanup = installRecord?.installPath
+    ? await cleanupOrphanInstallPath(installRecord.installPath)
+    : await cleanupOrphanInstallPathByPluginId(row.pluginId);
+  const secondaryInstallPathCleanup =
+    primaryInstallPathCleanup.removed || primaryInstallPathCleanup.error
+      ? null
+      : await cleanupOrphanInstallPathByPluginId(row.pluginId);
+  const installPathCleanup = {
+    primary: primaryInstallPathCleanup,
+    ...(secondaryInstallPathCleanup ? { secondary: secondaryInstallPathCleanup } : {}),
+    removed: primaryInstallPathCleanup.removed || Boolean(secondaryInstallPathCleanup?.removed),
+  };
+
+  if (primaryInstallPathCleanup.error || secondaryInstallPathCleanup?.error) {
+    writePluginInstallAudit({
+      workspaceId,
+      pluginId: row.pluginId,
+      installedPluginId: row.id,
+      actorUserId: actor,
+      action: "uninstall_cleanup",
+      status: "failure",
+      sourceType,
+      sourceSpec,
+      expectedIntegrity,
+      resolvedIntegrity,
+      artifactSha256,
+      artifactSha512,
+      message: primaryInstallPathCleanup.error ?? secondaryInstallPathCleanup?.error,
+      detail: {
+        installPath: installRecord?.installPath ?? null,
+        installPathCleanup,
+      },
+    });
+  }
+
   writePluginInstallAudit({
     workspaceId,
     pluginId: row.pluginId,
@@ -2058,6 +2816,10 @@ export async function uninstallWorkspacePlugin(
     artifactSha256,
     artifactSha512,
     message: "plugin uninstalled successfully",
+    detail: {
+      installPath: installRecord?.installPath ?? null,
+      installPathCleanup,
+    },
   });
 }
 

@@ -33,30 +33,6 @@ func (h *OrgHandler) userCtx(r *http.Request) *commonpb.UserContext {
 	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
 }
 
-func (h *OrgHandler) resolveOrgIdentity(r *http.Request, orgRef string) (orgID string, orgSlug string) {
-	orgID = strings.TrimSpace(orgRef)
-	orgSlug = strings.TrimSpace(orgRef)
-	if orgSlug == "" {
-		return orgID, orgSlug
-	}
-
-	resp, err := h.clients.Org.GetOrg(r.Context(), &orgpb.GetOrgRequest{
-		Slug:        orgSlug,
-		UserContext: h.userCtx(r),
-	})
-	if err != nil || resp == nil {
-		return orgID, orgSlug
-	}
-
-	if strings.TrimSpace(resp.Id) != "" {
-		orgID = resp.Id
-	}
-	if strings.TrimSpace(resp.Slug) != "" {
-		orgSlug = resp.Slug
-	}
-	return orgID, orgSlug
-}
-
 func buildRecentDateKeys(days int) []string {
 	safeDays := days
 	if safeDays < 1 {
@@ -453,6 +429,45 @@ func toUsageView(item *chatpb.UsageRecord) orgUsageView {
 	}
 }
 
+func mapOrg(item *orgpb.Org) map[string]any {
+	if item == nil {
+		return map[string]any{}
+	}
+	id := strings.TrimSpace(item.GetId())
+	slug := strings.TrimSpace(item.GetSlug())
+	return map[string]any{
+		"id":        id,
+		"orgId":     id,
+		"slug":      slug,
+		"orgSlug":   slug,
+		"name":      strings.TrimSpace(item.GetName()),
+		"avatarUrl": strings.TrimSpace(item.GetAvatarUrl()),
+		"plan":      strings.TrimSpace(item.GetPlan()),
+		"createdAt": strings.TrimSpace(item.GetCreatedAt()),
+		"updatedAt": strings.TrimSpace(item.GetUpdatedAt()),
+	}
+}
+
+func mapWorkspace(item *orgpb.Workspace) map[string]any {
+	if item == nil {
+		return map[string]any{}
+	}
+	id := strings.TrimSpace(item.GetId())
+	slug := strings.TrimSpace(item.GetSlug())
+	return map[string]any{
+		"id":          id,
+		"workspaceId": id,
+		"slug":        slug,
+		"wsSlug":      slug,
+		"name":        strings.TrimSpace(item.GetName()),
+		"emoji":       strings.TrimSpace(item.GetEmoji()),
+		"orgId":       strings.TrimSpace(item.GetOrgId()),
+		"description": strings.TrimSpace(item.GetDescription()),
+		"createdAt":   strings.TrimSpace(item.GetCreatedAt()),
+		"updatedAt":   strings.TrimSpace(item.GetUpdatedAt()),
+	}
+}
+
 func (h *OrgHandler) ListOrgs(w http.ResponseWriter, r *http.Request) {
 	u, _ := middleware.GetUser(r)
 	resp, err := h.clients.Org.ListOrgs(r.Context(), &orgpb.ListOrgsRequest{
@@ -462,40 +477,44 @@ func (h *OrgHandler) ListOrgs(w http.ResponseWriter, r *http.Request) {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp.Orgs)
+	items := make([]map[string]any, 0, len(resp.Orgs))
+	for _, item := range resp.Orgs {
+		items = append(items, mapOrg(item))
+	}
+	writeData(w, http.StatusOK, items)
 }
 
 func (h *OrgHandler) GetOrg(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
+	orgID := chi.URLParam(r, "orgId")
 	resp, err := h.clients.Org.GetOrg(r.Context(), &orgpb.GetOrgRequest{
-		Slug: slug, UserContext: h.userCtx(r),
+		OrgId: orgID, UserContext: h.userCtx(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, mapOrg(resp))
 }
 
 func (h *OrgHandler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
+	orgID := chi.URLParam(r, "orgId")
 	var body orgpb.UpdateOrgRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	body.Slug = slug
+	body.OrgId = orgID
 	body.UserContext = h.userCtx(r)
 	resp, err := h.clients.Org.UpdateOrg(r.Context(), &body)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp)
+	writeData(w, http.StatusOK, mapOrg(resp))
 }
 
 func (h *OrgHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	orgID := chi.URLParam(r, "slug")
+	orgID := chi.URLParam(r, "orgId")
 	resp, err := h.clients.Org.ListMembers(r.Context(), &orgpb.ListMembersRequest{
 		OrgId: orgID, UserContext: h.userCtx(r),
 	})
@@ -507,7 +526,7 @@ func (h *OrgHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrgHandler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
-	orgID := chi.URLParam(r, "slug")
+	orgID := chi.URLParam(r, "orgId")
 	resp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
 		OrgId: orgID, UserContext: h.userCtx(r),
 	})
@@ -515,12 +534,15 @@ func (h *OrgHandler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp.Workspaces)
+	items := make([]map[string]any, 0, len(resp.Workspaces))
+	for _, item := range resp.Workspaces {
+		items = append(items, mapWorkspace(item))
+	}
+	writeData(w, http.StatusOK, items)
 }
 
 func (h *OrgHandler) GetDashboardStats(w http.ResponseWriter, r *http.Request) {
-	orgRef := chi.URLParam(r, "orgId")
-	orgID, _ := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 	resp, err := h.clients.Org.GetDashboardStats(r.Context(), &orgpb.GetDashboardStatsRequest{
 		OrgId: orgID, UserContext: h.userCtx(r),
 	})
@@ -547,11 +569,10 @@ func (h *OrgHandler) GetDashboardStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OrgHandler) GetDashboardTokenStats(w http.ResponseWriter, r *http.Request) {
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
-		OrgId:       orgSlug,
+		OrgId:       orgID,
 		UserContext: h.userCtx(r),
 	})
 	if err != nil {
@@ -863,11 +884,10 @@ func (h *OrgHandler) GetDashboardTokenStats(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *OrgHandler) GetDashboardWorkload(w http.ResponseWriter, r *http.Request) {
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
-		OrgId:       orgSlug,
+		OrgId:       orgID,
 		UserContext: h.userCtx(r),
 	})
 	if err != nil {
@@ -953,11 +973,10 @@ func (h *OrgHandler) GetDashboardWorkload(w http.ResponseWriter, r *http.Request
 }
 
 func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Request) {
-	orgRef := chi.URLParam(r, "orgId")
-	orgID, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
-		OrgId:       orgSlug,
+		OrgId:       orgID,
 		UserContext: h.userCtx(r),
 	})
 	if err != nil {
@@ -1141,11 +1160,11 @@ func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Reque
 
 func (h *OrgHandler) listOrgUsageViews(
 	r *http.Request,
-	orgSlug string,
+	orgID string,
 	params usageQueryParams,
 ) ([]orgUsageView, bool, error) {
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
-		OrgId:       orgSlug,
+		OrgId:       orgID,
 		UserContext: h.userCtx(r),
 	})
 	if err != nil {
@@ -1215,10 +1234,9 @@ func (h *OrgHandler) listOrgUsageViews(
 
 func (h *OrgHandler) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
-	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgID, params)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -1315,10 +1333,9 @@ func (h *OrgHandler) GetUsageOverview(w http.ResponseWriter, r *http.Request) {
 
 func (h *OrgHandler) GetUsageMetrics(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
-	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgID, params)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -1565,10 +1582,9 @@ func (h *OrgHandler) GetUsageMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (h *OrgHandler) GetUsageTokenTrend(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
-	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgID, params)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -1608,10 +1624,9 @@ func (h *OrgHandler) GetUsageTokenTrend(w http.ResponseWriter, r *http.Request) 
 
 func (h *OrgHandler) GetUsageProviders(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
-	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgID, params)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -1664,10 +1679,9 @@ func (h *OrgHandler) GetUsageProviders(w http.ResponseWriter, r *http.Request) {
 
 func (h *OrgHandler) GetUsageAgentRanking(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
-	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgID, params)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -1724,10 +1738,9 @@ func (h *OrgHandler) GetUsageAgentRanking(w http.ResponseWriter, r *http.Request
 
 func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 	params := parseUsageQueryParams(r)
-	orgRef := chi.URLParam(r, "orgId")
-	_, orgSlug := h.resolveOrgIdentity(r, orgRef)
+	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 
-	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgSlug, params)
+	views, matchedWorkspace, err := h.listOrgUsageViews(r, orgID, params)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -1775,7 +1788,7 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		if isPluginNDJSONFormat(params.format) {
 			fileName := fmt.Sprintf(
 				"org-plugin-usage-events-%s-%s.ndjson",
-				orgSlug,
+				orgID,
 				time.Now().UTC().Format("20060102-150405"),
 			)
 			w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -1802,7 +1815,7 @@ func (h *OrgHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 	if params.format == "csv" {
 		fileName := fmt.Sprintf(
 			"org-usage-records-%s-%s.csv",
-			orgSlug,
+			orgID,
 			time.Now().UTC().Format("20060102-150405"),
 		)
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")

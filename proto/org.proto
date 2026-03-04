@@ -16,7 +16,7 @@ service OrgService {
 }
 
 message GetOrgRequest {
-  string slug = 1;
+  string org_id = 1;
   common.UserContext user_context = 2;
 }
 
@@ -29,7 +29,7 @@ message ListOrgsResponse {
 }
 
 message UpdateOrgRequest {
-  string slug = 1;
+  string org_id = 1;
   string name = 2;
   string avatar_url = 3;
   common.UserContext user_context = 4;

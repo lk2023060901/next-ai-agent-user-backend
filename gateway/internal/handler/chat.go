@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -51,10 +52,6 @@ func sessionMap(s *chatpb.Session) map[string]any {
 }
 
 func agentMap(a *chatpb.AgentItem) map[string]any {
-	tools := a.Tools
-	if tools == nil {
-		tools = []string{}
-	}
 	knowledgeBases := a.KnowledgeBases
 	if knowledgeBases == nil {
 		knowledgeBases = []string{}
@@ -70,10 +67,9 @@ func agentMap(a *chatpb.AgentItem) map[string]any {
 		"model":          a.Model,
 		"description":    a.Description,
 		"systemPrompt":   a.SystemPrompt,
-		"temperature":    a.Temperature,
-		"outputFormat":   a.OutputFormat,
-		"tools":          tools,
 		"knowledgeBases": knowledgeBases,
+		"config":         decodeAgentConfig(a.ConfigJson),
+		"configJson":     a.ConfigJson,
 		"createdAt":      a.CreatedAt,
 		"updatedAt":      a.UpdatedAt,
 	}
@@ -81,6 +77,36 @@ func agentMap(a *chatpb.AgentItem) map[string]any {
 		out["modelId"] = a.ModelId
 	}
 	return out
+}
+
+func decodeAgentConfig(raw string) map[string]any {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return map[string]any{}
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return map[string]any{}
+	}
+	return parsed
+}
+
+func resolveAgentConfigJSON(config json.RawMessage, configJSON *string) (normalized string, hasValue bool, err error) {
+	if len(config) > 0 {
+		trimmed := bytes.TrimSpace(config)
+		if len(trimmed) == 0 {
+			return "", false, nil
+		}
+		return string(trimmed), true, nil
+	}
+	if configJSON != nil {
+		trimmed := strings.TrimSpace(*configJSON)
+		if trimmed == "" {
+			return "{}", true, nil
+		}
+		return trimmed, true, nil
+	}
+	return "", false, nil
 }
 
 func messageMap(m *chatpb.ChatMessage) map[string]any {
@@ -658,21 +684,28 @@ func (h *ChatHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 
 func (h *ChatHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name           string   `json:"name"`
-		Role           string   `json:"role"`
-		Model          string   `json:"model"`
-		ModelID        string   `json:"modelId"`
-		Color          string   `json:"color"`
-		Description    string   `json:"description"`
-		SystemPrompt   string   `json:"systemPrompt"`
-		Temperature    float64  `json:"temperature"`
-		OutputFormat   string   `json:"outputFormat"`
-		Tools          []string `json:"tools"`
-		KnowledgeBases []string `json:"knowledgeBases"`
+		Name           string          `json:"name"`
+		Role           string          `json:"role"`
+		Model          string          `json:"model"`
+		ModelID        string          `json:"modelId"`
+		Color          string          `json:"color"`
+		Description    string          `json:"description"`
+		SystemPrompt   string          `json:"systemPrompt"`
+		KnowledgeBases []string        `json:"knowledgeBases"`
+		Config         json.RawMessage `json:"config"`
+		ConfigJSON     *string         `json:"configJson"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	configJSON, hasConfig, err := resolveAgentConfigJSON(body.Config, body.ConfigJSON)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !hasConfig {
+		configJSON = "{}"
 	}
 	resp, err := h.clients.Chat.CreateAgent(r.Context(), &chatpb.CreateAgentRequest{
 		WorkspaceId:    chi.URLParam(r, "wsId"),
@@ -683,10 +716,8 @@ func (h *ChatHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		Color:          body.Color,
 		Description:    body.Description,
 		SystemPrompt:   body.SystemPrompt,
-		Temperature:    body.Temperature,
-		OutputFormat:   body.OutputFormat,
-		Tools:          body.Tools,
 		KnowledgeBases: body.KnowledgeBases,
+		ConfigJson:     configJSON,
 		UserContext:    h.userCtx(r),
 	})
 	if err != nil {
@@ -709,36 +740,39 @@ func (h *ChatHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *ChatHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name           string   `json:"name"`
-		Role           string   `json:"role"`
-		Model          string   `json:"model"`
-		ModelID        string   `json:"modelId"`
-		Color          string   `json:"color"`
-		Description    string   `json:"description"`
-		SystemPrompt   string   `json:"systemPrompt"`
-		Temperature    float64  `json:"temperature"`
-		OutputFormat   string   `json:"outputFormat"`
-		Tools          []string `json:"tools"`
-		KnowledgeBases []string `json:"knowledgeBases"`
+		Name           string          `json:"name"`
+		Role           string          `json:"role"`
+		Model          string          `json:"model"`
+		ModelID        string          `json:"modelId"`
+		Color          string          `json:"color"`
+		Description    string          `json:"description"`
+		SystemPrompt   string          `json:"systemPrompt"`
+		KnowledgeBases []string        `json:"knowledgeBases"`
+		Config         json.RawMessage `json:"config"`
+		ConfigJSON     *string         `json:"configJson"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	configJSON, hasConfig, err := resolveAgentConfigJSON(body.Config, body.ConfigJSON)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	resp, err := h.clients.Chat.UpdateAgent(r.Context(), &chatpb.UpdateAgentRequest{
-		Id:             chi.URLParam(r, "agentId"),
-		Name:           body.Name,
-		Role:           body.Role,
-		Model:          body.Model,
-		ModelId:        body.ModelID,
-		Color:          body.Color,
-		Description:    body.Description,
-		SystemPrompt:   body.SystemPrompt,
-		Temperature:    body.Temperature,
-		OutputFormat:   body.OutputFormat,
-		Tools:          body.Tools,
-		KnowledgeBases: body.KnowledgeBases,
-		UserContext:    h.userCtx(r),
+		Id:               chi.URLParam(r, "agentId"),
+		Name:             body.Name,
+		Role:             body.Role,
+		Model:            body.Model,
+		ModelId:          body.ModelID,
+		Color:            body.Color,
+		Description:      body.Description,
+		SystemPrompt:     body.SystemPrompt,
+		KnowledgeBases:   body.KnowledgeBases,
+		ConfigJson:       configJSON,
+		UpdateConfigJson: hasConfig,
+		UserContext:      h.userCtx(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)

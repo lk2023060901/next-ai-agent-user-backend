@@ -45,6 +45,10 @@ message WorkspaceSettings {
   repeated string code_model_ids = 9;
   repeated string agent_model_ids = 10;
   repeated string sub_agent_model_ids = 11;
+  string ocr_provider = 12;
+  string ocr_config_json = 13;
+  string document_processing_provider = 14;
+  string document_processing_config_json = 15;
 }
 
 message UpdateWorkspaceSettingsRequest {
@@ -62,6 +66,10 @@ message UpdateWorkspaceSettingsRequest {
   repeated string code_model_ids = 10;
   repeated string agent_model_ids = 11;
   repeated string sub_agent_model_ids = 12;
+  string ocr_provider = 23;
+  string ocr_config_json = 24;
+  string document_processing_provider = 25;
+  string document_processing_config_json = 26;
 
   bool set_name = 13;
   bool set_description = 14;
@@ -73,6 +81,10 @@ message UpdateWorkspaceSettingsRequest {
   bool set_code_model_ids = 20;
   bool set_agent_model_ids = 21;
   bool set_sub_agent_model_ids = 22;
+  bool set_ocr_provider = 27;
+  bool set_ocr_config_json = 28;
+  bool set_document_processing_provider = 29;
+  bool set_document_processing_config_json = 30;
 }
 
 message WorkspaceRequest {

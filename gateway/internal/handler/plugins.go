@@ -88,6 +88,19 @@ func pluginConfigFieldMap(field *chatpb.PluginConfigField) map[string]any {
 }
 
 func pluginMap(item *chatpb.PluginItem) map[string]any {
+	tags := item.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	permissions := item.Permissions
+	if permissions == nil {
+		permissions = []string{}
+	}
+	screenshots := item.Screenshots
+	if screenshots == nil {
+		screenshots = []string{}
+	}
+
 	configSchema := make([]map[string]any, 0, len(item.ConfigSchema))
 	for _, field := range item.ConfigSchema {
 		configSchema = append(configSchema, pluginConfigFieldMap(field))
@@ -111,14 +124,17 @@ func pluginMap(item *chatpb.PluginItem) map[string]any {
 		"rating":          item.Rating,
 		"reviewCount":     item.ReviewCount,
 		"installCount":    item.InstallCount,
-		"tags":            item.Tags,
-		"permissions":     item.Permissions,
+		"tags":            tags,
+		"permissions":     permissions,
 		"configSchema":    configSchema,
-		"screenshots":     item.Screenshots,
+		"screenshots":     screenshots,
 		"publishedAt":     item.PublishedAt,
 		"updatedAt":       item.UpdatedAt,
 		"sourceType":      item.SourceType,
 		"sourceSpec":      item.SourceSpec,
+		"favoriteCount":   item.FavoriteCount,
+		"isFavorited":     item.IsFavorited,
+		"myRating":        item.MyRating,
 	}
 }
 
@@ -155,9 +171,11 @@ func pluginReviewMap(item *chatpb.PluginReview) map[string]any {
 		"id":         item.Id,
 		"pluginId":   item.PluginId,
 		"authorName": item.AuthorName,
+		"userId":     item.UserId,
 		"rating":     item.Rating,
 		"content":    item.Content,
 		"createdAt":  item.CreatedAt,
+		"updatedAt":  item.UpdatedAt,
 	}
 }
 
@@ -229,6 +247,52 @@ func (h *PluginHandler) ListPluginReviews(w http.ResponseWriter, r *http.Request
 		reviews[i] = pluginReviewMap(item)
 	}
 	writeData(w, http.StatusOK, reviews)
+}
+
+func (h *PluginHandler) SetPluginFavorite(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Favorited bool `json:"favorited"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.clients.Chat.SetPluginFavorite(r.Context(), &chatpb.SetPluginFavoriteRequest{
+		PluginId:    chi.URLParam(r, "pluginId"),
+		Favorited:   body.Favorited,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	writeData(w, http.StatusOK, pluginMap(resp))
+}
+
+func (h *PluginHandler) UpsertPluginReview(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Rating  float64 `json:"rating"`
+		Content string  `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	resp, err := h.clients.Chat.UpsertPluginReview(r.Context(), &chatpb.UpsertPluginReviewRequest{
+		PluginId:    chi.URLParam(r, "pluginId"),
+		Rating:      body.Rating,
+		Content:     strings.TrimSpace(body.Content),
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	writeData(w, http.StatusOK, pluginReviewMap(resp))
 }
 
 func (h *PluginHandler) ListWorkspacePlugins(w http.ResponseWriter, r *http.Request) {

@@ -92,6 +92,62 @@
       "when": 1772398800000,
       "tag": "0012_message_run_context",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1772456400000,
+      "tag": "0013_plugin_social_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1772457000000,
+      "tag": "0014_agent_config_json",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1772478000000,
+      "tag": "0015_drop_agent_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1772481600000,
+      "tag": "0016_drop_agent_legacy_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1772568000000,
+      "tag": "0017_kb_vector_storage_sqlite",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1772571600000,
+      "tag": "0018_kb_chunk_params",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1772575200000,
+      "tag": "0019_kb_advanced_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1772607600000,
+      "tag": "0020_workspace_processing_settings",
+      "breakpoints": true
     }
   ]
 }

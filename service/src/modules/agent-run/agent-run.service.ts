@@ -1,9 +1,8 @@
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db";
 import {
   agents,
-  agentTools,
   agentRuns,
   agentTasks,
   messages,
@@ -14,6 +13,13 @@ import {
   workspaces,
   workspaceSettings,
 } from "../../db/schema";
+import {
+  canStartAgentRun,
+  isCanonicalAgentStatus,
+  mapRunStatusToAgentStatus,
+  type CanonicalAgentStatus,
+} from "../agent-status";
+import { parseAgentConfigJson } from "../chat/agent-config";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,7 +31,6 @@ export interface AgentConfigResult {
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
-  toolIds: string[];
   toolAllowJson: string;
   toolDenyJson: string;
   fsAllowedPathsJson: string;
@@ -339,6 +344,8 @@ function resolveLlmCandidatesForAgent(params: {
   workspaceId: string;
   role?: string | null;
   modelId?: string | null;
+  primaryModelIdsOverride?: string[];
+  fallbackModelIdsOverride?: string[];
 }): ResolvedLlmConfig[] {
   const candidates: ResolvedLlmConfig[] = [];
   const seen = new Set<string>();
@@ -350,7 +357,11 @@ function resolveLlmCandidatesForAgent(params: {
     candidates.push(candidate);
   };
 
-  const primaryModelIds = getWorkspacePrimaryModelIdsForAgent(params.workspaceId, params.role);
+  const primaryModelIds = (
+    Array.isArray(params.primaryModelIdsOverride) && params.primaryModelIdsOverride.length > 0
+      ? params.primaryModelIdsOverride
+      : getWorkspacePrimaryModelIdsForAgent(params.workspaceId, params.role)
+  ).filter((modelId) => modelId.trim().length > 0);
   if (primaryModelIds.length === 0 && params.modelId) {
     primaryModelIds.push(params.modelId);
   } else if (params.modelId && !primaryModelIds.includes(params.modelId)) {
@@ -366,7 +377,11 @@ function resolveLlmCandidatesForAgent(params: {
     }
   }
 
-  const fallbackIds = getWorkspaceFallbackModelIds(params.workspaceId);
+  const fallbackIds = (
+    Array.isArray(params.fallbackModelIdsOverride) && params.fallbackModelIdsOverride.length > 0
+      ? params.fallbackModelIdsOverride
+      : getWorkspaceFallbackModelIds(params.workspaceId)
+  ).filter((modelId) => modelId.trim().length > 0);
   for (const fallbackModelId of fallbackIds) {
     try {
       pushCandidate(resolveLlmConfigForAgent(params.workspaceId, fallbackModelId));
@@ -417,6 +432,33 @@ function canTransitionRunStatus(currentStatus: string, nextStatus: string): bool
   const allowed = RUN_STATUS_TRANSITIONS[currentStatus];
   if (!allowed) return false;
   return allowed.has(nextStatus);
+}
+
+function setAgentStatus(agentId: string, status: CanonicalAgentStatus): void {
+  db.update(agents)
+    .set({
+      status,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(agents.id, agentId))
+    .run();
+}
+
+function hasOtherActiveRuns(agentId: string, excludingRunId?: string): boolean {
+  const conditions = [
+    eq(agentRuns.coordinatorAgentId, agentId),
+    inArray(agentRuns.status, ["pending", "running"]),
+  ];
+  if (excludingRunId) {
+    conditions.push(ne(agentRuns.id, excludingRunId));
+  }
+  const row = db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(and(...conditions))
+    .limit(1)
+    .get();
+  return Boolean(row);
 }
 
 function parseJsonObject(raw: string, fieldName: string): Record<string, unknown> {
@@ -738,13 +780,14 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
   if (!agent) {
     throw Object.assign(new Error("Agent not found"), { code: "NOT_FOUND" });
   }
+  const config = parseAgentConfigJson(agent.configJson);
 
-  const tools = db.select().from(agentTools).where(eq(agentTools.agentId, agentId)).all();
-  const toolIds = tools.map((t) => t.toolId);
   const llmCandidates = resolveLlmCandidatesForAgent({
     workspaceId: agent.workspaceId,
     role: agent.role,
     modelId: agent.modelId,
+    primaryModelIdsOverride: config.llm.primaryModelIds,
+    fallbackModelIdsOverride: config.llm.fallbackModelIds,
   });
   const llm = llmCandidates[0]!;
 
@@ -754,16 +797,15 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
     role: agent.role ?? "",
     model: llm.model,
     systemPrompt: agent.systemPrompt ?? "",
-    temperature: agent.temperature ?? 0.7,
-    maxTokens: agent.maxTokens ?? 4096,
-    toolIds,
-    toolAllowJson: "[]",
-    toolDenyJson: "[]",
-    fsAllowedPathsJson: "[]",
-    execAllowedCommandsJson: "[]",
-    maxTurns: 20,
-    maxSpawnDepth: 3,
-    timeoutMs: 300000,
+    temperature: 0.7,
+    maxTokens: config.runtime.maxTokens ?? agent.maxTokens ?? 4096,
+    toolAllowJson: JSON.stringify(config.toolPolicy.allow),
+    toolDenyJson: JSON.stringify(config.toolPolicy.deny),
+    fsAllowedPathsJson: JSON.stringify(config.sandbox.fsAllowedPaths),
+    execAllowedCommandsJson: JSON.stringify(config.sandbox.execAllowedCommands),
+    maxTurns: config.sandbox.maxTurns,
+    maxSpawnDepth: config.sandbox.maxSpawnDepth,
+    timeoutMs: config.sandbox.timeoutMs,
     llmProviderType: llm.llmProviderType,
     llmBaseUrl: llm.llmBaseUrl,
     llmApiKey: llm.llmApiKey,
@@ -802,17 +844,27 @@ export function createRun(params: CreateRunParams): { runId: string } {
         { code: "INVALID_ARGUMENT" }
       );
     }
-    if ((coordinator.status ?? "active") !== "active") {
+    const coordinatorStatus = String(coordinator.status ?? "").trim().toLowerCase();
+    if (!isCanonicalAgentStatus(coordinatorStatus)) {
       throw Object.assign(
-        new Error("Coordinator agent is not active"),
+        new Error(`Coordinator agent has invalid status: ${coordinator.status ?? ""}`),
         { code: "INVALID_ARGUMENT" }
       );
     }
+    if (!canStartAgentRun(coordinatorStatus)) {
+      throw Object.assign(
+        new Error("Coordinator agent is paused"),
+        { code: "INVALID_ARGUMENT" }
+      );
+    }
+    const coordinatorConfig = parseAgentConfigJson(coordinator.configJson);
     // Fail fast before creating the run when model/provider configuration is invalid.
     resolveLlmCandidatesForAgent({
       workspaceId: params.workspaceId,
       role: coordinator.role,
       modelId: coordinator.modelId,
+      primaryModelIdsOverride: coordinatorConfig.llm.primaryModelIds,
+      fallbackModelIdsOverride: coordinatorConfig.llm.fallbackModelIds,
     });
   }
 
@@ -827,6 +879,10 @@ export function createRun(params: CreateRunParams): { runId: string } {
       status: "pending",
     })
     .run();
+
+  if (params.coordinatorAgentId) {
+    setAgentStatus(params.coordinatorAgentId, "running");
+  }
 
   return { runId };
 }
@@ -1016,6 +1072,16 @@ export function updateRunStatus(runId: string, status: string): void {
     .set(patch)
     .where(eq(agentRuns.id, runId))
     .run();
+
+  const coordinatorAgentId = (run.coordinatorAgentId ?? "").trim();
+  if (coordinatorAgentId.length > 0) {
+    const mappedStatus = mapRunStatusToAgentStatus(nextStatus);
+    const nextAgentStatus =
+      mappedStatus !== "running" && hasOtherActiveRuns(coordinatorAgentId, runId)
+        ? "running"
+        : mappedStatus;
+    setAgentStatus(coordinatorAgentId, nextAgentStatus);
+  }
 
   if (["completed", "failed", "cancelled"].includes(nextStatus)) {
     upsertRunUsageLedgerRecord(runId, nextStatus);

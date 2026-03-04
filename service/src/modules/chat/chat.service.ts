@@ -7,13 +7,13 @@ import {
   reportPluginUsageEvents,
   type ReportPluginUsageEventInput,
 } from "../agent-run/agent-run.service";
+import { normalizeAgentConfigJson, parseAgentConfigJson } from "./agent-config";
 import {
   chatSessions,
   messages,
   agents,
   aiModels,
   aiProviders,
-  agentTools,
   agentKnowledgeBases,
 } from "../../db/schema";
 
@@ -39,6 +39,17 @@ function uniqueIds(values: string[] | undefined): string[] {
   return [...new Set(values.map((v) => v.trim()).filter((v) => v.length > 0))];
 }
 
+function validateAgentConfigModelBindings(workspaceId: string, configJson: string) {
+  const config = parseAgentConfigJson(configJson);
+  const configuredModelIds = new Set([
+    ...config.llm.primaryModelIds,
+    ...config.llm.fallbackModelIds,
+  ]);
+  for (const modelId of configuredModelIds) {
+    resolveWorkspaceModel(workspaceId, modelId);
+  }
+}
+
 function hydrateAgents(rows: Array<typeof agents.$inferSelect>) {
   if (rows.length === 0) return [];
 
@@ -49,15 +60,7 @@ function hydrateAgents(rows: Array<typeof agents.$inferSelect>) {
   const modelNameById = new Map(modelRows.map((m) => [m.id, m.name]));
 
   const agentIds = rows.map((a) => a.id);
-  const toolRows = db.select().from(agentTools).where(inArray(agentTools.agentId, agentIds)).all();
   const kbRows = db.select().from(agentKnowledgeBases).where(inArray(agentKnowledgeBases.agentId, agentIds)).all();
-
-  const toolsByAgent = new Map<string, string[]>();
-  for (const t of toolRows) {
-    const cur = toolsByAgent.get(t.agentId) ?? [];
-    cur.push(t.toolId);
-    toolsByAgent.set(t.agentId, cur);
-  }
 
   const knowledgeByAgent = new Map<string, string[]>();
   for (const k of kbRows) {
@@ -69,20 +72,11 @@ function hydrateAgents(rows: Array<typeof agents.$inferSelect>) {
   return rows.map((a) => ({
     ...a,
     model: a.modelId ? (modelNameById.get(a.modelId) ?? a.model ?? "") : (a.model ?? ""),
-    tools: toolsByAgent.get(a.id) ?? [],
     knowledgeBases: knowledgeByAgent.get(a.id) ?? [],
   }));
 }
 
-function replaceAgentRelations(agentId: string, tools: string[] | undefined, knowledgeBases: string[] | undefined) {
-  if (tools !== undefined) {
-    db.delete(agentTools).where(eq(agentTools.agentId, agentId)).run();
-    const uniqTools = uniqueIds(tools);
-    if (uniqTools.length > 0) {
-      db.insert(agentTools).values(uniqTools.map((toolId) => ({ agentId, toolId }))).run();
-    }
-  }
-
+function replaceAgentRelations(agentId: string, knowledgeBases: string[] | undefined) {
   if (knowledgeBases !== undefined) {
     db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.agentId, agentId)).run();
     const uniqKnowledgeBases = uniqueIds(knowledgeBases);
@@ -363,15 +357,15 @@ export function createAgent(data: {
   color?: string;
   description?: string;
   systemPrompt?: string;
-  temperature?: number;
-  outputFormat?: string;
-  tools?: string[];
   knowledgeBases?: string[];
+  configJson?: string;
 }) {
   if (!data.modelId) {
     throw Object.assign(new Error("modelId is required"), { code: "INVALID_ARGUMENT" });
   }
   const { model } = resolveWorkspaceModel(data.workspaceId, data.modelId);
+  const normalizedConfigJson = normalizeAgentConfigJson(data.configJson);
+  validateAgentConfigModelBindings(data.workspaceId, normalizedConfigJson);
 
   const id = uuidv4();
   db.insert(agents)
@@ -385,12 +379,11 @@ export function createAgent(data: {
       color: data.color ?? null,
       description: data.description ?? null,
       systemPrompt: data.systemPrompt ?? null,
-      temperature: data.temperature ?? 0.7,
-      outputFormat: data.outputFormat ?? "text",
-      status: "active",
+      configJson: normalizedConfigJson,
+      status: "idle",
     })
     .run();
-  replaceAgentRelations(id, data.tools, data.knowledgeBases);
+  replaceAgentRelations(id, data.knowledgeBases);
   return getAgent(id);
 }
 
@@ -402,10 +395,8 @@ export function updateAgent(data: {
   color?: string;
   description?: string;
   systemPrompt?: string;
-  temperature?: number;
-  outputFormat?: string;
-  tools?: string[];
   knowledgeBases?: string[];
+  configJson?: string;
 }) {
   const current = db.select().from(agents).where(eq(agents.id, data.id)).get();
   if (!current) {
@@ -422,6 +413,10 @@ export function updateAgent(data: {
     const { model } = resolveWorkspaceModel(current.workspaceId, nextModelId);
     nextModelName = model.name;
   }
+  const nextConfigJson = data.configJson !== undefined
+    ? normalizeAgentConfigJson(data.configJson)
+    : current.configJson;
+  validateAgentConfigModelBindings(current.workspaceId, nextConfigJson);
 
   db.update(agents)
     .set({
@@ -432,14 +427,13 @@ export function updateAgent(data: {
       color: data.color || current.color || null,
       description: data.description ?? current.description ?? null,
       systemPrompt: data.systemPrompt ?? current.systemPrompt ?? null,
-      temperature: data.temperature && data.temperature > 0 ? data.temperature : (current.temperature ?? 0.7),
-      outputFormat: data.outputFormat || current.outputFormat || "text",
+      configJson: nextConfigJson,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(agents.id, data.id))
     .run();
 
-  replaceAgentRelations(data.id, data.tools, data.knowledgeBases);
+  replaceAgentRelations(data.id, data.knowledgeBases);
   return getAgent(data.id);
 }
 

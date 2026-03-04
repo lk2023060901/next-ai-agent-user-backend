@@ -40,7 +40,6 @@ export interface AgentConfig {
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
-  toolIds: string[];
   toolAllowJson: string;
   toolDenyJson: string;
   fsAllowedPathsJson: string;

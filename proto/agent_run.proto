@@ -30,7 +30,6 @@ message AgentConfig {
   string system_prompt = 5;
   float temperature = 6;
   int32 max_tokens = 7;
-  repeated string tool_ids = 8;
   string tool_allow_json = 9;
   string tool_deny_json = 10;
   string fs_allowed_paths_json = 11;

@@ -57,6 +57,13 @@ message Channel {
   string status = 5;
   string created_at = 6;
   string updated_at = 7;
+  int32 connected_channels = 8;
+  string last_active_at = 9;
+  bool realtime_connected = 10;
+  string connection_state = 11;
+  string connection_mode = 12;
+  string last_connected_at = 13;
+  string connection_last_error = 14;
 }
 
 message ListChannelsResponse {

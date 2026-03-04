@@ -253,6 +253,9 @@ message PluginItem {
   string updated_at = 23;
   string source_type = 24;
   string source_spec = 25;
+  int32 favorite_count = 26;
+  bool is_favorited = 27;
+  double my_rating = 28;
 }
 
 message PluginReview {
@@ -262,6 +265,8 @@ message PluginReview {
   double rating = 4;
   string content = 5;
   string created_at = 6;
+  string updated_at = 7;
+  string user_id = 8;
 }
 
 message WorkspaceInstalledPlugin {
@@ -305,6 +310,19 @@ message ListPluginReviewsRequest {
 
 message ListPluginReviewsResponse {
   repeated PluginReview reviews = 1;
+}
+
+message SetPluginFavoriteRequest {
+  string plugin_id = 1;
+  bool favorited = 2;
+  common.UserContext user_context = 3;
+}
+
+message UpsertPluginReviewRequest {
+  string plugin_id = 1;
+  double rating = 2;
+  string content = 3;
+  common.UserContext user_context = 4;
 }
 
 message ListWorkspacePluginsRequest {
@@ -364,8 +382,8 @@ message AgentItem {
   string system_prompt = 12;
   double temperature = 13;
   string output_format = 14;
-  repeated string tools = 15;
   repeated string knowledge_bases = 16;
+  string config_json = 17;
 }
 
 message ListAgentsRequest {
@@ -389,8 +407,8 @@ message CreateAgentRequest {
   string model_id = 9;
   double temperature = 10;
   string output_format = 11;
-  repeated string tools = 12;
   repeated string knowledge_bases = 13;
+  string config_json = 14;
 }
 
 message GetAgentRequest {
@@ -409,9 +427,10 @@ message UpdateAgentRequest {
   string system_prompt = 8;
   double temperature = 9;
   string output_format = 10;
-  repeated string tools = 11;
   repeated string knowledge_bases = 12;
   common.UserContext user_context = 13;
+  string config_json = 14;
+  bool update_config_json = 15;
 }
 
 message DeleteAgentRequest {
@@ -435,6 +454,8 @@ service ChatService {
   rpc ListMarketplacePlugins(ListMarketplacePluginsRequest) returns (ListMarketplacePluginsResponse);
   rpc GetMarketplacePlugin(GetMarketplacePluginRequest) returns (PluginItem);
   rpc ListPluginReviews(ListPluginReviewsRequest) returns (ListPluginReviewsResponse);
+  rpc SetPluginFavorite(SetPluginFavoriteRequest) returns (PluginItem);
+  rpc UpsertPluginReview(UpsertPluginReviewRequest) returns (PluginReview);
   rpc ListWorkspacePlugins(ListWorkspacePluginsRequest) returns (ListWorkspacePluginsResponse);
   rpc InstallWorkspacePlugin(InstallWorkspacePluginRequest) returns (WorkspaceInstalledPlugin);
   rpc UpdateWorkspacePlugin(UpdateWorkspacePluginRequest) returns (WorkspaceInstalledPlugin);

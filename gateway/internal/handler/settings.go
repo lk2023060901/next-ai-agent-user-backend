@@ -43,6 +43,21 @@ type modelView struct {
 	Enabled       bool     `json:"enabled"`
 }
 
+type flatModelView struct {
+	ModelID       string   `json:"modelId"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	DisplayName   string   `json:"displayName"`
+	ProviderID    string   `json:"providerId"`
+	ProviderName  string   `json:"providerName"`
+	ProviderType  string   `json:"providerType"`
+	ProviderIcon  string   `json:"providerIcon"`
+	Capabilities  []string `json:"capabilities"`
+	ContextWindow int32    `json:"contextWindow"`
+	InputPrice    float64  `json:"inputPrice"`
+	OutputPrice   float64  `json:"outputPrice"`
+}
+
 type modelSeriesView struct {
 	ID     string      `json:"id"`
 	Name   string      `json:"name"`
@@ -50,17 +65,21 @@ type modelSeriesView struct {
 }
 
 type workspaceSettingsView struct {
-	ID                  string  `json:"id"`
-	Name                string  `json:"name"`
-	Description         string  `json:"description"`
-	DefaultModel        string  `json:"defaultModel"`
-	DefaultTemperature  float64 `json:"defaultTemperature"`
-	MaxTokensPerRequest int32   `json:"maxTokensPerRequest"`
-	AssistantModelID    any     `json:"assistantModelId"`
-	FastModelID         any     `json:"fastModelId"`
-	CodeModelID         any     `json:"codeModelId"`
-	AgentModelID        any     `json:"agentModelId"`
-	SubAgentModelID     any     `json:"subAgentModelId"`
+	ID                         string  `json:"id"`
+	Name                       string  `json:"name"`
+	Description                string  `json:"description"`
+	DefaultModel               string  `json:"defaultModel"`
+	DefaultTemperature         float64 `json:"defaultTemperature"`
+	MaxTokensPerRequest        int32   `json:"maxTokensPerRequest"`
+	AssistantModelID           any     `json:"assistantModelId"`
+	FastModelID                any     `json:"fastModelId"`
+	CodeModelID                any     `json:"codeModelId"`
+	AgentModelID               any     `json:"agentModelId"`
+	SubAgentModelID            any     `json:"subAgentModelId"`
+	OcrProvider                string  `json:"ocrProvider"`
+	OcrConfig                  any     `json:"ocrConfig"`
+	DocumentProcessingProvider string  `json:"documentProcessingProvider"`
+	DocumentProcessingConfig   any     `json:"documentProcessingConfig"`
 }
 
 func NewSettingsHandler(clients *grpcclient.Clients) *SettingsHandler {
@@ -158,6 +177,137 @@ func mapSeriesToView(series []*settingspb.ModelSeries) []modelSeriesView {
 	return out
 }
 
+func inferFlatModelCapabilities(providerTypeRaw, modelNameRaw string) []string {
+	providerType := strings.ToLower(strings.TrimSpace(providerTypeRaw))
+	modelName := strings.ToLower(strings.TrimSpace(modelNameRaw))
+
+	caps := map[string]struct{}{
+		"text": {},
+	}
+	add := func(items ...string) {
+		for _, item := range items {
+			if item == "" {
+				continue
+			}
+			caps[item] = struct{}{}
+		}
+	}
+
+	if strings.Contains(modelName, "embedding") ||
+		strings.HasPrefix(modelName, "embed-") ||
+		strings.Contains(modelName, "-embed-") {
+		add("embedding")
+	}
+
+	switch providerType {
+	case "openai":
+		add("tools", "json")
+		if strings.HasPrefix(modelName, "gpt-5") ||
+			strings.HasPrefix(modelName, "gpt-4o") ||
+			strings.HasPrefix(modelName, "gpt-4.1") ||
+			strings.Contains(modelName, "vision") {
+			add("vision")
+		}
+		if strings.HasPrefix(modelName, "gpt-5") ||
+			strings.HasPrefix(modelName, "o1") ||
+			strings.HasPrefix(modelName, "o3") ||
+			strings.Contains(modelName, "reason") {
+			add("reasoning")
+		}
+	case "anthropic":
+		add("vision", "tools", "reasoning")
+		if strings.Contains(modelName, "claude-opus-4") ||
+			strings.Contains(modelName, "claude-sonnet-4") ||
+			strings.Contains(modelName, "claude-3-7-sonnet") {
+			add("computer_use")
+		}
+	case "zhipu":
+		add("tools", "reasoning", "json")
+	case "qwen":
+		add("tools", "reasoning", "json")
+		if strings.HasPrefix(modelName, "qwen3.5-plus") ||
+			strings.HasPrefix(modelName, "qwen-vl") ||
+			strings.Contains(modelName, "-vl") {
+			add("vision")
+		}
+	case "google":
+		add("vision", "tools")
+	case "deepseek":
+		add("tools")
+		if strings.Contains(modelName, "reasoner") || strings.Contains(modelName, "r1") {
+			add("reasoning")
+		}
+	default:
+		if strings.Contains(modelName, "vision") || strings.Contains(modelName, "-vl") {
+			add("vision")
+		}
+		if strings.Contains(modelName, "reason") || strings.Contains(modelName, "thinking") {
+			add("reasoning")
+		}
+		if strings.Contains(modelName, "tool") || strings.Contains(modelName, "function") {
+			add("tools")
+		}
+	}
+
+	ordered := []string{
+		"text",
+		"embedding",
+		"vision",
+		"tools",
+		"reasoning",
+		"json",
+		"computer_use",
+	}
+	out := make([]string, 0, len(caps))
+	for _, key := range ordered {
+		if _, ok := caps[key]; ok {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+func mapAllModelsToFlat(models []*settingspb.Model, providers map[string]*settingspb.Provider) []flatModelView {
+	out := make([]flatModelView, 0, len(models))
+	for _, m := range models {
+		if m == nil {
+			continue
+		}
+		provider := providers[m.GetProviderId()]
+		providerName := ""
+		providerType := ""
+		providerIcon := "⚙️"
+		if provider != nil {
+			providerName = provider.GetName()
+			providerType = provider.GetType()
+			icon, _, _ := providerDefaults(providerType)
+			providerIcon = icon
+		}
+		if providerName == "" {
+			providerName = "Unknown Provider"
+		}
+		if providerType == "" {
+			providerType = "custom"
+		}
+		price := m.GetCostPer_1KTokens()
+		out = append(out, flatModelView{
+			ModelID:       m.GetId(),
+			ID:            m.GetId(),
+			Name:          m.GetName(),
+			DisplayName:   m.GetName(),
+			ProviderID:    m.GetProviderId(),
+			ProviderName:  providerName,
+			ProviderType:  providerType,
+			ProviderIcon:  providerIcon,
+			Capabilities:  inferFlatModelCapabilities(providerType, m.GetName()),
+			ContextWindow: m.GetContextWindow(),
+			InputPrice:    price,
+			OutputPrice:   price,
+		})
+	}
+	return out
+}
+
 func (h *SettingsHandler) userCtx(r *http.Request) *commonpb.UserContext {
 	u, _ := middleware.GetUser(r)
 	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
@@ -181,18 +331,33 @@ func modelFieldValue(ids []string) any {
 }
 
 func mapWorkspaceSettingsToView(resp *settingspb.WorkspaceSettings) workspaceSettingsView {
+	parseJSONMap := func(raw string, fallback map[string]any) map[string]any {
+		if strings.TrimSpace(raw) == "" {
+			return fallback
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil || parsed == nil {
+			return fallback
+		}
+		return parsed
+	}
+
 	return workspaceSettingsView{
-		ID:                  resp.GetId(),
-		Name:                resp.GetName(),
-		Description:         resp.GetDescription(),
-		DefaultModel:        resp.GetDefaultModel(),
-		DefaultTemperature:  resp.GetDefaultTemperature(),
-		MaxTokensPerRequest: resp.GetMaxTokensPerRequest(),
-		AssistantModelID:    modelFieldValue(resp.GetAssistantModelIds()),
-		FastModelID:         modelFieldValue(resp.GetFallbackModelIds()),
-		CodeModelID:         modelFieldValue(resp.GetCodeModelIds()),
-		AgentModelID:        modelFieldValue(resp.GetAgentModelIds()),
-		SubAgentModelID:     modelFieldValue(resp.GetSubAgentModelIds()),
+		ID:                         resp.GetId(),
+		Name:                       resp.GetName(),
+		Description:                resp.GetDescription(),
+		DefaultModel:               resp.GetDefaultModel(),
+		DefaultTemperature:         resp.GetDefaultTemperature(),
+		MaxTokensPerRequest:        resp.GetMaxTokensPerRequest(),
+		AssistantModelID:           modelFieldValue(resp.GetAssistantModelIds()),
+		FastModelID:                modelFieldValue(resp.GetFallbackModelIds()),
+		CodeModelID:                modelFieldValue(resp.GetCodeModelIds()),
+		AgentModelID:               modelFieldValue(resp.GetAgentModelIds()),
+		SubAgentModelID:            modelFieldValue(resp.GetSubAgentModelIds()),
+		OcrProvider:                resp.GetOcrProvider(),
+		OcrConfig:                  parseJSONMap(resp.GetOcrConfigJson(), map[string]any{}),
+		DocumentProcessingProvider: resp.GetDocumentProcessingProvider(),
+		DocumentProcessingConfig:   parseJSONMap(resp.GetDocumentProcessingConfigJson(), map[string]any{}),
 	}
 }
 
@@ -293,6 +458,28 @@ func readStringListField(body map[string]any, key string) ([]string, bool) {
 	}
 }
 
+func readObjectJSONField(body map[string]any, key string) (string, bool) {
+	raw, ok := body[key]
+	if !ok {
+		return "", false
+	}
+	if raw == nil {
+		return "{}", true
+	}
+	if s, ok := raw.(string); ok {
+		trimmed := strings.TrimSpace(s)
+		if trimmed == "" {
+			return "{}", true
+		}
+		return trimmed, true
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return "{}", true
+	}
+	return string(encoded), true
+}
+
 // ── Workspace Settings ───────────────────────────────────────────────────────
 
 func (h *SettingsHandler) GetWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +542,22 @@ func (h *SettingsHandler) UpdateWorkspaceSettings(w http.ResponseWriter, r *http
 	if value, ok := readStringListField(body, "subAgentModelId"); ok {
 		req.SubAgentModelIds = value
 		req.SetSubAgentModelIds = true
+	}
+	if value, ok := readStringField(body, "ocrProvider"); ok {
+		req.OcrProvider = value
+		req.SetOcrProvider = true
+	}
+	if value, ok := readObjectJSONField(body, "ocrConfig"); ok {
+		req.OcrConfigJson = value
+		req.SetOcrConfigJson = true
+	}
+	if value, ok := readStringField(body, "documentProcessingProvider"); ok {
+		req.DocumentProcessingProvider = value
+		req.SetDocumentProcessingProvider = true
+	}
+	if value, ok := readObjectJSONField(body, "documentProcessingConfig"); ok {
+		req.DocumentProcessingConfigJson = value
+		req.SetDocumentProcessingConfigJson = true
 	}
 
 	resp, err := h.clients.Settings.UpdateWorkspaceSettings(r.Context(), req)
@@ -510,7 +713,20 @@ func (h *SettingsHandler) ListAllModels(w http.ResponseWriter, r *http.Request) 
 		writeGRPCError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, resp.Models)
+	providersResp, err := h.clients.Settings.ListProviders(r.Context(), h.wsReq(r))
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	providerMap := make(map[string]*settingspb.Provider, len(providersResp.GetProviders()))
+	for _, p := range providersResp.GetProviders() {
+		if p == nil {
+			continue
+		}
+		providerMap[p.GetId()] = p
+	}
+	writeData(w, http.StatusOK, mapAllModelsToFlat(resp.GetModels(), providerMap))
 }
 
 func (h *SettingsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {

@@ -17,12 +17,22 @@ import {
   listApiKeys, createApiKey, deleteApiKey,
 } from "../modules/settings/settings.service";
 import {
-  listTools, listToolAuthorizations, upsertToolAuthorization,
+  listTools,
+  listToolAuthorizations,
+  upsertToolAuthorization,
+  listKnowledgeBases,
+  createKnowledgeBase,
+  updateKnowledgeBase,
+  deleteKnowledgeBase,
+  listKnowledgeBaseDocuments,
+  createKnowledgeBaseDocument,
+  deleteKnowledgeBaseDocument,
+  searchKnowledgeBase,
 } from "../modules/tools/tools.service";
 import {
   listChannels, getChannel, createChannel, updateChannel, deleteChannel,
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
-  handleWebhook, listChannelMessages, sendChannelMessage,
+  handleWebhook, listChannelMessages, sendChannelMessage, bootstrapChannelConnections, isSupportedChannelType,
 } from "../modules/channel/channel.service";
 import { getPlugin } from "../modules/channel/plugins";
 import {
@@ -44,6 +54,8 @@ import {
   installWorkspacePlugin,
   listMarketplacePlugins,
   listPluginReviews,
+  setPluginFavorite,
+  upsertPluginReview,
   listWorkspaceInstalledPlugins,
   listRuntimePluginLoadCandidates,
   reportRuntimePluginLoad,
@@ -160,6 +172,9 @@ function pluginItemToProto(item: PluginMarketplaceItem): Record<string, unknown>
     updatedAt: item.updatedAt,
     sourceType: item.sourceType ?? "",
     sourceSpec: item.sourceSpec ?? "",
+    favoriteCount: item.favoriteCount,
+    isFavorited: item.isFavorited,
+    myRating: item.myRating ?? 0,
   };
 }
 
@@ -184,6 +199,8 @@ function pluginReviewToProto(item: PluginReviewItem): Record<string, unknown> {
     rating: item.rating,
     content: item.content,
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    userId: item.userId,
   };
 }
 
@@ -250,12 +267,12 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     getOrg(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, getOrg(call.request.slug)); }
+      try { callback(null, getOrg(call.request.orgId)); }
       catch (err) { handleError(callback, err); }
     },
     updateOrg(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        callback(null, updateOrg(call.request.slug, { name: call.request.name, avatarUrl: call.request.avatarUrl }));
+        callback(null, updateOrg(call.request.orgId, { name: call.request.name, avatarUrl: call.request.avatarUrl }));
       } catch (err) { handleError(callback, err); }
     },
     listMembers(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -332,6 +349,10 @@ export function startGrpcServer(port: number): grpc.Server {
           codeModelIds: call.request.codeModelIds,
           agentModelIds: call.request.agentModelIds,
           subAgentModelIds: call.request.subAgentModelIds,
+          ocrProvider: call.request.ocrProvider,
+          ocrConfigJson: call.request.ocrConfigJson,
+          documentProcessingProvider: call.request.documentProcessingProvider,
+          documentProcessingConfigJson: call.request.documentProcessingConfigJson,
           setName: call.request.setName,
           setDescription: call.request.setDescription,
           setDefaultModel: call.request.setDefaultModel,
@@ -342,6 +363,10 @@ export function startGrpcServer(port: number): grpc.Server {
           setCodeModelIds: call.request.setCodeModelIds,
           setAgentModelIds: call.request.setAgentModelIds,
           setSubAgentModelIds: call.request.setSubAgentModelIds,
+          setOcrProvider: call.request.setOcrProvider,
+          setOcrConfigJson: call.request.setOcrConfigJson,
+          setDocumentProcessingProvider: call.request.setDocumentProcessingProvider,
+          setDocumentProcessingConfigJson: call.request.setDocumentProcessingConfigJson,
         }));
       } catch (err) { handleError(callback, err); }
     },
@@ -462,6 +487,104 @@ export function startGrpcServer(port: number): grpc.Server {
         }));
       } catch (err) { handleError(callback, err); }
     },
+    listKnowledgeBases(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try { callback(null, { knowledgeBases: listKnowledgeBases(call.request.workspaceId) }); }
+      catch (err) { handleError(callback, err); }
+    },
+    createKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, createKnowledgeBase({
+          workspaceId: call.request.workspaceId,
+          name: call.request.name,
+          embeddingModel: call.request.embeddingModel,
+          chunkSize: call.request.chunkSize,
+          chunkOverlap: call.request.chunkOverlap,
+          requestedDocumentChunks: call.request.requestedDocumentChunks,
+          documentProcessing: call.request.documentProcessing,
+          rerankerModel: call.request.rerankerModel,
+          ...(typeof call.request.matchingThreshold === "number"
+            && Number.isFinite(call.request.matchingThreshold)
+            && call.request.matchingThreshold >= 0
+            && call.request.matchingThreshold <= 1
+            ? { matchingThreshold: call.request.matchingThreshold }
+            : {}),
+        }));
+      } catch (err) { handleError(callback, err); }
+    },
+    updateKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, updateKnowledgeBase({
+          id: call.request.id,
+          name: call.request.name,
+          embeddingModel: call.request.embeddingModel,
+          ...(typeof call.request.chunkSize === "number" && call.request.chunkSize >= 0
+            ? { chunkSize: call.request.chunkSize }
+            : {}),
+          ...(typeof call.request.chunkOverlap === "number" && call.request.chunkOverlap >= 0
+            ? { chunkOverlap: call.request.chunkOverlap }
+            : {}),
+          ...(typeof call.request.requestedDocumentChunks === "number" && call.request.requestedDocumentChunks > 0
+            ? { requestedDocumentChunks: call.request.requestedDocumentChunks }
+            : {}),
+          ...(typeof call.request.documentProcessing === "string"
+            ? { documentProcessing: call.request.documentProcessing }
+            : {}),
+          ...(typeof call.request.rerankerModel === "string"
+            ? { rerankerModel: call.request.rerankerModel }
+            : {}),
+          ...(typeof call.request.matchingThreshold === "number"
+            && Number.isFinite(call.request.matchingThreshold)
+            && call.request.matchingThreshold >= 0
+            && call.request.matchingThreshold <= 1
+            ? { matchingThreshold: call.request.matchingThreshold }
+            : {}),
+        }));
+      } catch (err) { handleError(callback, err); }
+    },
+    deleteKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        deleteKnowledgeBase(call.request.id);
+        callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+    listKnowledgeBaseDocuments(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, {
+          documents: listKnowledgeBaseDocuments(call.request.id),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    createKnowledgeBaseDocument(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, createKnowledgeBaseDocument({
+          knowledgeBaseId: call.request.knowledgeBaseId,
+          name: call.request.name,
+          type: call.request.type,
+          size: call.request.size,
+          filePath: call.request.filePath,
+        }));
+      } catch (err) { handleError(callback, err); }
+    },
+    deleteKnowledgeBaseDocument(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        deleteKnowledgeBaseDocument({
+          knowledgeBaseId: call.request.knowledgeBaseId,
+          documentId: call.request.documentId,
+        });
+        callback(null, {});
+      } catch (err) { handleError(callback, err); }
+    },
+    async searchKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        callback(null, {
+          results: await searchKnowledgeBase({
+            knowledgeBaseId: call.request.knowledgeBaseId,
+            query: call.request.query,
+            topK: call.request.topK,
+          }),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
   });
 
   // ── Channels ──────────────────────────────────────────────────────────────
@@ -485,8 +608,14 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        const configJsonRaw = typeof call.request.configJson === "string"
+          ? call.request.configJson
+          : "";
+        const configJson = configJsonRaw.trim().length > 0 ? configJsonRaw : undefined;
         callback(null, updateChannel(call.request.channelId, {
-          name: call.request.name, status: call.request.status, configJson: call.request.configJson,
+          name: call.request.name,
+          status: call.request.status,
+          ...(configJson !== undefined ? { configJson } : {}),
         }));
       } catch (err) { handleError(callback, err); }
     },
@@ -533,8 +662,14 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async testConnection(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        const channelType = String(call.request.type ?? "").trim().toLowerCase();
+        if (!isSupportedChannelType(channelType)) {
+          throw Object.assign(new Error(`Unsupported channel type: ${channelType}`), {
+            code: "INVALID_ARGUMENT",
+          });
+        }
         const config = JSON.parse(call.request.configJson || '{}') as Record<string, string>;
-        const result = await getPlugin(call.request.type).testConnection(config);
+        const result = await getPlugin(channelType).testConnection(config);
         callback(null, { success: result.success, botName: result.botName ?? '', error: result.error ?? '' });
       } catch (err) { handleError(callback, err); }
     },
@@ -558,6 +693,7 @@ export function startGrpcServer(port: number): grpc.Server {
       if (err) throw err;
       console.log(`gRPC server listening on :${boundPort}`);
       bootstrapScheduler();
+      bootstrapChannelConnections();
     }
   );
 
@@ -624,7 +760,6 @@ export function startGrpcServer(port: number): grpc.Server {
           systemPrompt: result.systemPrompt,
           temperature: result.temperature,
           maxTokens: result.maxTokens,
-          toolIds: result.toolIds,
           toolAllowJson: result.toolAllowJson,
           toolDenyJson: result.toolDenyJson,
           fsAllowedPathsJson: result.fsAllowedPathsJson,
@@ -966,6 +1101,7 @@ export function startGrpcServer(port: number): grpc.Server {
           sort: call.request.sort,
           page: call.request.page,
           pageSize: call.request.pageSize,
+          currentUserId: String(call.request.userContext?.userId ?? ""),
         });
 
         callback(null, {
@@ -979,7 +1115,10 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async getMarketplacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        const plugin = await getMarketplacePlugin(call.request.pluginId);
+        const plugin = await getMarketplacePlugin(
+          call.request.pluginId,
+          String(call.request.userContext?.userId ?? ""),
+        );
         callback(null, pluginItemToProto(plugin));
       } catch (err) { handleError(callback, err); }
     },
@@ -987,6 +1126,27 @@ export function startGrpcServer(port: number): grpc.Server {
       try {
         const reviews = listPluginReviews(call.request.pluginId);
         callback(null, { reviews: reviews.map(pluginReviewToProto) });
+      } catch (err) { handleError(callback, err); }
+    },
+    async setPluginFavorite(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const plugin = await setPluginFavorite({
+          pluginId: String(call.request.pluginId ?? ""),
+          favorited: Boolean(call.request.favorited),
+          userId: String(call.request.userContext?.userId ?? ""),
+        });
+        callback(null, pluginItemToProto(plugin));
+      } catch (err) { handleError(callback, err); }
+    },
+    async upsertPluginReview(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const review = await upsertPluginReview({
+          pluginId: String(call.request.pluginId ?? ""),
+          rating: Number(call.request.rating ?? 0),
+          content: String(call.request.content ?? ""),
+          userId: String(call.request.userContext?.userId ?? ""),
+        });
+        callback(null, pluginReviewToProto(review));
       } catch (err) { handleError(callback, err); }
     },
     async listWorkspacePlugins(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -1056,10 +1216,8 @@ export function startGrpcServer(port: number): grpc.Server {
           color: call.request.color,
           description: call.request.description,
           systemPrompt: call.request.systemPrompt,
-          temperature: call.request.temperature,
-          outputFormat: call.request.outputFormat,
-          tools: call.request.tools,
           knowledgeBases: call.request.knowledgeBases,
+          configJson: call.request.configJson,
         }));
       } catch (err) { handleError(callback, err); }
     },
@@ -1077,10 +1235,8 @@ export function startGrpcServer(port: number): grpc.Server {
           color: call.request.color,
           description: call.request.description,
           systemPrompt: call.request.systemPrompt,
-          temperature: call.request.temperature,
-          outputFormat: call.request.outputFormat,
-          tools: call.request.tools,
           knowledgeBases: call.request.knowledgeBases,
+          ...(call.request.updateConfigJson ? { configJson: call.request.configJson } : {}),
         }));
       } catch (err) { handleError(callback, err); }
     },

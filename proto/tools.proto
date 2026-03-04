@@ -10,6 +10,14 @@ service ToolsService {
   rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
   rpc ListToolAuthorizations(WorkspaceRequest) returns (ListToolAuthorizationsResponse);
   rpc UpsertToolAuthorization(UpsertToolAuthRequest) returns (ToolAuthorization);
+  rpc ListKnowledgeBases(WorkspaceRequest) returns (ListKnowledgeBasesResponse);
+  rpc CreateKnowledgeBase(CreateKnowledgeBaseRequest) returns (KnowledgeBase);
+  rpc UpdateKnowledgeBase(UpdateKnowledgeBaseRequest) returns (KnowledgeBase);
+  rpc DeleteKnowledgeBase(DeleteKnowledgeBaseRequest) returns (Empty);
+  rpc ListKnowledgeBaseDocuments(GetKnowledgeBaseRequest) returns (ListKnowledgeBaseDocumentsResponse);
+  rpc CreateKnowledgeBaseDocument(CreateKnowledgeBaseDocumentRequest) returns (KnowledgeBaseDocument);
+  rpc DeleteKnowledgeBaseDocument(DeleteKnowledgeBaseDocumentRequest) returns (Empty);
+  rpc SearchKnowledgeBase(SearchKnowledgeBaseRequest) returns (SearchKnowledgeBaseResponse);
 }
 
 message WorkspaceRequest {
@@ -56,3 +64,113 @@ message UpsertToolAuthRequest {
   bool authorized = 3;
   common.UserContext user_context = 4;
 }
+
+message KnowledgeBase {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string embedding_model = 5;
+  int32 document_count = 6;
+  string created_at = 7;
+  string updated_at = 8;
+  int32 chunk_size = 9;
+  int32 chunk_overlap = 10;
+  int32 requested_document_chunks = 11;
+  string document_processing = 12;
+  string reranker_model = 13;
+  double matching_threshold = 14;
+}
+
+message ListKnowledgeBasesResponse {
+  repeated KnowledgeBase knowledge_bases = 1;
+}
+
+message CreateKnowledgeBaseRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string embedding_model = 4;
+  common.UserContext user_context = 5;
+  int32 chunk_size = 6;
+  int32 chunk_overlap = 7;
+  int32 requested_document_chunks = 8;
+  string document_processing = 9;
+  string reranker_model = 10;
+  double matching_threshold = 11;
+}
+
+message UpdateKnowledgeBaseRequest {
+  string id = 1;
+  string name = 2;
+  common.UserContext user_context = 4;
+  string embedding_model = 5;
+  int32 chunk_size = 6;
+  int32 chunk_overlap = 7;
+  int32 requested_document_chunks = 8;
+  string document_processing = 9;
+  string reranker_model = 10;
+  double matching_threshold = 11;
+}
+
+message DeleteKnowledgeBaseRequest {
+  string id = 1;
+  common.UserContext user_context = 2;
+}
+
+message GetKnowledgeBaseRequest {
+  string id = 1;
+  common.UserContext user_context = 2;
+}
+
+message KnowledgeBaseDocument {
+  string id = 1;
+  string knowledge_base_id = 2;
+  string name = 3;
+  string type = 4;
+  int64 size = 5;
+  string status = 6;
+  string file_path = 7;
+  int32 chunk_count = 8;
+  string created_at = 9;
+  string processed_at = 10;
+}
+
+message ListKnowledgeBaseDocumentsResponse {
+  repeated KnowledgeBaseDocument documents = 1;
+}
+
+message CreateKnowledgeBaseDocumentRequest {
+  string knowledge_base_id = 1;
+  string name = 2;
+  string type = 3;
+  int64 size = 4;
+  string file_path = 5;
+  common.UserContext user_context = 6;
+}
+
+message DeleteKnowledgeBaseDocumentRequest {
+  string knowledge_base_id = 1;
+  string document_id = 2;
+  common.UserContext user_context = 3;
+}
+
+message SearchKnowledgeBaseRequest {
+  string knowledge_base_id = 1;
+  string query = 2;
+  int32 top_k = 3;
+  common.UserContext user_context = 4;
+}
+
+message SearchResult {
+  string id = 1;
+  string document_id = 2;
+  string document_name = 3;
+  string content = 4;
+  double score = 5;
+  int32 chunk_index = 6;
+}
+
+message SearchKnowledgeBaseResponse {
+  repeated SearchResult results = 1;
+}
+
+message Empty {}

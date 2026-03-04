@@ -1,0 +1,12 @@
+{
+  "displayName": "Slack 渠道插件",
+  "longDescription": "安装后可在频道页面启用 Slack 渠道配置与连接。",
+  "tags": [
+    "channel",
+    "slack"
+  ],
+  "permissions": [],
+  "screenshots": [],
+  "publishedAt": "2026-03-01T00:00:00.000Z",
+  "updatedAt": "2026-03-01T00:00:00.000Z"
+}

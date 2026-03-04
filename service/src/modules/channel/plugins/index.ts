@@ -3,13 +3,15 @@ import { feishuPlugin } from './feishu'
 import { slackPlugin } from './slack'
 import { discordPlugin } from './discord'
 import { telegramPlugin } from './telegram'
-import { webchatPlugin } from './webchat'
+import { dingtalkPlugin } from './dingtalk'
+import { wecomPlugin } from './wecom'
 
 registerPlugin(feishuPlugin)
 registerPlugin(slackPlugin)
 registerPlugin(discordPlugin)
 registerPlugin(telegramPlugin)
-registerPlugin(webchatPlugin)
+registerPlugin(dingtalkPlugin)
+registerPlugin(wecomPlugin)
 
 export { getPlugin, listPlugins, hasPlugin } from './registry'
 export type { ChannelPlugin, ParsedMessage, TestResult } from './types'

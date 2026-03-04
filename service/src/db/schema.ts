@@ -82,25 +82,17 @@ export const agents = sqliteTable("agents", {
   name: text("name").notNull(),
   role: text("role"),
   color: text("color"),
-  status: text("status").notNull().default("active"),
+  status: text("status").notNull().default("idle"),
   // Source of truth for agent model selection.
   modelId: text("model_id")
     .references(() => aiModels.id, { onDelete: "set null" }),
   // Legacy denormalized display value; kept for backward compatibility.
   model: text("model"),
   systemPrompt: text("system_prompt"),
-  temperature: real("temperature").default(0.7),
   maxTokens: integer("max_tokens").default(4096),
-  outputFormat: text("output_format").default("text"),
   description: text("description"),
+  configJson: text("config_json").notNull().default("{}"),
   ...timestamps,
-});
-
-export const agentTools = sqliteTable("agent_tools", {
-  agentId: text("agent_id")
-    .notNull()
-    .references(() => agents.id, { onDelete: "cascade" }),
-  toolId: text("tool_id").notNull(),
 });
 
 export const agentKnowledgeBases = sqliteTable("agent_knowledge_bases", {
@@ -271,8 +263,13 @@ export const knowledgeBases = sqliteTable("knowledge_bases", {
     .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  description: text("description"),
   embeddingModel: text("embedding_model"),
+  chunkSize: integer("chunk_size").notNull().default(1200),
+  chunkOverlap: integer("chunk_overlap").notNull().default(200),
+  requestedDocumentChunks: integer("requested_document_chunks").notNull().default(5),
+  documentProcessing: text("document_processing"),
+  rerankerModel: text("reranker_model"),
+  matchingThreshold: real("matching_threshold"),
   documentCount: integer("document_count").notNull().default(0),
   ...timestamps,
 });
@@ -287,10 +284,34 @@ export const kbDocuments = sqliteTable("kb_documents", {
   size: integer("size"),
   status: text("status").notNull().default("processing"),
   filePath: text("file_path"),
+  chunkCount: integer("chunk_count").notNull().default(0),
+  processedAt: text("processed_at"),
+  errorMessage: text("error_message"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
 });
+
+export const kbDocumentChunks = sqliteTable("kb_document_chunks", {
+  id: text("id").primaryKey(),
+  knowledgeBaseId: text("knowledge_base_id")
+    .notNull()
+    .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  documentId: text("document_id")
+    .notNull()
+    .references(() => kbDocuments.id, { onDelete: "cascade" }),
+  chunkIndex: integer("chunk_index").notNull(),
+  content: text("content").notNull(),
+  embeddingJson: text("embedding_json").notNull(),
+  embeddingDim: integer("embedding_dim").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  byKnowledgeBase: index("kb_document_chunks_kb_idx").on(t.knowledgeBaseId),
+  byDocument: index("kb_document_chunks_doc_idx").on(t.documentId),
+  byKbDocumentChunk: index("kb_document_chunks_kb_doc_chunk_idx").on(t.knowledgeBaseId, t.documentId, t.chunkIndex),
+}));
 
 // ─── Channels ────────────────────────────────────────────────────────────────
 
@@ -381,6 +402,45 @@ export const installedPlugins = sqliteTable("installed_plugins", {
     .notNull()
     .default(sql`(datetime('now'))`),
 });
+
+export const pluginFavorites = sqliteTable("plugin_favorites", {
+  id: text("id").primaryKey(),
+  pluginId: text("plugin_id")
+    .notNull()
+    .references(() => plugins.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  uniqPluginUser: uniqueIndex("plugin_favorites_plugin_user_uniq").on(t.pluginId, t.userId),
+  byPlugin: index("plugin_favorites_plugin_idx").on(t.pluginId),
+  byUser: index("plugin_favorites_user_idx").on(t.userId),
+}));
+
+export const pluginReviews = sqliteTable("plugin_reviews", {
+  id: text("id").primaryKey(),
+  pluginId: text("plugin_id")
+    .notNull()
+    .references(() => plugins.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  rating: real("rating").notNull(),
+  content: text("content").notNull().default(""),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  uniqPluginUser: uniqueIndex("plugin_reviews_plugin_user_uniq").on(t.pluginId, t.userId),
+  byPlugin: index("plugin_reviews_plugin_idx").on(t.pluginId),
+  byUser: index("plugin_reviews_user_idx").on(t.userId),
+}));
 
 export const pluginInstallRecords = sqliteTable("plugin_install_records", {
   id: text("id").primaryKey(),
@@ -542,6 +602,10 @@ export const workspaceSettings = sqliteTable("workspace_settings", {
   codeModelIds: text("code_model_ids").default("[]"),
   agentModelIds: text("agent_model_ids").default("[]"),
   subAgentModelIds: text("sub_agent_model_ids").default("[]"),
+  ocrProvider: text("ocr_provider").default("system_ocr"),
+  ocrConfigJson: text("ocr_config_json").default("{}"),
+  documentProcessingProvider: text("document_processing_provider").default(""),
+  documentProcessingConfigJson: text("document_processing_config_json").default("{}"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

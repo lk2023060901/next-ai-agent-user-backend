@@ -23,7 +23,29 @@ export interface WorkspaceSettingsView {
   codeModelIds: string[];
   agentModelIds: string[];
   subAgentModelIds: string[];
+  ocrProvider: string;
+  ocrConfigJson: string;
+  documentProcessingProvider: string;
+  documentProcessingConfigJson: string;
 }
+
+const DEFAULT_OCR_PROVIDER = "system_ocr";
+const DEFAULT_DOCUMENT_PROCESSING_PROVIDER = "mineru";
+const SUPPORTED_OCR_PROVIDERS = new Set(["system_ocr", "tesseract", "paddleocr"]);
+const SUPPORTED_DOCUMENT_PROCESSING_PROVIDERS = new Set([
+  "mineru",
+  "doc2x",
+  "mistral",
+  "open_mineru",
+  "paddleocr",
+]);
+const DEFAULT_DOCUMENT_PROCESSING_CONFIG = {
+  mineru: { apiKey: "", apiHost: "https://mineru.net" },
+  doc2x: { apiKey: "", apiHost: "https://api.doc2x.noedgeai.com" },
+  mistral: { apiKey: "", apiHost: "https://api.mistral.ai" },
+  open_mineru: { apiKey: "", apiHost: "https://mineru.net" },
+  paddleocr: { token: "", apiHost: "" },
+} satisfies Record<string, unknown>;
 
 function parseModelIdList(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -52,6 +74,36 @@ function normalizeModelIdList(raw: string[] | undefined): string[] {
     dedup.add(normalized);
   }
   return Array.from(dedup);
+}
+
+function parseJsonObject(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw || raw.trim().length === 0) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function normalizeOcrProvider(raw: string | null | undefined): string {
+  const normalized = (raw ?? "").trim().toLowerCase();
+  if (!normalized) return DEFAULT_OCR_PROVIDER;
+  return SUPPORTED_OCR_PROVIDERS.has(normalized) ? normalized : DEFAULT_OCR_PROVIDER;
+}
+
+function normalizeDocumentProcessingProvider(raw: string | null | undefined): string {
+  const normalized = (raw ?? "").trim().toLowerCase();
+  if (SUPPORTED_DOCUMENT_PROCESSING_PROVIDERS.has(normalized)) {
+    return normalized;
+  }
+  return DEFAULT_DOCUMENT_PROCESSING_PROVIDER;
+}
+
+function normalizeConfigJson(raw: string | null | undefined, fallback: Record<string, unknown>): string {
+  const parsed = parseJsonObject(raw);
+  return JSON.stringify(Object.keys(parsed).length > 0 ? parsed : fallback);
 }
 
 function ensureWorkspaceSettingsRow(workspaceId: string) {
@@ -84,6 +136,10 @@ function ensureWorkspaceSettingsRow(workspaceId: string) {
         codeModelIds: "[]",
         agentModelIds: "[]",
         subAgentModelIds: "[]",
+        ocrProvider: DEFAULT_OCR_PROVIDER,
+        ocrConfigJson: "{}",
+        documentProcessingProvider: DEFAULT_DOCUMENT_PROCESSING_PROVIDER,
+        documentProcessingConfigJson: JSON.stringify(DEFAULT_DOCUMENT_PROCESSING_CONFIG),
       })
       .run();
     row = db
@@ -113,6 +169,13 @@ function toWorkspaceSettingsView(
     codeModelIds: parseModelIdList(row.codeModelIds),
     agentModelIds: parseModelIdList(row.agentModelIds),
     subAgentModelIds: parseModelIdList(row.subAgentModelIds),
+    ocrProvider: normalizeOcrProvider(row.ocrProvider),
+    ocrConfigJson: normalizeConfigJson(row.ocrConfigJson, {}),
+    documentProcessingProvider: normalizeDocumentProcessingProvider(row.documentProcessingProvider),
+    documentProcessingConfigJson: normalizeConfigJson(
+      row.documentProcessingConfigJson,
+      DEFAULT_DOCUMENT_PROCESSING_CONFIG,
+    ),
   };
 }
 
@@ -134,6 +197,10 @@ export function updateWorkspaceSettings(
     codeModelIds?: string[];
     agentModelIds?: string[];
     subAgentModelIds?: string[];
+    ocrProvider?: string;
+    ocrConfigJson?: string;
+    documentProcessingProvider?: string;
+    documentProcessingConfigJson?: string;
     setName?: boolean;
     setDescription?: boolean;
     setDefaultModel?: boolean;
@@ -144,6 +211,10 @@ export function updateWorkspaceSettings(
     setCodeModelIds?: boolean;
     setAgentModelIds?: boolean;
     setSubAgentModelIds?: boolean;
+    setOcrProvider?: boolean;
+    setOcrConfigJson?: boolean;
+    setDocumentProcessingProvider?: boolean;
+    setDocumentProcessingConfigJson?: boolean;
   },
 ): WorkspaceSettingsView {
   ensureWorkspaceSettingsRow(workspaceId);
@@ -181,6 +252,23 @@ export function updateWorkspaceSettings(
   }
   if (data.setSubAgentModelIds) {
     settingsPatch.subAgentModelIds = JSON.stringify(normalizeModelIdList(data.subAgentModelIds));
+  }
+  if (data.setOcrProvider) {
+    settingsPatch.ocrProvider = normalizeOcrProvider(data.ocrProvider);
+  }
+  if (data.setOcrConfigJson) {
+    settingsPatch.ocrConfigJson = normalizeConfigJson(data.ocrConfigJson, {});
+  }
+  if (data.setDocumentProcessingProvider) {
+    settingsPatch.documentProcessingProvider = normalizeDocumentProcessingProvider(
+      data.documentProcessingProvider,
+    );
+  }
+  if (data.setDocumentProcessingConfigJson) {
+    settingsPatch.documentProcessingConfigJson = normalizeConfigJson(
+      data.documentProcessingConfigJson,
+      DEFAULT_DOCUMENT_PROCESSING_CONFIG,
+    );
   }
   if (Object.keys(settingsPatch).length > 0) {
     settingsPatch.updatedAt = now;
@@ -543,6 +631,14 @@ function inferModelCapabilities(providerTypeRaw: string, modelNameRaw: string): 
     }
   };
 
+  if (
+    modelName.includes("embedding") ||
+    modelName.startsWith("embed-") ||
+    modelName.includes("-embed-")
+  ) {
+    add("embedding");
+  }
+
   switch (providerType) {
     case "openai": {
       add("tools", "json");
@@ -655,7 +751,7 @@ export function listAllModels(workspaceId: string) {
   const providerIds = db
     .select({ id: aiProviders.id })
     .from(aiProviders)
-    .where(eq(aiProviders.workspaceId, workspaceId))
+    .where(and(eq(aiProviders.workspaceId, workspaceId), eq(aiProviders.status, "active")))
     .all()
     .map((p) => p.id);
 

@@ -12,6 +12,19 @@ import {
   agentRuns,
 } from "../../db/schema";
 
+function resolveOrgByRef(orgRef: string) {
+  const ref = (orgRef ?? "").trim();
+  if (!ref) throw Object.assign(new Error("Organization not found"), { code: "NOT_FOUND" });
+
+  const byId = db.select().from(organizations).where(eq(organizations.id, ref)).get();
+  if (byId) return byId;
+
+  const bySlug = db.select().from(organizations).where(eq(organizations.slug, ref)).get();
+  if (bySlug) return bySlug;
+
+  throw Object.assign(new Error("Organization not found"), { code: "NOT_FOUND" });
+}
+
 export function listOrgs(userId: string) {
   const memberRows = db
     .select({ orgId: orgMembers.orgId })
@@ -25,15 +38,12 @@ export function listOrgs(userId: string) {
   );
 }
 
-export function getOrg(slug: string) {
-  const org = db.select().from(organizations).where(eq(organizations.slug, slug)).get();
-  if (!org) throw Object.assign(new Error("Organization not found"), { code: "NOT_FOUND" });
-  return org;
+export function getOrg(orgRef: string) {
+  return resolveOrgByRef(orgRef);
 }
 
-export function updateOrg(slug: string, data: { name?: string; avatarUrl?: string }) {
-  const org = db.select().from(organizations).where(eq(organizations.slug, slug)).get();
-  if (!org) throw Object.assign(new Error("Organization not found"), { code: "NOT_FOUND" });
+export function updateOrg(orgRef: string, data: { name?: string; avatarUrl?: string }) {
+  const org = resolveOrgByRef(orgRef);
 
   db.update(organizations)
     .set({
@@ -41,15 +51,14 @@ export function updateOrg(slug: string, data: { name?: string; avatarUrl?: strin
       ...(data.avatarUrl !== undefined && { avatarUrl: data.avatarUrl }),
       updatedAt: new Date().toISOString(),
     })
-    .where(eq(organizations.slug, slug))
+    .where(eq(organizations.id, org.id))
     .run();
 
-  return db.select().from(organizations).where(eq(organizations.slug, slug)).get()!;
+  return db.select().from(organizations).where(eq(organizations.id, org.id)).get()!;
 }
 
-export function listMembers(orgSlug: string) {
-  const org = db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, orgSlug)).get();
-  if (!org) return [];
+export function listMembers(orgRef: string) {
+  const org = resolveOrgByRef(orgRef);
   return db
     .select({
       id: orgMembers.id,
@@ -66,17 +75,17 @@ export function listMembers(orgSlug: string) {
     .all();
 }
 
-export function listWorkspaces(orgSlug: string) {
-  const org = db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, orgSlug)).get();
-  if (!org) return [];
+export function listWorkspaces(orgRef: string) {
+  const org = resolveOrgByRef(orgRef);
   return db.select().from(workspaces).where(eq(workspaces.orgId, org.id)).all();
 }
 
-export function getDashboardStats(orgId: string) {
+export function getDashboardStats(orgRef: string) {
+  const org = resolveOrgByRef(orgRef);
   const wsIds = db
     .select({ id: workspaces.id })
     .from(workspaces)
-    .where(eq(workspaces.orgId, orgId))
+    .where(eq(workspaces.orgId, org.id))
     .all()
     .map((w) => w.id);
 

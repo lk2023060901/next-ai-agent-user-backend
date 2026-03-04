@@ -52,7 +52,11 @@ func writeGRPCError(w http.ResponseWriter, err error) {
 		return
 	}
 	httpCode := grpcCodeToHTTP(st.Code())
-	writeError(w, httpCode, st.Message())
+	writeJSON(w, httpCode, map[string]string{
+		"error":   st.Message(),
+		"code":    st.Code().String(),
+		"message": st.Message(),
+	})
 }
 
 func grpcCodeToHTTP(code codes.Code) int {
