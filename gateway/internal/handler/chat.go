@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -137,6 +138,71 @@ func normalizeJSONObject(raw json.RawMessage, fieldName string) (string, error) 
 		return "", fmt.Errorf("%s must be valid JSON object", fieldName)
 	}
 	return string(normalized), nil
+}
+
+func decodeJSONMap(raw string) map[string]any {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return map[string]any{}
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return map[string]any{}
+	}
+	return parsed
+}
+
+func workflowMap(item *chatpb.WorkflowItem) map[string]any {
+	return map[string]any{
+		"id":          item.Id,
+		"workspaceId": item.WorkspaceId,
+		"name":        item.Name,
+		"description": item.Description,
+		"status":      item.Status,
+		"specVersion": item.SpecVersion,
+		"revision":    item.Revision,
+		"data":        decodeJSONMap(item.DataJson),
+		"createdAt":   item.CreatedAt,
+		"updatedAt":   item.UpdatedAt,
+	}
+}
+
+func blueprintNodeMap(node *chatpb.BlueprintNodeEntry) map[string]any {
+	return map[string]any{
+		"id":       node.Id,
+		"kind":     node.Kind,
+		"data":     decodeJSONMap(node.DataJson),
+		"position": map[string]any{"x": node.X, "y": node.Y},
+	}
+}
+
+func blueprintConnectionMap(conn *chatpb.BlueprintConnection) map[string]any {
+	return map[string]any{
+		"id":           conn.Id,
+		"sourceNodeId": conn.SourceNodeId,
+		"sourcePortId": conn.SourcePortId,
+		"targetNodeId": conn.TargetNodeId,
+		"targetPortId": conn.TargetPortId,
+		"portType":     conn.PortType,
+	}
+}
+
+func blueprintMap(item *chatpb.BlueprintData) map[string]any {
+	nodes := make([]map[string]any, len(item.Nodes))
+	for i, node := range item.Nodes {
+		nodes[i] = blueprintNodeMap(node)
+	}
+	connections := make([]map[string]any, len(item.Connections))
+	for i, conn := range item.Connections {
+		connections[i] = blueprintConnectionMap(conn)
+	}
+	return map[string]any{
+		"id":          item.Id,
+		"workspaceId": item.WorkspaceId,
+		"nodes":       nodes,
+		"connections": connections,
+		"updatedAt":   item.UpdatedAt,
+	}
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
@@ -790,4 +856,289 @@ func (h *ChatHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Workflows ───────────────────────────────────────────────────────────────
+
+func (h *ChatHandler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.clients.Chat.ListWorkflows(r.Context(), &chatpb.ListWorkflowsRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	items := make([]map[string]any, len(resp.Workflows))
+	for i, item := range resp.Workflows {
+		items[i] = workflowMap(item)
+	}
+	writeData(w, http.StatusOK, items)
+}
+
+func (h *ChatHandler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Status      string          `json:"status"`
+		Data        json.RawMessage `json:"data"`
+		DataJSON    *string         `json:"dataJson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	dataJSON := ""
+	if len(body.Data) > 0 {
+		normalized, err := normalizeJSONObject(body.Data, "data")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		dataJSON = normalized
+	} else if body.DataJSON != nil {
+		dataJSON = strings.TrimSpace(*body.DataJSON)
+	}
+
+	resp, err := h.clients.Chat.CreateWorkflow(r.Context(), &chatpb.CreateWorkflowRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		Name:        body.Name,
+		Description: body.Description,
+		Status:      body.Status,
+		DataJson:    dataJSON,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusCreated, workflowMap(resp))
+}
+
+func (h *ChatHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.clients.Chat.GetWorkflow(r.Context(), &chatpb.GetWorkflowRequest{
+		WorkflowId:  chi.URLParam(r, "workflowId"),
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, workflowMap(resp))
+}
+
+func (h *ChatHandler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        *string         `json:"name"`
+		Description *string         `json:"description"`
+		Status      *string         `json:"status"`
+		Revision    *int32          `json:"revision"`
+		Data        json.RawMessage `json:"data"`
+		DataJSON    *string         `json:"dataJson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req := &chatpb.UpdateWorkflowRequest{
+		WorkflowId:  chi.URLParam(r, "workflowId"),
+		UserContext: h.userCtx(r),
+	}
+	if body.Name != nil {
+		req.Name = *body.Name
+	}
+	if body.Description != nil {
+		req.Description = *body.Description
+	}
+	if body.Status != nil {
+		req.Status = *body.Status
+	}
+	if body.Revision != nil {
+		req.Revision = *body.Revision
+		req.UpdateRevision = true
+	}
+
+	if len(body.Data) > 0 {
+		normalized, err := normalizeJSONObject(body.Data, "data")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.DataJson = normalized
+	} else if body.DataJSON != nil {
+		req.DataJson = strings.TrimSpace(*body.DataJSON)
+	}
+
+	resp, err := h.clients.Chat.UpdateWorkflow(r.Context(), req)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, workflowMap(resp))
+}
+
+func (h *ChatHandler) ValidateWorkflow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		WorkflowID *string         `json:"workflowId"`
+		Data       json.RawMessage `json:"data"`
+		DataJSON   *string         `json:"dataJson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req := &chatpb.ValidateWorkflowRequest{
+		WorkflowId:  strings.TrimSpace(chi.URLParam(r, "workflowId")),
+		UserContext: h.userCtx(r),
+	}
+	if req.WorkflowId == "" && body.WorkflowID != nil {
+		req.WorkflowId = strings.TrimSpace(*body.WorkflowID)
+	}
+
+	if len(body.Data) > 0 {
+		normalized, err := normalizeJSONObject(body.Data, "data")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		req.DataJson = normalized
+	} else if body.DataJSON != nil {
+		req.DataJson = strings.TrimSpace(*body.DataJSON)
+	}
+
+	if req.WorkflowId == "" && req.DataJson == "" {
+		writeError(w, http.StatusBadRequest, "workflowId or data is required")
+		return
+	}
+
+	resp, err := h.clients.Chat.ValidateWorkflow(r.Context(), req)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	issues := make([]map[string]any, len(resp.Issues))
+	for i, item := range resp.Issues {
+		issues[i] = map[string]any{
+			"code":     item.Code,
+			"message":  item.Message,
+			"severity": item.Severity,
+			"nodeId":   item.NodeId,
+			"pinId":    item.PinId,
+			"edgeId":   item.EdgeId,
+		}
+	}
+	writeData(w, http.StatusOK, map[string]any{
+		"valid":  resp.Valid,
+		"issues": issues,
+	})
+}
+
+func (h *ChatHandler) ListWorkflowNodeTypes(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.clients.Chat.ListWorkflowNodeTypes(r.Context(), &chatpb.ListWorkflowNodeTypesRequest{
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	out := make([]map[string]any, len(resp.NodeTypes))
+	for i, item := range resp.NodeTypes {
+		out[i] = map[string]any{
+			"typeId":      item.TypeId,
+			"version":     item.Version,
+			"displayName": item.DisplayName,
+			"category":    item.Category,
+			"description": item.Description,
+			"icon":        item.Icon,
+			"tags":        item.Tags,
+			"schema":      decodeJSONMap(item.SchemaJson),
+		}
+	}
+	writeData(w, http.StatusOK, out)
+}
+
+// ─── Legacy Blueprint (compat) ───────────────────────────────────────────────
+
+func (h *ChatHandler) GetBlueprint(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.clients.Chat.GetBlueprint(r.Context(), &chatpb.GetBlueprintRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		WorkflowId: strings.TrimSpace(r.URL.Query().Get("workflowId")),
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, blueprintMap(resp))
+}
+
+func (h *ChatHandler) SaveBlueprint(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Nodes []struct {
+			ID       string          `json:"id"`
+			Kind     string          `json:"kind"`
+			Data     json.RawMessage `json:"data"`
+			Position struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			} `json:"position"`
+		} `json:"nodes"`
+		Connections []struct {
+			ID           string `json:"id"`
+			SourceNodeID string `json:"sourceNodeId"`
+			SourcePortID string `json:"sourcePortId"`
+			TargetNodeID string `json:"targetNodeId"`
+			TargetPortID string `json:"targetPortId"`
+			PortType     string `json:"portType"`
+		} `json:"connections"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	nodes := make([]*chatpb.BlueprintNodeEntry, 0, len(body.Nodes))
+	for i, node := range body.Nodes {
+		dataJSON, err := normalizeJSONObject(node.Data, fmt.Sprintf("nodes[%d].data", i))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		nodes = append(nodes, &chatpb.BlueprintNodeEntry{
+			Id:       node.ID,
+			Kind:     node.Kind,
+			DataJson: dataJSON,
+			X:        node.Position.X,
+			Y:        node.Position.Y,
+		})
+	}
+
+	connections := make([]*chatpb.BlueprintConnection, 0, len(body.Connections))
+	for _, item := range body.Connections {
+		connections = append(connections, &chatpb.BlueprintConnection{
+			Id:           item.ID,
+			SourceNodeId: item.SourceNodeID,
+			SourcePortId: item.SourcePortID,
+			TargetNodeId: item.TargetNodeID,
+			TargetPortId: item.TargetPortID,
+			PortType:     item.PortType,
+		})
+	}
+
+	resp, err := h.clients.Chat.SaveBlueprint(r.Context(), &chatpb.SaveBlueprintRequest{
+		WorkspaceId: chi.URLParam(r, "wsId"),
+		WorkflowId: strings.TrimSpace(r.URL.Query().Get("workflowId")),
+		Nodes:       nodes,
+		Connections: connections,
+		UserContext: h.userCtx(r),
+	})
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+	writeData(w, http.StatusOK, blueprintMap(resp))
 }

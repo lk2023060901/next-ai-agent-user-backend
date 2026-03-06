@@ -50,6 +50,17 @@ import {
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
 } from "../modules/chat/chat.service";
 import {
+  listNodeTypes,
+  listWorkflows,
+  createWorkflow,
+  getWorkflow,
+  updateWorkflow,
+  validateWorkflowById,
+  validateWorkflowDataJson,
+  getLegacyBlueprintByWorkflow,
+  saveLegacyBlueprint,
+} from "../modules/workflow/workflow.service";
+import {
   getMarketplacePlugin,
   installWorkspacePlugin,
   listMarketplacePlugins,
@@ -91,6 +102,9 @@ function grpcError(code: grpc.status, message: string): grpc.ServiceError {
 function mapErrorCode(code?: string): grpc.status {
   switch (code) {
     case "ALREADY_EXISTS": return grpc.status.ALREADY_EXISTS;
+    case "SQLITE_CONSTRAINT":
+    case "SQLITE_CONSTRAINT_UNIQUE":
+      return grpc.status.ALREADY_EXISTS;
     case "UNAUTHENTICATED": return grpc.status.UNAUTHENTICATED;
     case "NOT_FOUND": return grpc.status.NOT_FOUND;
     case "UNIMPLEMENTED": return grpc.status.UNIMPLEMENTED;
@@ -217,6 +231,49 @@ function runtimePluginLoadCandidateToProto(item: RuntimePluginLoadCandidate): Re
     installPath: item.installPath,
     sourceType: item.sourceType,
     sourceSpec: item.sourceSpec,
+  };
+}
+
+function workflowToProto(workflow: ReturnType<typeof getWorkflow>): Record<string, unknown> {
+  return {
+    id: workflow.workflowId,
+    workspaceId: workflow.workspaceId,
+    name: workflow.name,
+    description: workflow.description ?? "",
+    status: workflow.status,
+    specVersion: workflow.specVersion,
+    revision: workflow.revision,
+    dataJson: JSON.stringify({
+      name: workflow.name,
+      ...(workflow.description ? { description: workflow.description } : {}),
+      status: workflow.status,
+      specVersion: workflow.specVersion,
+      revision: workflow.revision,
+      nodes: workflow.nodes,
+      edges: workflow.edges,
+      ...(workflow.entryNodeId ? { entryNodeId: workflow.entryNodeId } : {}),
+      ...(workflow.layout ? { layout: workflow.layout } : {}),
+    }),
+    createdAt: workflow.createdAt,
+    updatedAt: workflow.updatedAt,
+  };
+}
+
+function workflowValidationIssueToProto(issue: {
+  code: string;
+  message: string;
+  severity: "error" | "warning";
+  nodeId?: string;
+  pinId?: string;
+  edgeId?: string;
+}): Record<string, unknown> {
+  return {
+    code: issue.code,
+    message: issue.message,
+    severity: issue.severity,
+    nodeId: issue.nodeId ?? "",
+    pinId: issue.pinId ?? "",
+    edgeId: issue.edgeId ?? "",
   };
 }
 
@@ -1243,6 +1300,172 @@ export function startGrpcServer(port: number): grpc.Server {
     deleteAgent(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try { deleteAgent(call.request.id); callback(null, {}); }
       catch (err) { handleError(callback, err); }
+    },
+    listWorkflows(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const workflows = listWorkflows(call.request.workspaceId);
+        callback(null, { workflows: workflows.map(workflowToProto) });
+      } catch (err) { handleError(callback, err); }
+    },
+    createWorkflow(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const workflow = createWorkflow({
+          workspaceId: String(call.request.workspaceId ?? ""),
+          name: String(call.request.name ?? ""),
+          description: String(call.request.description ?? ""),
+          status: String(call.request.status ?? ""),
+          dataJson: String(call.request.dataJson ?? ""),
+        });
+        callback(null, workflowToProto(workflow));
+      } catch (err) { handleError(callback, err); }
+    },
+    getWorkflow(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const workflow = getWorkflow(call.request.workflowId);
+        callback(null, workflowToProto(workflow));
+      } catch (err) { handleError(callback, err); }
+    },
+    updateWorkflow(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const name = String(call.request.name ?? "").trim();
+        const description = String(call.request.description ?? "");
+        const status = String(call.request.status ?? "").trim();
+        const dataJson = String(call.request.dataJson ?? "").trim();
+        const workflow = updateWorkflow({
+          workflowId: String(call.request.workflowId ?? ""),
+          ...(name.length > 0 ? { name } : {}),
+          ...(description.length > 0 ? { description } : {}),
+          ...(status.length > 0 ? { status } : {}),
+          ...(call.request.updateRevision ? { revision: Number(call.request.revision) } : {}),
+          ...(dataJson.length > 0 ? { dataJson } : {}),
+        });
+        callback(null, workflowToProto(workflow));
+      } catch (err) { handleError(callback, err); }
+    },
+    validateWorkflow(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const workflowId = String(call.request.workflowId ?? "").trim();
+        const dataJson = String(call.request.dataJson ?? "").trim();
+        const result = workflowId
+          ? validateWorkflowById(workflowId)
+          : validateWorkflowDataJson(dataJson);
+        callback(null, {
+          valid: result.valid,
+          issues: result.issues.map(workflowValidationIssueToProto),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    listWorkflowNodeTypes(_call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const nodeTypes = listNodeTypes();
+        callback(null, {
+          nodeTypes: nodeTypes.map((item) => ({
+            typeId: item.typeId,
+            version: item.version,
+            displayName: item.displayName,
+            category: item.category,
+            description: item.description ?? "",
+            icon: item.icon ?? "",
+            tags: item.tags ?? [],
+            schemaJson: JSON.stringify(item),
+          })),
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    getBlueprint(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const blueprint = getLegacyBlueprintByWorkflow({
+          workspaceId: String(call.request.workspaceId ?? ""),
+          workflowId: String(call.request.workflowId ?? ""),
+        });
+        callback(null, {
+          id: blueprint.id,
+          workspaceId: blueprint.workspaceId,
+          nodes: blueprint.nodes.map((node) => ({
+            id: node.id,
+            kind: node.kind,
+            dataJson: JSON.stringify(node.data ?? {}),
+            x: node.position.x,
+            y: node.position.y,
+          })),
+          connections: blueprint.connections.map((item) => ({
+            id: item.id,
+            sourceNodeId: item.sourceNodeId,
+            sourcePortId: item.sourcePortId,
+            targetNodeId: item.targetNodeId,
+            targetPortId: item.targetPortId,
+            portType: item.portType,
+          })),
+          updatedAt: blueprint.updatedAt,
+        });
+      } catch (err) { handleError(callback, err); }
+    },
+    saveBlueprint(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
+      try {
+        const nodes = (Array.isArray(call.request.nodes) ? call.request.nodes : []).map((node: Record<string, unknown>) => {
+          let data: Record<string, unknown> = {};
+          try {
+            const parsed = JSON.parse(String(node.dataJson ?? "{}"));
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              data = parsed as Record<string, unknown>;
+            }
+          } catch {
+            throw Object.assign(new Error(`Invalid blueprint node data JSON: ${String(node.id ?? "")}`), {
+              code: "INVALID_ARGUMENT",
+            });
+          }
+          return {
+            id: String(node.id ?? ""),
+            kind: String(node.kind ?? ""),
+            data,
+            position: {
+              x: Number(node.x ?? 0),
+              y: Number(node.y ?? 0),
+            },
+          };
+        });
+
+        const connections = (Array.isArray(call.request.connections) ? call.request.connections : []).map((item: Record<string, unknown>) => {
+          const rawPortType = String(item.portType ?? "data").toLowerCase();
+          const portType: "exec" | "data" = rawPortType === "exec" ? "exec" : "data";
+          return {
+            id: String(item.id ?? ""),
+            sourceNodeId: String(item.sourceNodeId ?? ""),
+            sourcePortId: String(item.sourcePortId ?? ""),
+            targetNodeId: String(item.targetNodeId ?? ""),
+            targetPortId: String(item.targetPortId ?? ""),
+            portType,
+          };
+        });
+
+        const blueprint = saveLegacyBlueprint({
+          workspaceId: String(call.request.workspaceId ?? ""),
+          workflowId: String(call.request.workflowId ?? ""),
+          nodes,
+          connections,
+        });
+
+        callback(null, {
+          id: blueprint.id,
+          workspaceId: blueprint.workspaceId,
+          nodes: blueprint.nodes.map((node) => ({
+            id: node.id,
+            kind: node.kind,
+            dataJson: JSON.stringify(node.data ?? {}),
+            x: node.position.x,
+            y: node.position.y,
+          })),
+          connections: blueprint.connections.map((item) => ({
+            id: item.id,
+            sourceNodeId: item.sourceNodeId,
+            sourcePortId: item.sourcePortId,
+            targetNodeId: item.targetNodeId,
+            targetPortId: item.targetPortId,
+            portType: item.portType,
+          })),
+          updatedAt: blueprint.updatedAt,
+        });
+      } catch (err) { handleError(callback, err); }
     },
   });
 

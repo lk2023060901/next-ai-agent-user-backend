@@ -156,6 +156,16 @@ func main() {
 		r.Get("/agents/{agentId}", chatHandler.GetAgent)
 		r.Patch("/agents/{agentId}", chatHandler.UpdateAgent)
 		r.Delete("/agents/{agentId}", chatHandler.DeleteAgent)
+		r.Get("/workspaces/{wsId}/workflows", chatHandler.ListWorkflows)
+		r.Post("/workspaces/{wsId}/workflows", chatHandler.CreateWorkflow)
+		r.Get("/workflows/{workflowId}", chatHandler.GetWorkflow)
+		r.Patch("/workflows/{workflowId}", chatHandler.UpdateWorkflow)
+		r.Post("/workflows/{workflowId}/validate", chatHandler.ValidateWorkflow)
+		r.Post("/workflows/validate", chatHandler.ValidateWorkflow)
+		r.Get("/workflow/node-types", chatHandler.ListWorkflowNodeTypes)
+		r.Get("/workflows/node-types", chatHandler.ListWorkflowNodeTypes)
+		r.Get("/workspaces/{wsId}/blueprint", chatHandler.GetBlueprint)
+		r.Put("/workspaces/{wsId}/blueprint", chatHandler.SaveBlueprint)
 
 		// Tools
 		r.Get("/workspaces/{wsId}/tools", toolsHandler.ListTools)

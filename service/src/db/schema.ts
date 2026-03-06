@@ -127,6 +127,23 @@ export const blueprints = sqliteTable("blueprints", {
     .default(sql`(datetime('now'))`),
 });
 
+export const workflows = sqliteTable("workflows", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("draft"),
+  specVersion: text("spec_version").notNull().default("wf.v1"),
+  revision: integer("revision").notNull().default(1),
+  dataJson: text("data_json").notNull().default("{}"),
+  ...timestamps,
+}, (t) => ({
+  idxWorkspace: index("workflows_workspace_id_idx").on(t.workspaceId),
+  uqWorkspaceName: uniqueIndex("workflows_workspace_name_uq").on(t.workspaceId, t.name),
+}));
+
 // ─── Chat ────────────────────────────────────────────────────────────────────
 
 export const chatSessions = sqliteTable("chat_sessions", {

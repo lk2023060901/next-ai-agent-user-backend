@@ -438,6 +438,135 @@ message DeleteAgentRequest {
   common.UserContext user_context = 2;
 }
 
+// ─── Workflow ────────────────────────────────────────────────────────────────
+
+message WorkflowItem {
+  string id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  string description = 4;
+  string status = 5;
+  string spec_version = 6;
+  int32 revision = 7;
+  string data_json = 8;
+  string created_at = 9;
+  string updated_at = 10;
+}
+
+message ListWorkflowsRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message ListWorkflowsResponse {
+  repeated WorkflowItem workflows = 1;
+}
+
+message CreateWorkflowRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string description = 3;
+  string status = 4;
+  string data_json = 5;
+  common.UserContext user_context = 6;
+}
+
+message GetWorkflowRequest {
+  string workflow_id = 1;
+  common.UserContext user_context = 2;
+}
+
+message UpdateWorkflowRequest {
+  string workflow_id = 1;
+  string name = 2;
+  string description = 3;
+  string status = 4;
+  int32 revision = 5;
+  bool update_revision = 6;
+  string data_json = 7;
+  common.UserContext user_context = 8;
+}
+
+message ValidateWorkflowRequest {
+  string workflow_id = 1;
+  string data_json = 2;
+  common.UserContext user_context = 3;
+}
+
+message WorkflowValidationIssue {
+  string code = 1;
+  string message = 2;
+  string severity = 3;
+  string node_id = 4;
+  string pin_id = 5;
+  string edge_id = 6;
+}
+
+message ValidateWorkflowResponse {
+  bool valid = 1;
+  repeated WorkflowValidationIssue issues = 2;
+}
+
+message WorkflowNodeTypeItem {
+  string type_id = 1;
+  int32 version = 2;
+  string display_name = 3;
+  string category = 4;
+  string description = 5;
+  string icon = 6;
+  repeated string tags = 7;
+  string schema_json = 8;
+}
+
+message ListWorkflowNodeTypesRequest {
+  common.UserContext user_context = 1;
+}
+
+message ListWorkflowNodeTypesResponse {
+  repeated WorkflowNodeTypeItem node_types = 1;
+}
+
+// ─── Legacy Blueprint (compat) ──────────────────────────────────────────────
+
+message BlueprintNodeEntry {
+  string id = 1;
+  string kind = 2;
+  string data_json = 3;
+  double x = 4;
+  double y = 5;
+}
+
+message BlueprintConnection {
+  string id = 1;
+  string source_node_id = 2;
+  string source_port_id = 3;
+  string target_node_id = 4;
+  string target_port_id = 5;
+  string port_type = 6;
+}
+
+message BlueprintData {
+  string id = 1;
+  string workspace_id = 2;
+  repeated BlueprintNodeEntry nodes = 3;
+  repeated BlueprintConnection connections = 4;
+  string updated_at = 5;
+}
+
+message GetBlueprintRequest {
+  string workspace_id = 1;
+  common.UserContext user_context = 2;
+  string workflow_id = 3;
+}
+
+message SaveBlueprintRequest {
+  string workspace_id = 1;
+  repeated BlueprintNodeEntry nodes = 2;
+  repeated BlueprintConnection connections = 3;
+  common.UserContext user_context = 4;
+  string workflow_id = 5;
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 service ChatService {
@@ -466,4 +595,12 @@ service ChatService {
   rpc GetAgent(GetAgentRequest) returns (AgentItem);
   rpc UpdateAgent(UpdateAgentRequest) returns (AgentItem);
   rpc DeleteAgent(DeleteAgentRequest) returns (common.Empty);
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  rpc CreateWorkflow(CreateWorkflowRequest) returns (WorkflowItem);
+  rpc GetWorkflow(GetWorkflowRequest) returns (WorkflowItem);
+  rpc UpdateWorkflow(UpdateWorkflowRequest) returns (WorkflowItem);
+  rpc ValidateWorkflow(ValidateWorkflowRequest) returns (ValidateWorkflowResponse);
+  rpc ListWorkflowNodeTypes(ListWorkflowNodeTypesRequest) returns (ListWorkflowNodeTypesResponse);
+  rpc GetBlueprint(GetBlueprintRequest) returns (BlueprintData);
+  rpc SaveBlueprint(SaveBlueprintRequest) returns (BlueprintData);
 }

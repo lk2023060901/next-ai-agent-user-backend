@@ -148,6 +148,13 @@
       "when": 1772607600000,
       "tag": "0020_workspace_processing_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1772608200000,
+      "tag": "0021_workflow_registry",
+      "breakpoints": true
     }
   ]
 }
