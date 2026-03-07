@@ -1047,6 +1047,8 @@ func (h *ChatHandler) ListWorkflowNodeTypes(w http.ResponseWriter, r *http.Reque
 
 	out := make([]map[string]any, len(resp.NodeTypes))
 	for i, item := range resp.NodeTypes {
+		schema := decodeJSONMap(item.SchemaJson)
+		legacyKind, _ := schema["legacyKind"].(string)
 		out[i] = map[string]any{
 			"typeId":      item.TypeId,
 			"version":     item.Version,
@@ -1055,7 +1057,8 @@ func (h *ChatHandler) ListWorkflowNodeTypes(w http.ResponseWriter, r *http.Reque
 			"description": item.Description,
 			"icon":        item.Icon,
 			"tags":        item.Tags,
-			"schema":      decodeJSONMap(item.SchemaJson),
+			"legacyKind":  legacyKind,
+			"schema":      schema,
 		}
 	}
 	writeData(w, http.StatusOK, out)
@@ -1066,7 +1069,7 @@ func (h *ChatHandler) ListWorkflowNodeTypes(w http.ResponseWriter, r *http.Reque
 func (h *ChatHandler) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.GetBlueprint(r.Context(), &chatpb.GetBlueprintRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		WorkflowId: strings.TrimSpace(r.URL.Query().Get("workflowId")),
+		WorkflowId:  strings.TrimSpace(r.URL.Query().Get("workflowId")),
 		UserContext: h.userCtx(r),
 	})
 	if err != nil {
@@ -1131,7 +1134,7 @@ func (h *ChatHandler) SaveBlueprint(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.clients.Chat.SaveBlueprint(r.Context(), &chatpb.SaveBlueprintRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		WorkflowId: strings.TrimSpace(r.URL.Query().Get("workflowId")),
+		WorkflowId:  strings.TrimSpace(r.URL.Query().Get("workflowId")),
 		Nodes:       nodes,
 		Connections: connections,
 		UserContext: h.userCtx(r),

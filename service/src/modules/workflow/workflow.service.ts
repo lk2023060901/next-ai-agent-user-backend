@@ -33,6 +33,7 @@ export interface PinUiMeta {
   order?: number;
   color?: string;
   hidden?: boolean;
+  orphaned?: boolean;
 }
 
 export interface PinDefinition {
@@ -173,6 +174,7 @@ export interface LegacyBlueprintPort {
   type: "exec" | "data";
   direction: PinDirection;
   label: string;
+  valueType?: ValueType;
   maxConnections?: number;
 }
 
@@ -230,7 +232,7 @@ const TYPE_ID_TO_LEGACY_KIND: Record<string, string> = Object.fromEntries(
 const NODE_TYPE_REGISTRY: NodeTypeDefinition[] = [
   {
     typeId: "agent.task",
-    version: 1,
+    version: 2,
     displayName: "Agent",
     category: "Agent",
     description: "Run an AI agent task.",
@@ -238,8 +240,24 @@ const NODE_TYPE_REGISTRY: NodeTypeDefinition[] = [
     tags: ["agent", "task"],
     inputs: [
       { pinId: "exec_in", label: "Exec In", direction: "input", kind: "exec", multiLinks: false },
-      { pinId: "message_in", label: "Message In", direction: "input", kind: "data", valueType: "string" },
-      { pinId: "data_in", label: "Data In", direction: "input", kind: "data", valueType: "json" },
+      { pinId: "agent_id", label: "Agent", direction: "input", kind: "data", valueType: "string" },
+      { pinId: "in_string", label: "In String", direction: "input", kind: "data", valueType: "string" },
+      {
+        pinId: "message_in",
+        label: "Message In",
+        direction: "input",
+        kind: "data",
+        valueType: "string",
+        ui: { hidden: true },
+      },
+      {
+        pinId: "data_in",
+        label: "Data In",
+        direction: "input",
+        kind: "data",
+        valueType: "json",
+        ui: { hidden: true },
+      },
     ],
     outputs: [
       { pinId: "exec_out", label: "Exec Out", direction: "output", kind: "exec", multiLinks: false },
@@ -247,9 +265,10 @@ const NODE_TYPE_REGISTRY: NodeTypeDefinition[] = [
       { pinId: "data_out", label: "Data Out", direction: "output", kind: "data", valueType: "json" },
     ],
     properties: [
-      { key: "agentId", label: "Agent ID", kind: "string", required: true },
+      { key: "agentId", label: "Agent ID", kind: "string" },
       { key: "agentRole", label: "Agent Role", kind: "string" },
       { key: "agentModel", label: "Agent Model", kind: "string" },
+      { key: "inString", label: "In String", kind: "string", defaultValue: "" },
     ],
     execution: { mode: "async", retryable: true, timeoutMs: 300000 },
   },
@@ -400,17 +419,19 @@ const NODE_TYPE_REGISTRY: NodeTypeDefinition[] = [
   },
   {
     typeId: "indextts.pro",
-    version: 1,
+    version: 2,
     displayName: "Index TTS Pro",
     category: "IndexTTS",
     description: "IndexTTS multi-character synthesis.",
     icon: "🔊",
     tags: ["tts", "audio", "indextts"],
     inputs: [
+      { pinId: "exec_in", label: "Exec In", direction: "input", kind: "exec", multiLinks: false },
       { pinId: "narrator_audio", label: "narrator_audio", direction: "input", kind: "data", valueType: "string" },
       { pinId: "character1_audio", label: "character1_audio", direction: "input", kind: "data", valueType: "string" },
     ],
     outputs: [
+      { pinId: "exec_out", label: "Exec Out", direction: "output", kind: "exec", multiLinks: false },
       { pinId: "audio", label: "audio", direction: "output", kind: "data", valueType: "audio" },
       { pinId: "seed", label: "seed", direction: "output", kind: "data", valueType: "int" },
       { pinId: "Subtitle", label: "Subtitle", direction: "output", kind: "data", valueType: "string" },
@@ -453,17 +474,21 @@ const NODE_TYPE_REGISTRY: NodeTypeDefinition[] = [
   },
   {
     typeId: "comfyui.save_video",
-    version: 1,
+    version: 2,
     displayName: "Save Video",
     category: "ComfyUI",
     description: "ComfyUI Save Video node.",
     icon: "💾",
     tags: ["comfyui", "video"],
     inputs: [
+      { pinId: "exec_in", label: "Exec In", direction: "input", kind: "exec", multiLinks: false },
       { pinId: "video", label: "video", direction: "input", kind: "data", valueType: "video", required: true },
       { pinId: "filename_prefix", label: "filename_prefix", direction: "input", kind: "data", valueType: "string" },
     ],
-    outputs: [{ pinId: "video_url", label: "video_url", direction: "output", kind: "data", valueType: "string" }],
+    outputs: [
+      { pinId: "exec_out", label: "Exec Out", direction: "output", kind: "exec", multiLinks: false },
+      { pinId: "video_url", label: "video_url", direction: "output", kind: "data", valueType: "string" },
+    ],
     properties: [
       { key: "filename_prefix", label: "Filename Prefix", kind: "string", defaultValue: "video/ComfyUI" },
       { key: "format", label: "Format", kind: "select", defaultValue: "auto", options: [{ label: "auto", value: "auto" }] },
@@ -733,6 +758,35 @@ function isValueTypeCompatible(sourceType: ValueType | undefined, targetType: Va
   return false;
 }
 
+function isPinOrphaned(pin: PinDefinition): boolean {
+  if (pin.ui?.orphaned === true) return true;
+  const raw = pin as PinDefinition & { orphaned?: unknown };
+  return raw.orphaned === true;
+}
+
+function resolveSourcePinLinkLimit(pin: PinDefinition): number {
+  if (typeof pin.multiLinks === "boolean") {
+    return pin.multiLinks ? Number.POSITIVE_INFINITY : 1;
+  }
+  // UE-like default semantics:
+  // - Exec output: single
+  // - Data output: multi
+  if (pin.direction === "output" && pin.kind === "data") {
+    return Number.POSITIVE_INFINITY;
+  }
+  return 1;
+}
+
+function resolveTargetPinLinkLimit(pin: PinDefinition): number {
+  if (typeof pin.multiLinks === "boolean") {
+    return pin.multiLinks ? Number.POSITIVE_INFINITY : 1;
+  }
+  // UE-like default semantics:
+  // - Exec input: single
+  // - Data input: single
+  return 1;
+}
+
 function validatePropertyValue(
   node: WorkflowNodeInstance,
   property: PropertyDefinition,
@@ -855,7 +909,7 @@ function validateWorkflow(definition: {
     }
     edgeKeySet.add(duplicateEdgeKey);
 
-    if (edge.fromNodeId === edge.toNodeId && edge.fromPinId === edge.toPinId) {
+    if (edge.fromNodeId === edge.toNodeId) {
       issues.push({
         code: "SELF_CONNECTION",
         message: "Self connection is not allowed",
@@ -938,6 +992,30 @@ function validateWorkflow(definition: {
       continue;
     }
 
+    if (isPinOrphaned(sourceRef.pin)) {
+      issues.push({
+        code: "SOURCE_PIN_ORPHANED",
+        message: `Source pin ${edge.fromPinId} is orphaned`,
+        severity: "error",
+        edgeId: edge.edgeId,
+        nodeId: edge.fromNodeId,
+        pinId: edge.fromPinId,
+      });
+      continue;
+    }
+
+    if (isPinOrphaned(targetRef.pin)) {
+      issues.push({
+        code: "TARGET_PIN_ORPHANED",
+        message: `Target pin ${edge.toPinId} is orphaned`,
+        severity: "error",
+        edgeId: edge.edgeId,
+        nodeId: edge.toNodeId,
+        pinId: edge.toPinId,
+      });
+      continue;
+    }
+
     if (sourceRef.pin.kind !== targetRef.pin.kind || sourceRef.pin.kind !== edge.kind) {
       issues.push({
         code: "PIN_KIND_MISMATCH",
@@ -998,7 +1076,7 @@ function validateWorkflow(definition: {
   for (const [key, edges] of sourcePinUsage.entries()) {
     const sourceRef = pinLookup.get(key);
     if (!sourceRef) continue;
-    const maxAllowed = sourceRef.pin.multiLinks ? Number.POSITIVE_INFINITY : 1;
+    const maxAllowed = resolveSourcePinLinkLimit(sourceRef.pin);
     if (edges.length > maxAllowed) {
       issues.push({
         code: "SOURCE_PIN_LINK_LIMIT_EXCEEDED",
@@ -1013,7 +1091,7 @@ function validateWorkflow(definition: {
   for (const [key, edges] of targetPinUsage.entries()) {
     const targetRef = pinLookup.get(key);
     if (!targetRef) continue;
-    const maxAllowed = targetRef.pin.multiLinks ? Number.POSITIVE_INFINITY : 1;
+    const maxAllowed = resolveTargetPinLinkLimit(targetRef.pin);
     if (edges.length > maxAllowed) {
       issues.push({
         code: "TARGET_PIN_LINK_LIMIT_EXCEEDED",
@@ -1122,6 +1200,7 @@ function toLegacyPort(pin: PinDefinition): LegacyBlueprintPort {
     type: pin.kind,
     direction: pin.direction,
     label: pin.label,
+    ...(typeof pin.valueType === "string" ? { valueType: pin.valueType } : {}),
     ...(pin.multiLinks === false ? { maxConnections: 1 } : {}),
   };
 }
@@ -1132,6 +1211,7 @@ function fromLegacyPort(port: LegacyBlueprintPort): PinDefinition {
     label: port.label,
     direction: port.direction,
     kind: port.type,
+    ...(typeof port.valueType === "string" ? { valueType: port.valueType } : {}),
     ...(typeof port.maxConnections === "number" ? { multiLinks: port.maxConnections !== 1 } : {}),
   };
 }
@@ -1139,15 +1219,59 @@ function fromLegacyPort(port: LegacyBlueprintPort): PinDefinition {
 function toWorkflowNodeEntry(node: LegacyBlueprintNodeEntry): WorkflowNodeInstance {
   const typeId = LEGACY_KIND_TO_TYPE_ID[node.kind] ?? "custom.unknown";
   const { inputs: _inputs, outputs: _outputs, kind: _kind, label: _label, ...properties } = node.data;
+  const normalizedProperties: Record<string, unknown> = { ...properties };
+
+  if (node.kind === "index_tts_pro") {
+    const indexTtsParams = Array.isArray(node.data.indexTtsParams)
+      ? node.data.indexTtsParams
+      : [];
+    for (const item of indexTtsParams) {
+      if (!item || typeof item !== "object") continue;
+      const key = typeof (item as { key?: unknown }).key === "string"
+        ? String((item as { key?: unknown }).key).trim()
+        : "";
+      if (!key) continue;
+      const valueRaw = (item as { value?: unknown }).value;
+      if (valueRaw === undefined || valueRaw === null) continue;
+      normalizedProperties[key] = String(valueRaw);
+    }
+
+    if (typeof node.data.indexTtsText === "string") {
+      normalizedProperties.text = node.data.indexTtsText;
+    }
+    if (typeof node.data.indexTtsCharacterCount === "number" && Number.isFinite(node.data.indexTtsCharacterCount)) {
+      normalizedProperties.characterCount = Math.max(1, Math.floor(node.data.indexTtsCharacterCount));
+    }
+  }
+
+  if (node.kind === "comfyui_save_video") {
+    const comfyParams = Array.isArray(node.data.comfyParams)
+      ? node.data.comfyParams
+      : [];
+    for (const item of comfyParams) {
+      if (!item || typeof item !== "object") continue;
+      const key = typeof (item as { key?: unknown }).key === "string"
+        ? String((item as { key?: unknown }).key).trim()
+        : "";
+      if (!key) continue;
+      const valueRaw = (item as { value?: unknown }).value;
+      if (valueRaw === undefined || valueRaw === null) continue;
+      normalizedProperties[key] = String(valueRaw);
+    }
+
+    if (typeof node.data.comfyFilenamePrefix === "string") {
+      normalizedProperties.filename_prefix = node.data.comfyFilenamePrefix;
+    }
+  }
 
   return {
     nodeId: node.id,
     typeId,
-    typeVersion: 1,
+    typeVersion: NODE_TYPE_MAP.get(typeId)?.version ?? 1,
     title: String(node.data.label ?? node.kind),
     x: Number(node.position?.x ?? 0),
     y: Number(node.position?.y ?? 0),
-    properties,
+    properties: normalizedProperties,
     pinOverrides: {
       inputs: Array.isArray(node.data.inputs) ? node.data.inputs.map(fromLegacyPort) : [],
       outputs: Array.isArray(node.data.outputs) ? node.data.outputs.map(fromLegacyPort) : [],
@@ -1160,7 +1284,57 @@ function toWorkflowNodeEntry(node: LegacyBlueprintNodeEntry): WorkflowNodeInstan
 
 function toLegacyNodeEntry(node: WorkflowNodeInstance): LegacyBlueprintNodeEntry {
   const pins = resolveNodePins(node);
+  const visibleInputs = pins.inputs.filter((pin) => pin.ui?.hidden !== true);
+  const visibleOutputs = pins.outputs.filter((pin) => pin.ui?.hidden !== true);
   const legacyKind = node.metadata?.legacyKind || TYPE_ID_TO_LEGACY_KIND[node.typeId] || "agent";
+  const properties = { ...node.properties };
+
+  if (legacyKind === "index_tts_pro") {
+    const nodeType = NODE_TYPE_MAP.get(node.typeId);
+    const paramKeys = (nodeType?.properties ?? [])
+      .map((item) => item.key)
+      .filter((key) => key !== "text" && key !== "characterCount");
+
+    const indexTtsParams = paramKeys
+      .map((key) => {
+        const value = properties[key];
+        if (value === undefined || value === null) return null;
+        return { key, value: String(value) };
+      })
+      .filter((item): item is { key: string; value: string } => item !== null);
+
+    if (indexTtsParams.length > 0) {
+      properties.indexTtsParams = indexTtsParams;
+    }
+    if (typeof properties.text === "string") {
+      properties.indexTtsText = properties.text;
+    }
+    if (typeof properties.characterCount === "number" && Number.isFinite(properties.characterCount)) {
+      properties.indexTtsCharacterCount = Math.max(1, Math.floor(properties.characterCount));
+    }
+  }
+
+  if (legacyKind === "comfyui_save_video") {
+    const nodeType = NODE_TYPE_MAP.get(node.typeId);
+    const paramKeys = (nodeType?.properties ?? [])
+      .map((item) => item.key)
+      .filter((key) => key !== "filename_prefix");
+
+    const comfyParams = paramKeys
+      .map((key) => {
+        const value = properties[key];
+        if (value === undefined || value === null) return null;
+        return { key, value: String(value) };
+      })
+      .filter((item): item is { key: string; value: string } => item !== null);
+
+    if (comfyParams.length > 0) {
+      properties.comfyParams = comfyParams;
+    }
+    if (typeof properties.filename_prefix === "string") {
+      properties.comfyFilenamePrefix = properties.filename_prefix;
+    }
+  }
 
   return {
     id: node.nodeId,
@@ -1169,10 +1343,10 @@ function toLegacyNodeEntry(node: WorkflowNodeInstance): LegacyBlueprintNodeEntry
     data: {
       kind: legacyKind,
       label: node.title,
-      ...(typeof node.properties.color === "string" ? { color: node.properties.color } : {}),
-      inputs: pins.inputs.map(toLegacyPort),
-      outputs: pins.outputs.map(toLegacyPort),
-      ...node.properties,
+      ...(typeof properties.color === "string" ? { color: properties.color } : {}),
+      inputs: visibleInputs.map(toLegacyPort),
+      outputs: visibleOutputs.map(toLegacyPort),
+      ...properties,
     },
   };
 }
@@ -1201,6 +1375,12 @@ function toLegacyConnection(edge: WorkflowEdge): LegacyBlueprintConnection {
 
 export function listNodeTypes(): NodeTypeDefinition[] {
   return deepClone(NODE_TYPE_REGISTRY);
+}
+
+export function getLegacyKindByTypeId(typeId: string): string | undefined {
+  const normalized = typeId.trim();
+  if (!normalized) return undefined;
+  return TYPE_ID_TO_LEGACY_KIND[normalized];
 }
 
 export function listWorkflows(workspaceId: string): WorkflowDefinition[] {
@@ -1395,15 +1575,6 @@ export function saveLegacyBlueprint(input: {
   });
   const nextNodes = input.nodes.map(toWorkflowNodeEntry);
   const nextEdges = input.connections.map(toWorkflowEdge);
-
-  const validation = validateWorkflow({ nodes: nextNodes, edges: nextEdges });
-  if (!validation.valid) {
-    const firstError = validation.issues.find((item) => item.severity === "error");
-    throw Object.assign(new Error(firstError?.message ?? "Invalid blueprint workflow"), {
-      code: "INVALID_ARGUMENT",
-      details: validation.issues,
-    });
-  }
 
   const nextRevision = row.revision + 1;
   const payload = normalizeWorkflowData({

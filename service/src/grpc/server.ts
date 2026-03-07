@@ -51,6 +51,7 @@ import {
 } from "../modules/chat/chat.service";
 import {
   listNodeTypes,
+  getLegacyKindByTypeId,
   listWorkflows,
   createWorkflow,
   getWorkflow,
@@ -1359,16 +1360,22 @@ export function startGrpcServer(port: number): grpc.Server {
       try {
         const nodeTypes = listNodeTypes();
         callback(null, {
-          nodeTypes: nodeTypes.map((item) => ({
-            typeId: item.typeId,
-            version: item.version,
-            displayName: item.displayName,
-            category: item.category,
-            description: item.description ?? "",
-            icon: item.icon ?? "",
-            tags: item.tags ?? [],
-            schemaJson: JSON.stringify(item),
-          })),
+          nodeTypes: nodeTypes.map((item) => {
+            const legacyKind = getLegacyKindByTypeId(item.typeId);
+            return {
+              typeId: item.typeId,
+              version: item.version,
+              displayName: item.displayName,
+              category: item.category,
+              description: item.description ?? "",
+              icon: item.icon ?? "",
+              tags: item.tags ?? [],
+              schemaJson: JSON.stringify({
+                ...item,
+                ...(legacyKind ? { legacyKind } : {}),
+              }),
+            };
+          }),
         });
       } catch (err) { handleError(callback, err); }
     },
