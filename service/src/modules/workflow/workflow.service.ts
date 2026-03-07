@@ -1487,7 +1487,12 @@ export function updateWorkflow(input: {
     revision: nextRevision,
   });
 
-  assertWorkflowValid({ nodes: normalized.nodes, edges: normalized.edges });
+  // Only re-validate when workflow data is actually changing.
+  // Metadata-only updates (name, description, status) should not be blocked
+  // by pre-existing validation issues in the workflow definition.
+  if (input.dataJson) {
+    assertWorkflowValid({ nodes: normalized.nodes, edges: normalized.edges });
+  }
 
   try {
     db.update(workflows)
