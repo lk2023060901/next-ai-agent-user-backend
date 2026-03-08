@@ -352,7 +352,7 @@ export function getAgent(agentId: string) {
 export function createAgent(data: {
   workspaceId: string;
   name: string;
-  role?: string;
+  avatar?: string;
   modelId: string;
   color?: string;
   description?: string;
@@ -373,7 +373,7 @@ export function createAgent(data: {
       id,
       workspaceId: data.workspaceId,
       name: data.name,
-      role: data.role ?? null,
+      avatar: data.avatar ?? null,
       modelId: data.modelId,
       model: model.name,
       color: data.color ?? null,
@@ -390,7 +390,7 @@ export function createAgent(data: {
 export function updateAgent(data: {
   id: string;
   name?: string;
-  role?: string;
+  avatar?: string;
   modelId?: string;
   color?: string;
   description?: string;
@@ -421,7 +421,7 @@ export function updateAgent(data: {
   db.update(agents)
     .set({
       name: data.name && data.name.trim().length > 0 ? data.name.trim() : current.name,
-      role: data.role || current.role || null,
+      avatar: data.avatar !== undefined ? (data.avatar || null) : current.avatar ?? null,
       modelId: nextModelId,
       model: nextModelName,
       color: data.color || current.color || null,

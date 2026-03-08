@@ -63,6 +63,7 @@ func agentMap(a *chatpb.AgentItem) map[string]any {
 		"workspaceId":    a.WorkspaceId,
 		"name":           a.Name,
 		"role":           a.Role,
+		"avatar":         a.Avatar,
 		"color":          a.Color,
 		"status":         a.Status,
 		"model":          a.Model,
@@ -751,7 +752,7 @@ func (h *ChatHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name           string          `json:"name"`
-		Role           string          `json:"role"`
+		Avatar         string          `json:"avatar"`
 		Model          string          `json:"model"`
 		ModelID        string          `json:"modelId"`
 		Color          string          `json:"color"`
@@ -776,7 +777,7 @@ func (h *ChatHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.CreateAgent(r.Context(), &chatpb.CreateAgentRequest{
 		WorkspaceId:    chi.URLParam(r, "wsId"),
 		Name:           body.Name,
-		Role:           body.Role,
+		Avatar:         body.Avatar,
 		Model:          body.Model,
 		ModelId:        body.ModelID,
 		Color:          body.Color,
@@ -807,7 +808,7 @@ func (h *ChatHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name           string          `json:"name"`
-		Role           string          `json:"role"`
+		Avatar         string          `json:"avatar"`
 		Model          string          `json:"model"`
 		ModelID        string          `json:"modelId"`
 		Color          string          `json:"color"`
@@ -829,7 +830,7 @@ func (h *ChatHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.UpdateAgent(r.Context(), &chatpb.UpdateAgentRequest{
 		Id:               chi.URLParam(r, "agentId"),
 		Name:             body.Name,
-		Role:             body.Role,
+		Avatar:           body.Avatar,
 		Model:            body.Model,
 		ModelId:          body.ModelID,
 		Color:            body.Color,

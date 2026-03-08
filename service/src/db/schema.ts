@@ -81,6 +81,7 @@ export const agents = sqliteTable("agents", {
     .references(() => workspaces.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   role: text("role"),
+  avatar: text("avatar"),
   color: text("color"),
   status: text("status").notNull().default("idle"),
   // Source of truth for agent model selection.

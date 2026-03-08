@@ -384,6 +384,7 @@ message AgentItem {
   string output_format = 14;
   repeated string knowledge_bases = 16;
   string config_json = 17;
+  string avatar = 18;
 }
 
 message ListAgentsRequest {
@@ -398,7 +399,6 @@ message ListAgentsResponse {
 message CreateAgentRequest {
   string workspace_id = 1;
   string name = 2;
-  string role = 3;
   string model = 4;
   string color = 5;
   string description = 6;
@@ -409,6 +409,7 @@ message CreateAgentRequest {
   string output_format = 11;
   repeated string knowledge_bases = 13;
   string config_json = 14;
+  string avatar = 15;
 }
 
 message GetAgentRequest {
@@ -419,7 +420,6 @@ message GetAgentRequest {
 message UpdateAgentRequest {
   string id = 1;
   string name = 2;
-  string role = 3;
   string model = 4;
   string model_id = 5;
   string color = 6;
@@ -431,6 +431,7 @@ message UpdateAgentRequest {
   common.UserContext user_context = 13;
   string config_json = 14;
   bool update_config_json = 15;
+  string avatar = 16;
 }
 
 message DeleteAgentRequest {

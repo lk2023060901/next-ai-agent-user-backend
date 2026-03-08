@@ -809,7 +809,7 @@ export function startGrpcServer(port: number): grpc.Server {
   server.addService(agentRunPkg.agent_run.AgentRunService.service, {
     getAgentConfig(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        const result = getAgentConfig(call.request.agentId);
+        const result = getAgentConfig(call.request.agentId, call.request.modelIdOverride);
         callback(null, {
           id: result.id,
           name: result.name,
@@ -1269,7 +1269,7 @@ export function startGrpcServer(port: number): grpc.Server {
         callback(null, createAgent({
           workspaceId: call.request.workspaceId,
           name: call.request.name,
-          role: call.request.role,
+          avatar: call.request.avatar,
           modelId: call.request.modelId,
           color: call.request.color,
           description: call.request.description,
@@ -1288,7 +1288,7 @@ export function startGrpcServer(port: number): grpc.Server {
         callback(null, updateAgent({
           id: call.request.id,
           name: call.request.name,
-          role: call.request.role,
+          avatar: call.request.avatar,
           modelId: call.request.modelId,
           color: call.request.color,
           description: call.request.description,
