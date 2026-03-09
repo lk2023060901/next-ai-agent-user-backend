@@ -137,6 +137,14 @@ export type {
 } from "../db/database-types.js";
 
 export type {
+  Reranker,
+  RerankParams,
+  RerankDocument,
+  RerankResult,
+  RerankConfig,
+} from "../embedding/reranker.js";
+
+export type {
   ObservabilityStore,
   UsageRecord,
   RunMetric,

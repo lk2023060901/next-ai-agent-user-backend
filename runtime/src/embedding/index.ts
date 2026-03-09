@@ -11,6 +11,9 @@
 // 3. Replace the EmbeddingCache:
 //    Implement the EmbeddingCache interface (e.g. SQLite, Redis)
 //
+// 4. Replace the Reranker:
+//    Implement the Reranker interface for custom reranking backends
+//
 // All interfaces and default implementations are exported below.
 
 // ─── Interfaces (implement these in your plugin) ────────────────────────────
@@ -24,6 +27,14 @@ export type {
   BatchResult,
 } from "./embedding-types.js";
 
+export type {
+  Reranker,
+  RerankParams,
+  RerankDocument,
+  RerankResult,
+  RerankConfig,
+} from "./reranker.js";
+
 // ─── Default implementations ────────────────────────────────────────────────
 
 export {
@@ -33,3 +44,4 @@ export {
 export { InMemoryEmbeddingCache } from "./cache.js";
 export { BatchProcessor, type BatchProcessorOptions, contentHash } from "./batch-processor.js";
 export { OpenAIEmbeddingProvider, type OpenAIEmbeddingOptions } from "./providers/openai-embeddings.js";
+export { DefaultReranker } from "./providers/default-reranker.js";

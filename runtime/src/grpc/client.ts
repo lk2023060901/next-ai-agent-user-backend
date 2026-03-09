@@ -33,6 +33,11 @@ function promisify<T>(client: any, method: string, request: unknown): Promise<T>
 const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto")) as any;
 const agentRunClient = createClient(agentRunPkg, agentRunPkg.agent_run.AgentRunService);
 
+// ─── ToolsService client ────────────────────────────────────────────────────
+
+const toolsPkg = grpc.loadPackageDefinition(loadProto("tools.proto")) as any;
+const toolsClient = createClient(toolsPkg, toolsPkg.tools.ToolsService);
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -219,4 +224,52 @@ export const grpcClient = {
       actorUserId: params.actorUserId ?? "runtime",
     });
   },
+
+  // ─── KB Search (ToolsService) ──────────────────────────────────────────
+
+  searchKnowledgeBase(params: {
+    knowledgeBaseId: string;
+    query: string;
+    topK?: number;
+  }): Promise<{ results: KBSearchResult[] }> {
+    return promisify(toolsClient, "searchKnowledgeBase", {
+      knowledgeBaseId: params.knowledgeBaseId,
+      query: params.query,
+      topK: params.topK ?? 5,
+      // Runtime calls don't need user context
+      userContext: { userId: "runtime", role: "service" },
+    });
+  },
+
+  listKnowledgeBases(workspaceId: string): Promise<{ knowledgeBases: KnowledgeBaseInfo[] }> {
+    return promisify(toolsClient, "listKnowledgeBases", {
+      workspaceId,
+      userContext: { userId: "runtime", role: "service" },
+    });
+  },
 };
+
+// ─── KB Types ───────────────────────────────────────────────────────────────
+
+export interface KBSearchResult {
+  id: string;
+  documentId: string;
+  documentName: string;
+  content: string;
+  score: number;
+  chunkIndex: number;
+}
+
+export interface KnowledgeBaseInfo {
+  id: string;
+  workspaceId: string;
+  name: string;
+  embeddingModel: string;
+  documentCount: number;
+  chunkSize: number;
+  chunkOverlap: number;
+  requestedDocumentChunks: number;
+  documentProcessing: string;
+  rerankerModel: string;
+  matchingThreshold: number;
+}

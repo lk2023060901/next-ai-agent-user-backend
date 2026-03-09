@@ -2,6 +2,7 @@ import type { RuntimeTool } from "./types.js";
 import type { SandboxPolicy } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import type { grpcClient } from "../grpc/client.js";
+import type { Reranker } from "../embedding/reranker.js";
 import { isToolAllowed } from "../policy/tool-policy.js";
 import { makeCodeReadTool } from "./code-read.js";
 import { makeCodeWriteTool } from "./code-write.js";
@@ -20,13 +21,21 @@ export interface ToolRegistryParams {
   emit: SseEmitter;
   grpc: typeof grpcClient;
   agentConfigModel: string;
+  /** Optional reranker for KB search results. */
+  reranker?: Reranker;
+  /** Reranker model override. */
+  rerankerModel?: string;
 }
 
 export function buildToolset(params: ToolRegistryParams): Record<string, RuntimeTool> {
   const allTools: Record<string, RuntimeTool> = {
     code_read: makeCodeReadTool(params.sandbox.fsPolicy),
     code_write: makeCodeWriteTool(params.sandbox.fsPolicy),
-    search_knowledge: makeSearchKnowledgeTool(),
+    search_knowledge: makeSearchKnowledgeTool({
+      workspaceId: params.workspaceId,
+      reranker: params.reranker,
+      rerankerModel: params.rerankerModel,
+    }),
     web_search: makeWebSearchTool(),
     delegate_to_agent: makeDelegateTool(params),
   };

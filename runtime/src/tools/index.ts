@@ -46,3 +46,6 @@ export { DefaultToolRegistry } from "./tool-registry.js";
 export { DefaultToolRuntime, type ToolRuntimeOptions } from "./tool-runtime.js";
 export { DefaultToolPolicyPipeline, SubAgentDepthLayer } from "./policy-pipeline.js";
 export { InMemoryApprovalWorkflow } from "./approval-workflow.js";
+
+// Built-in tool factories
+export { makeSearchKnowledgeTool, type SearchKnowledgeDeps } from "./search-knowledge.js";
