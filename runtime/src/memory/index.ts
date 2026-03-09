@@ -43,6 +43,15 @@ export type {
   FullTextIndex,
   FullTextSearchResult,
   GraphStore,
+  CoreMemoryStore,
+  ReflectionStateStore,
+  ReflectionState,
+  AccessLogStore,
+  AccessLogEntry,
+  MemoryViewStore,
+  MemoryAccessLevel,
+  MemoryListParams,
+  MemoryCountParams,
 } from "./store/interfaces.js";
 
 // ─── Shared types (from core/) ──────────────────────────────────────────────

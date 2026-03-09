@@ -1,4 +1,7 @@
 import type {
+  AccessType,
+  CoreMemoryBlock,
+  CoreMemorySnapshot,
   Entity,
   GraphResult,
   MemoryEntry,
@@ -121,3 +124,93 @@ export interface GraphStore {
   getEntitiesForMemory(memoryId: string): Promise<Entity[]>;
   linkMemoryToEntity(memoryId: string, entityId: string): Promise<void>;
 }
+
+// ─── Core Memory Store ──────────────────────────────────────────────────────
+//
+// Dedicated store for pinned core memory blocks (persona, user, working,
+// knowledgeSummary). Backed by the core_memory_blocks table.
+
+export interface CoreMemoryStore {
+  /** Get the full core memory snapshot for an agent. */
+  get(agentId: string, workspaceId: string): Promise<CoreMemorySnapshot>;
+
+  /** Create or update a core memory block. */
+  upsert(agentId: string, workspaceId: string, block: CoreMemoryBlock, content: string): Promise<void>;
+
+  /** Remove a core memory block. */
+  delete(agentId: string, workspaceId: string, block: CoreMemoryBlock): Promise<void>;
+}
+
+// ─── Reflection State Store ─────────────────────────────────────────────────
+//
+// Tracks per-agent reflection trigger state. Backed by the reflection_state table.
+
+export interface ReflectionStateStore {
+  /** Get the current reflection state. */
+  get(agentId: string, workspaceId: string): Promise<ReflectionState | null>;
+
+  /** Update cumulative importance (add delta). */
+  addImportance(agentId: string, workspaceId: string, delta: number): Promise<void>;
+
+  /** Reset after a reflection is completed. */
+  recordReflection(agentId: string, workspaceId: string): Promise<void>;
+}
+
+export interface ReflectionState {
+  agentId: string;
+  workspaceId: string;
+  cumulativeImportance: number;
+  lastReflectionAt: number | null;
+  reflectionCount: number;
+}
+
+// ─── Access Log Store ───────────────────────────────────────────────────────
+//
+// Audit trail for memory access events. Drives decay reinforcement analysis.
+// Backed by the memory_access_log table.
+
+export interface AccessLogStore {
+  /** Log a memory access event. */
+  log(entry: AccessLogEntry): Promise<void>;
+
+  /** Log multiple access events in a batch. */
+  logBatch(entries: AccessLogEntry[]): Promise<void>;
+
+  /** Get access history for a memory. */
+  getHistory(memoryId: string, limit?: number): Promise<AccessLogEntry[]>;
+
+  /** Count accesses by type for a memory. */
+  countByType(memoryId: string): Promise<Record<AccessType, number>>;
+}
+
+export interface AccessLogEntry {
+  memoryId: string;
+  agentId: string;
+  accessType: AccessType;
+  contextSnippet?: string;
+  createdAt: number;
+}
+
+// ─── Memory View Store ──────────────────────────────────────────────────────
+//
+// Fine-grained per-agent memory ACL. Extends beyond the simple visibility
+// field on MemoryEntry. Backed by the agent_memory_views table.
+
+export interface MemoryViewStore {
+  /** Grant an agent access to a memory. */
+  grant(memoryId: string, agentId: string, accessLevel: MemoryAccessLevel): Promise<void>;
+
+  /** Revoke an agent's access to a memory. */
+  revoke(memoryId: string, agentId: string): Promise<void>;
+
+  /** Check if an agent has access to a memory. */
+  hasAccess(memoryId: string, agentId: string): Promise<boolean>;
+
+  /** Get all memory IDs accessible to an agent in a workspace. */
+  getAccessibleMemoryIds(agentId: string, workspaceId: string): Promise<string[]>;
+
+  /** Get all agents who have access to a memory. */
+  getGrantedAgents(memoryId: string): Promise<Array<{ agentId: string; accessLevel: MemoryAccessLevel }>>;
+}
+
+export type MemoryAccessLevel = "read" | "write" | "admin";

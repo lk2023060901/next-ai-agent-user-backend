@@ -123,3 +123,22 @@ export type {
   MemorySearchQuery,
   MemorySearchResult,
 } from "../memory/memory-types.js";
+
+export type {
+  DatabaseManager,
+  DatabaseManagerOptions,
+} from "../db/database-types.js";
+
+export type {
+  ObservabilityStore,
+  UsageRecord,
+  RunMetric,
+  ToolMetric,
+  UsageQueryParams,
+  UsageSummary,
+  UsageByModel,
+  UsageByAgent,
+  UsageByProvider,
+  RunAgentBreakdown,
+  RunAgentUsage,
+} from "../db/observability-types.js";

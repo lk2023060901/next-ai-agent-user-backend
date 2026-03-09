@@ -2,9 +2,11 @@ node_modules/
 vendor/
 gateway/bin/
 service/dist/
+runtime/dist/
 data/app.db
 data/app.db-journal
 data/app.db-wal
+data/app.db-shm
 data/knowledge/
 data/uploads/
 gateway/internal/pb/
