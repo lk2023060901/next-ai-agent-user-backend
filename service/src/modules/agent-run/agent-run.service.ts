@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "../../db";
+import { db } from "../../db/index.js";
 import {
   agents,
   agentRuns,
@@ -12,14 +12,14 @@ import {
   usageRecords,
   workspaces,
   workspaceSettings,
-} from "../../db/schema";
+} from "../../db/schema.js";
 import {
   canStartAgentRun,
   isCanonicalAgentStatus,
   mapRunStatusToAgentStatus,
   type CanonicalAgentStatus,
-} from "../agent-status";
-import { parseAgentConfigJson } from "../chat/agent-config";
+} from "../agent-status.js";
+import { parseAgentConfigJson } from "../chat/agent-config.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -775,7 +775,7 @@ function mapUsageRecordRow(row: typeof usageRecords.$inferSelect): UsageRecordRo
 
 // ─── Functions ────────────────────────────────────────────────────────────────
 
-export function getAgentConfig(agentId: string): AgentConfigResult {
+export function getAgentConfig(agentId: string, modelIdOverride?: string): AgentConfigResult {
   const agent = db.select().from(agents).where(eq(agents.id, agentId)).get();
   if (!agent) {
     throw Object.assign(new Error("Agent not found"), { code: "NOT_FOUND" });
@@ -789,6 +789,18 @@ export function getAgentConfig(agentId: string): AgentConfigResult {
     primaryModelIdsOverride: config.llm.primaryModelIds,
     fallbackModelIdsOverride: config.llm.fallbackModelIds,
   });
+
+  // Apply model override: resolve the override model's LLM config and use it as primary
+  const overrideId = (modelIdOverride ?? "").trim();
+  if (overrideId) {
+    try {
+      const overrideLlm = resolveLlmConfigForAgent(agent.workspaceId, overrideId);
+      llmCandidates.unshift(overrideLlm);
+    } catch {
+      // If override resolution fails, fall through to agent's default model
+    }
+  }
+
   const llm = llmCandidates[0]!;
 
   return {
@@ -1547,6 +1559,55 @@ export function getWorkspaceRuntimeMetrics(workspaceId: string, days = 7): Works
     metric.totalTokens += task.totalTokens ?? 0;
     if (task.status === "completed") metric.successfulTasks += 1;
     if (task.status === "failed") metric.failedTasks += 1;
+  }
+
+  // Supplement with usage_records for runs not already counted via agent_runs
+  const usageRows = db
+    .select()
+    .from(usageRecords)
+    .where(eq(usageRecords.workspaceId, workspaceId))
+    .all();
+
+  for (const rec of usageRows) {
+    if (rec.runId && includedRunIds.has(rec.runId)) continue;
+    const dayKey = dateKeyFromTimestamp(rec.endedAt ?? rec.recordedAt);
+    if (!dayKey || !dateSet.has(dayKey)) continue;
+
+    const inputTokens = rec.inputTokens ?? 0;
+    const outputTokens = rec.outputTokens ?? 0;
+    const recTotalTokens = rec.totalTokens ?? 0;
+    const isCompleted = rec.status === "completed";
+    const isFailed = rec.status === "failed";
+    const isRun = rec.recordType === "run";
+
+    totals.totalInputTokens += inputTokens;
+    totals.totalOutputTokens += outputTokens;
+    totals.totalTokens += recTotalTokens;
+    if (isRun && isCompleted) totals.successfulRuns += 1;
+    if (isRun && isFailed) totals.failedRuns += 1;
+
+    const index = dayToIndex.get(dayKey);
+    if (index !== undefined) {
+      daily[index]!.inputTokens += inputTokens;
+      daily[index]!.outputTokens += outputTokens;
+      daily[index]!.totalTokens += recTotalTokens;
+      if (isRun && isCompleted) daily[index]!.successfulRuns += 1;
+      if (isRun && isFailed) daily[index]!.failedRuns += 1;
+    }
+
+    const agentId = (rec.agentId ?? "").trim();
+    if (agentId) {
+      const agentName = (rec.agentName ?? "").trim() || agentId;
+      const agentRole = (rec.agentRole ?? "").trim();
+      const metric = ensureAgentMetric(agentId, agentName, agentRole);
+      metric.inputTokens += inputTokens;
+      metric.outputTokens += outputTokens;
+      metric.totalTokens += recTotalTokens;
+      if (isRun && isCompleted) metric.successfulRuns += 1;
+      if (isRun && isFailed) metric.failedRuns += 1;
+      if (rec.recordType === "task" && isCompleted) metric.successfulTasks += 1;
+      if (rec.recordType === "task" && isFailed) metric.failedTasks += 1;
+    }
   }
 
   const agentsSorted = [...agentMap.values()]

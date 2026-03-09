@@ -1,5 +1,5 @@
-import { tool } from "ai";
-import { z } from "zod";
+import { Type } from "@sinclair/typebox";
+import type { RuntimeTool } from "./types.js";
 import type { SandboxPolicy } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import type { grpcClient } from "../grpc/client.js";
@@ -16,13 +16,16 @@ export interface DelegateParams {
   agentConfigModel: string;
 }
 
-export function makeDelegateTool(params: DelegateParams) {
-  return tool({
+const DelegateToolParams = Type.Object({
+  agentId: Type.String({ description: "Target agent ID to delegate to" }),
+  instruction: Type.String({ description: "Detailed task instruction for the sub-agent" }),
+});
+
+export function makeDelegateTool(params: DelegateParams): RuntimeTool<typeof DelegateToolParams> {
+  return {
+    name: "delegate_to_agent",
     description: "Delegate a subtask to a specialized sub-agent and return its result",
-    parameters: z.object({
-      agentId: z.string().describe("Target agent ID to delegate to"),
-      instruction: z.string().describe("Detailed task instruction for the sub-agent"),
-    }),
+    parameters: DelegateToolParams,
     execute: async ({ agentId, instruction }) => {
       if (params.depth >= params.sandbox.maxSpawnDepth) {
         return {
@@ -68,5 +71,5 @@ export function makeDelegateTool(params: DelegateParams) {
 
       return result;
     },
-  });
+  };
 }

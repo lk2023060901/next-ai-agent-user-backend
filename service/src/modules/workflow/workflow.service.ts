@@ -1,8 +1,8 @@
 import { asc, eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 
-import { db } from "../../db";
-import { workflows } from "../../db/schema";
+import { db } from "../../db/index.js";
+import { workflows } from "../../db/schema.js";
 
 export type PinDirection = "input" | "output";
 export type PinKind = "exec" | "data";

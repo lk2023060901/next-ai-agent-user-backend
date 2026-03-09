@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "../../db";
-import { workspaces } from "../../db/schema";
+import { db } from "../../db/index.js";
+import { workspaces } from "../../db/schema.js";
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");

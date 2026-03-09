@@ -1,15 +1,16 @@
 import fs from "fs";
 import path from "path";
-import { tool } from "ai";
-import { z } from "zod";
+import { Type } from "@sinclair/typebox";
 import { isFsPathAllowed } from "../policy/fs-policy.js";
+const CodeWriteParams = Type.Object({
+    path: Type.String({ description: "Absolute file path to write" }),
+    content: Type.String({ description: "Content to write to the file" }),
+});
 export function makeCodeWriteTool(fsPolicy) {
-    return tool({
+    return {
+        name: "code_write",
         description: "Write content to a file at the given path",
-        parameters: z.object({
-            path: z.string().describe("Absolute file path to write"),
-            content: z.string().describe("Content to write to the file"),
-        }),
+        parameters: CodeWriteParams,
         execute: async ({ path: filePath, content }) => {
             if (!isFsPathAllowed(filePath, fsPolicy)) {
                 return { error: `Access denied: ${filePath} is outside allowed paths` };
@@ -24,5 +25,5 @@ export function makeCodeWriteTool(fsPolicy) {
                 return { error: `Failed to write file: ${msg}` };
             }
         },
-    });
+    };
 }

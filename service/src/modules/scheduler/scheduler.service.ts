@@ -1,8 +1,8 @@
 import { CronJob } from "cron";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "../../db";
-import { scheduledTasks, taskExecutions } from "../../db/schema";
+import { db } from "../../db/index.js";
+import { scheduledTasks, taskExecutions } from "../../db/schema.js";
 
 // In-memory registry of running cron jobs
 const runningJobs = new Map<string, CronJob>();

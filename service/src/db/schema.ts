@@ -608,6 +608,106 @@ export const aiModels = sqliteTable("ai_models", {
   isDefault: integer("is_default", { mode: "boolean" }).default(false),
 });
 
+// Runtime provider overlays (static pi-ai catalog + user sqlite overrides/custom)
+
+export const providerOverrides = sqliteTable("provider_overrides", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  providerId: text("provider_id").notNull(),
+  name: text("name"),
+  type: text("type"),
+  baseUrl: text("base_url"),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  status: text("status"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  uqWorkspaceProvider: uniqueIndex("provider_overrides_ws_provider_uq").on(t.workspaceId, t.providerId),
+  idxWorkspace: index("provider_overrides_workspace_idx").on(t.workspaceId),
+}));
+
+export const customProviders = sqliteTable("custom_providers", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  baseUrl: text("base_url"),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  idxWorkspace: index("custom_providers_workspace_idx").on(t.workspaceId),
+}));
+
+export const modelOverrides = sqliteTable("model_overrides", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  providerId: text("provider_id").notNull(),
+  modelName: text("model_name").notNull(),
+  displayName: text("display_name"),
+  contextWindow: integer("context_window"),
+  maxOutput: integer("max_output"),
+  inputPrice: real("input_price"),
+  outputPrice: real("output_price"),
+  capabilitiesJson: text("capabilities_json"),
+  enabled: integer("enabled", { mode: "boolean" }),
+  seriesName: text("series_name"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  uqWorkspaceProviderModel: uniqueIndex("model_overrides_ws_provider_model_uq")
+    .on(t.workspaceId, t.providerId, t.modelName),
+  idxWorkspaceProvider: index("model_overrides_workspace_provider_idx")
+    .on(t.workspaceId, t.providerId),
+}));
+
+export const customModels = sqliteTable("custom_models", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  providerId: text("provider_id").notNull(),
+  name: text("name").notNull(),
+  displayName: text("display_name").notNull(),
+  contextWindow: integer("context_window").notNull().default(8192),
+  maxOutput: integer("max_output").notNull().default(4096),
+  inputPrice: real("input_price").notNull().default(0),
+  outputPrice: real("output_price").notNull().default(0),
+  capabilitiesJson: text("capabilities_json").notNull().default("[]"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  seriesName: text("series_name"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+}, (t) => ({
+  uqWorkspaceProviderModel: uniqueIndex("custom_models_ws_provider_model_uq")
+    .on(t.workspaceId, t.providerId, t.name),
+  idxWorkspaceProvider: index("custom_models_workspace_provider_idx")
+    .on(t.workspaceId, t.providerId),
+}));
+
 export const workspaceSettings = sqliteTable("workspace_settings", {
   workspaceId: text("workspace_id")
     .primaryKey()

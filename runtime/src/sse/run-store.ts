@@ -8,6 +8,7 @@ export interface RunParams {
   userRequest: string;
   coordinatorAgentId: string;
   startCandidateOffset?: number;
+  modelIdOverride?: string;
 }
 
 interface StoredEvent {

@@ -17,7 +17,8 @@ function createClient(pkg, ServiceClass) {
 }
 function promisify(client, method, request) {
     return new Promise((resolve, reject) => {
-        client[method](request, (err, response) => {
+        const deadline = new Date(Date.now() + config.grpcCallTimeoutMs);
+        client[method](request, { deadline }, (err, response) => {
             if (err)
                 reject(err);
             else
@@ -29,8 +30,11 @@ function promisify(client, method, request) {
 const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto"));
 const agentRunClient = createClient(agentRunPkg, agentRunPkg.agent_run.AgentRunService);
 export const grpcClient = {
-    getAgentConfig(agentId) {
-        return promisify(agentRunClient, "getAgentConfig", { agentId });
+    getAgentConfig(agentId, modelIdOverride) {
+        return promisify(agentRunClient, "getAgentConfig", {
+            agentId,
+            ...(modelIdOverride ? { modelIdOverride } : {}),
+        });
     },
     getContinueContextByMessage(assistantMessageId) {
         return promisify(agentRunClient, "getContinueContextByMessage", {

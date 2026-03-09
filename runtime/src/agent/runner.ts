@@ -10,6 +10,7 @@ export interface RunRequest {
   userRequest: string;
   coordinatorAgentId: string;
   startCandidateOffset?: number;
+  modelIdOverride?: string;
 }
 
 /**
@@ -21,7 +22,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
   try {
     await grpcClient.updateRunStatus(req.runId, "running");
 
-    const agentCfg = await grpcClient.getAgentConfig(req.coordinatorAgentId);
+    const agentCfg = await grpcClient.getAgentConfig(req.coordinatorAgentId, req.modelIdOverride);
     const sandbox = buildSandboxFromAgentConfig(agentCfg);
 
     await runCoordinator({
@@ -30,6 +31,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
       coordinatorAgentId: req.coordinatorAgentId,
       userMessage: req.userRequest,
       startCandidateOffset: req.startCandidateOffset,
+      modelIdOverride: req.modelIdOverride,
       sandbox,
       emit,
       grpc: grpcClient,

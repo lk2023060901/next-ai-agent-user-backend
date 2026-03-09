@@ -9,7 +9,7 @@ import { runCoordinator } from "./coordinator.js";
 export async function startRun(req, emit) {
     try {
         await grpcClient.updateRunStatus(req.runId, "running");
-        const agentCfg = await grpcClient.getAgentConfig(req.coordinatorAgentId);
+        const agentCfg = await grpcClient.getAgentConfig(req.coordinatorAgentId, req.modelIdOverride);
         const sandbox = buildSandboxFromAgentConfig(agentCfg);
         await runCoordinator({
             runId: req.runId,
@@ -17,6 +17,7 @@ export async function startRun(req, emit) {
             coordinatorAgentId: req.coordinatorAgentId,
             userMessage: req.userRequest,
             startCandidateOffset: req.startCandidateOffset,
+            modelIdOverride: req.modelIdOverride,
             sandbox,
             emit,
             grpc: grpcClient,

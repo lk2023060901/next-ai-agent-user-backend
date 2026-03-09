@@ -1,4 +1,4 @@
-import type { ChannelPlugin, ParsedMessage, TestResult } from './types'
+import type { ChannelPlugin, ParsedMessage, TestResult } from './types.js'
 
 export const wecomPlugin: ChannelPlugin = {
   type: 'wecom',

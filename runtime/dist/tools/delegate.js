@@ -1,13 +1,14 @@
-import { tool } from "ai";
-import { z } from "zod";
+import { Type } from "@sinclair/typebox";
 import { narrowForSubagent } from "../policy/tool-policy.js";
+const DelegateToolParams = Type.Object({
+    agentId: Type.String({ description: "Target agent ID to delegate to" }),
+    instruction: Type.String({ description: "Detailed task instruction for the sub-agent" }),
+});
 export function makeDelegateTool(params) {
-    return tool({
+    return {
+        name: "delegate_to_agent",
         description: "Delegate a subtask to a specialized sub-agent and return its result",
-        parameters: z.object({
-            agentId: z.string().describe("Target agent ID to delegate to"),
-            instruction: z.string().describe("Detailed task instruction for the sub-agent"),
-        }),
+        parameters: DelegateToolParams,
         execute: async ({ agentId, instruction }) => {
             if (params.depth >= params.sandbox.maxSpawnDepth) {
                 return {
@@ -42,5 +43,5 @@ export function makeDelegateTool(params) {
             });
             return result;
         },
-    });
+    };
 }

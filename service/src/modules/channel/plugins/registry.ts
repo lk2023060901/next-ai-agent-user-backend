@@ -1,4 +1,4 @@
-import type { ChannelPlugin } from './types'
+import type { ChannelPlugin } from './types.js'
 
 const registry = new Map<string, ChannelPlugin>()
 

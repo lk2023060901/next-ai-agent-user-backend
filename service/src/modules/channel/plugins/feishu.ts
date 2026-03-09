@@ -5,7 +5,7 @@
  */
 import crypto from 'crypto'
 import * as Lark from '@larksuiteoapi/node-sdk'
-import type { ChannelPlugin, ParsedMessage, TestResult } from './types'
+import type { ChannelPlugin, ParsedMessage, TestResult } from './types.js'
 
 // Client cache keyed by appId
 const clientCache = new Map<string, { client: Lark.Client; appSecret: string }>()

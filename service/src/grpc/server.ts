@@ -1,21 +1,23 @@
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import path from "path";
-import { login, signup, logout, refresh, getMe } from "../modules/auth/auth.service";
-import { getOrg, updateOrg, listMembers, listWorkspaces, getDashboardStats, listOrgs } from "../modules/org/org.service";
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { login, signup, logout, refresh, getMe } from "../modules/auth/auth.service.js";
+import { getOrg, updateOrg, listMembers, listWorkspaces, getDashboardStats, listOrgs } from "../modules/org/org.service.js";
 import {
   getWorkspace,
   createWorkspace,
   updateWorkspace,
   deleteWorkspace,
-} from "../modules/workspace/workspace.service";
+} from "../modules/workspace/workspace.service.js";
 import {
   getWorkspaceSettings,
   updateWorkspaceSettings,
   listProviders, createProvider, updateProvider, deleteProvider, testProvider,
   listModels, listAllModels, createModel, updateModel, deleteModel, listModelSeries, listModelCatalog,
   listApiKeys, createApiKey, deleteApiKey,
-} from "../modules/settings/settings.service";
+} from "../modules/settings/settings.service.js";
 import {
   listTools,
   listToolAuthorizations,
@@ -28,27 +30,27 @@ import {
   createKnowledgeBaseDocument,
   deleteKnowledgeBaseDocument,
   searchKnowledgeBase,
-} from "../modules/tools/tools.service";
+} from "../modules/tools/tools.service.js";
 import {
   listChannels, getChannel, createChannel, updateChannel, deleteChannel,
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule,
   handleWebhook, listChannelMessages, sendChannelMessage, bootstrapChannelConnections, isSupportedChannelType,
-} from "../modules/channel/channel.service";
-import { getPlugin } from "../modules/channel/plugins";
+} from "../modules/channel/channel.service.js";
+import { getPlugin } from "../modules/channel/plugins/index.js";
 import {
   listTasks, createTask, updateTask, deleteTask, runTask, listExecutions, bootstrapScheduler,
-} from "../modules/scheduler/scheduler.service";
+} from "../modules/scheduler/scheduler.service.js";
 import {
   getAgentConfig, createRun, appendMessage, updateRunStatus, createAgentTask, updateAgentTask,
   recordRunUsage, recordTaskUsage, reportPluginUsageEvents as reportPluginUsageEventsFromAgentRun,
   getContinueContextByMessageId, getContinueContextByRunId,
-} from "../modules/agent-run/agent-run.service";
+} from "../modules/agent-run/agent-run.service.js";
 import {
   listSessions, createSession, updateSession, deleteSession, listMessages, saveUserMessage, updateUserMessage,
   getRuntimeMetrics, listUsageRecords,
   reportWorkspacePluginUsageEvents,
   listAgents, createAgent, getAgent, updateAgent, deleteAgent,
-} from "../modules/chat/chat.service";
+} from "../modules/chat/chat.service.js";
 import {
   listNodeTypes,
   getLegacyKindByTypeId,
@@ -60,7 +62,7 @@ import {
   validateWorkflowDataJson,
   getLegacyBlueprintByWorkflow,
   saveLegacyBlueprint,
-} from "../modules/workflow/workflow.service";
+} from "../modules/workflow/workflow.service.js";
 import {
   getMarketplacePlugin,
   installWorkspacePlugin,
@@ -79,7 +81,7 @@ import {
   type PluginMarketplaceItem,
   type PluginReviewItem,
   type RuntimePluginLoadCandidate,
-} from "../modules/plugins/plugin.service";
+} from "../modules/plugins/plugin.service.js";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
 
@@ -442,32 +444,32 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        callback(null, updateProvider(call.request.id, {
+        callback(null, updateProvider(call.request.workspaceId, call.request.id, {
           name: call.request.name, apiKey: call.request.apiKey,
           baseUrl: call.request.baseUrl, status: call.request.status,
         }));
       } catch (err) { handleError(callback, err); }
     },
     deleteProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteProvider(call.request.id); callback(null, {}); }
+      try { deleteProvider(call.request.workspaceId, call.request.id); callback(null, {}); }
       catch (err) { handleError(callback, err); }
     },
     async testProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        const result = await testProvider(call.request.id);
+        const result = await testProvider(call.request.workspaceId, call.request.id);
         callback(null, { success: result.success, message: result.message });
       } catch (err) { handleError(callback, err); }
     },
     listModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { models: listModels(call.request.providerId) }); }
+      try { callback(null, { models: listModels(call.request.workspaceId, call.request.providerId) }); }
       catch (err) { handleError(callback, err); }
     },
     listModelSeries(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { series: listModelSeries(call.request.providerId) }); }
+      try { callback(null, { series: listModelSeries(call.request.workspaceId, call.request.providerId) }); }
       catch (err) { handleError(callback, err); }
     },
     listModelCatalog(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { series: listModelCatalog(call.request.providerId) }); }
+      try { callback(null, { series: listModelCatalog(call.request.workspaceId, call.request.providerId) }); }
       catch (err) { handleError(callback, err); }
     },
     listAllModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -483,6 +485,7 @@ export function startGrpcServer(port: number): grpc.Server {
           "cost_per_1k_tokens",
         ]);
         callback(null, createModel({
+          workspaceId: call.request.workspaceId,
           providerId: call.request.providerId, name: call.request.name,
           contextWindow: call.request.contextWindow, costPer1kTokens,
           isDefault: call.request.isDefault,
@@ -497,14 +500,14 @@ export function startGrpcServer(port: number): grpc.Server {
           "costPer_1KTokens",
           "cost_per_1k_tokens",
         ]);
-        callback(null, updateModel(call.request.id, {
+        callback(null, updateModel(call.request.workspaceId, call.request.id, {
           name: call.request.name, contextWindow: call.request.contextWindow,
           costPer1kTokens, isDefault: call.request.isDefault,
         }));
       } catch (err) { handleError(callback, err); }
     },
     deleteModel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteModel(call.request.id); callback(null, {}); }
+      try { deleteModel(call.request.workspaceId, call.request.id); callback(null, {}); }
       catch (err) { handleError(callback, err); }
     },
     listApiKeys(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {

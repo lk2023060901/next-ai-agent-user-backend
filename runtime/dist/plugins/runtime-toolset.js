@@ -1,4 +1,4 @@
-import { jsonSchema, tool } from "ai";
+import { Type } from "@sinclair/typebox";
 import { listWorkspaceRuntimePlugins } from "./runtime-loader.js";
 import { grpcClient } from "../grpc/client.js";
 import { reportPluginToolUsageEvent } from "./plugin-usage-reporter.js";
@@ -35,12 +35,19 @@ async function executePluginTool(params) {
     const execute = params.plugin.tool.execute;
     const mode = params.plugin.tool.executeMode;
     if (mode === "ai-sdk") {
-        return await execute(params.args, params.options, params.context);
+        // ai-sdk mode: (args, options, context) — map ToolContext to the expected shape
+        const options = {
+            toolCallId: params.toolContext.toolCallId,
+            abortSignal: params.toolContext.signal,
+            messages: [],
+        };
+        return await execute(params.args, options, params.context);
     }
     if (mode === "args-only") {
         return await execute(params.args, params.context);
     }
-    return await execute(params.options.toolCallId, params.args, params.context);
+    // legacy mode: (toolCallId, args, context)
+    return await execute(params.toolContext.toolCallId, params.args, params.context);
 }
 export function buildRuntimePluginToolset(params) {
     const out = {};
@@ -56,10 +63,13 @@ export function buildRuntimePluginToolset(params) {
             agentModel: params.agentModel,
             depth: params.depth,
         });
-        out[toolName] = tool({
+        // Use Type.Unsafe to wrap the plugin's raw JSON Schema as a TypeBox schema
+        const parameters = Type.Unsafe(plugin.tool.parametersJsonSchema);
+        out[toolName] = {
+            name: toolName,
             description: plugin.tool.description,
-            parameters: jsonSchema(plugin.tool.parametersJsonSchema),
-            execute: async (args, options) => {
+            parameters,
+            execute: async (args, toolContext) => {
                 const startedAtMs = Date.now();
                 try {
                     const guarded = await runtimePluginExecutionGuard.run({
@@ -67,7 +77,7 @@ export function buildRuntimePluginToolset(params) {
                         execute: () => executePluginTool({
                             plugin,
                             args,
-                            options,
+                            toolContext,
                             context: executionContext,
                         }),
                     });
@@ -77,7 +87,7 @@ export function buildRuntimePluginToolset(params) {
                         plugin,
                         context: executionContext,
                         toolName,
-                        toolCallId: options.toolCallId,
+                        toolCallId: toolContext.toolCallId,
                         startedAtMs,
                         endedAtMs: Date.now(),
                         result,
@@ -94,7 +104,7 @@ export function buildRuntimePluginToolset(params) {
                         plugin,
                         context: executionContext,
                         toolName,
-                        toolCallId: options.toolCallId,
+                        toolCallId: toolContext.toolCallId,
                         startedAtMs,
                         endedAtMs: Date.now(),
                         errorMessage: message,
@@ -109,7 +119,7 @@ export function buildRuntimePluginToolset(params) {
                     };
                 }
             },
-        });
+        };
     }
     return out;
 }

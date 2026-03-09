@@ -2,9 +2,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import { eq } from "drizzle-orm";
-import { db } from "../../db";
-import { users, refreshTokens, organizations, orgMembers, workspaces } from "../../db/schema";
-import { config } from "../../config";
+import { db } from "../../db/index.js";
+import { users, refreshTokens, organizations, orgMembers, workspaces } from "../../db/schema.js";
+import { config } from "../../config.js";
 
 export interface AuthTokens {
   accessToken: string;

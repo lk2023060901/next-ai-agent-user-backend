@@ -119,6 +119,7 @@ function extractRunIdFromLocalMessageId(messageId) {
 app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
     const { wsId } = request.params;
     const { sessionId, userRequest, coordinatorAgentId } = request.body;
+    const modelIdOverride = (request.body.modelId ?? "").trim() || undefined;
     const resumeFromMessageId = (request.body.resumeFromMessageId ?? "").trim();
     const explicitResumeFromRunId = (request.body.resumeFromRunId ?? "").trim();
     const resumeFromRunId = explicitResumeFromRunId || extractRunIdFromLocalMessageId(resumeFromMessageId || "") || "";
@@ -206,6 +207,7 @@ app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
                 userRequest: effectiveUserRequest,
                 coordinatorAgentId: effectiveCoordinatorAgentId,
                 startCandidateOffset,
+                modelIdOverride,
             },
             idempotencyKey,
             fingerprint,

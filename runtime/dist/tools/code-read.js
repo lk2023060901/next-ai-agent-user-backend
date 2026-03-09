@@ -1,13 +1,14 @@
 import fs from "fs";
-import { tool } from "ai";
-import { z } from "zod";
+import { Type } from "@sinclair/typebox";
 import { isFsPathAllowed } from "../policy/fs-policy.js";
+const CodeReadParams = Type.Object({
+    path: Type.String({ description: "Absolute file path to read" }),
+});
 export function makeCodeReadTool(fsPolicy) {
-    return tool({
+    return {
+        name: "code_read",
         description: "Read the contents of a file at the given path",
-        parameters: z.object({
-            path: z.string().describe("Absolute file path to read"),
-        }),
+        parameters: CodeReadParams,
         execute: async ({ path: filePath }) => {
             if (!isFsPathAllowed(filePath, fsPolicy)) {
                 return { error: `Access denied: ${filePath} is outside allowed paths` };
@@ -21,5 +22,5 @@ export function makeCodeReadTool(fsPolicy) {
                 return { error: `Failed to read file: ${msg}` };
             }
         },
-    });
+    };
 }

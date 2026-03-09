@@ -1,4 +1,4 @@
-import type { CoreTool } from "ai";
+import type { RuntimeTool } from "./types.js";
 import type { SandboxPolicy } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import type { grpcClient } from "../grpc/client.js";
@@ -22,8 +22,8 @@ export interface ToolRegistryParams {
   agentConfigModel: string;
 }
 
-export function buildToolset(params: ToolRegistryParams): Record<string, CoreTool> {
-  const allTools: Record<string, CoreTool> = {
+export function buildToolset(params: ToolRegistryParams): Record<string, RuntimeTool> {
+  const allTools: Record<string, RuntimeTool> = {
     code_read: makeCodeReadTool(params.sandbox.fsPolicy),
     code_write: makeCodeWriteTool(params.sandbox.fsPolicy),
     search_knowledge: makeSearchKnowledgeTool(),
@@ -43,7 +43,7 @@ export function buildToolset(params: ToolRegistryParams): Record<string, CoreToo
   Object.assign(allTools, pluginTools);
 
   // Filter by tool policy — deny wins over allow
-  const filtered: Record<string, CoreTool> = {};
+  const filtered: Record<string, RuntimeTool> = {};
   for (const [name, tool] of Object.entries(allTools)) {
     if (isToolAllowed(name, params.sandbox.toolPolicy)) {
       filtered[name] = tool;

@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import * as Lark from '@larksuiteoapi/node-sdk'
 import { v4 as uuidv4 } from 'uuid'
-import { db } from '../../db'
+import { db } from '../../db/index.js'
 import {
   channels,
   channelMessages,
@@ -9,10 +9,10 @@ import {
   chatSessions,
   installedPlugins,
   routingRules,
-} from '../../db/schema'
-import { config } from '../../config'
-import { getPlugin, type ParsedMessage } from './plugins'
-import './plugins' // ensure all plugins are registered on import
+} from '../../db/schema.js'
+import { config } from '../../config.js'
+import { getPlugin, type ParsedMessage } from './plugins/index.js'
+import './plugins/index.js' // ensure all plugins are registered on import
 
 type ChannelRow = typeof channels.$inferSelect
 

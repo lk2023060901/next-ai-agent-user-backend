@@ -3,7 +3,10 @@ package agent_run;
 
 option go_package = "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/agent_run";
 
-message GetAgentConfigRequest { string agent_id = 1; }
+message GetAgentConfigRequest {
+  string agent_id = 1;
+  string model_id_override = 2;
+}
 message GetContinueContextRequest { string assistant_message_id = 1; }
 message GetContinueContextByRunRequest { string run_id = 1; }
 message LlmCandidate {

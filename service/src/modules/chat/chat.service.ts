@@ -1,13 +1,13 @@
 import { and, desc, eq, gt, inArray, lt, or, type SQL } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "../../db";
+import { db } from "../../db/index.js";
 import {
   getWorkspaceRuntimeMetrics,
   listWorkspaceUsageRecords,
   reportPluginUsageEvents,
   type ReportPluginUsageEventInput,
-} from "../agent-run/agent-run.service";
-import { normalizeAgentConfigJson, parseAgentConfigJson } from "./agent-config";
+} from "../agent-run/agent-run.service.js";
+import { normalizeAgentConfigJson, parseAgentConfigJson } from "./agent-config.js";
 import {
   chatSessions,
   messages,
@@ -15,7 +15,7 @@ import {
   aiModels,
   aiProviders,
   agentKnowledgeBases,
-} from "../../db/schema";
+} from "../../db/schema.js";
 
 function resolveWorkspaceModel(workspaceId: string, modelId: string) {
   const model = db.select().from(aiModels).where(eq(aiModels.id, modelId)).get();

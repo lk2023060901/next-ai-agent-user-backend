@@ -1,4 +1,5 @@
-import { jsonSchema, tool, type CoreTool } from "ai";
+import { Type } from "@sinclair/typebox";
+import type { RuntimeTool, ToolContext } from "../tools/types.js";
 import { listWorkspaceRuntimePlugins, type LoadedRuntimePlugin, type RuntimePluginExecutionContext } from "./runtime-loader.js";
 import { grpcClient } from "../grpc/client.js";
 import { reportPluginToolUsageEvent } from "./plugin-usage-reporter.js";
@@ -12,12 +13,6 @@ export interface RuntimePluginToolsetParams {
   agentModel: string;
   depth: number;
   reservedNames?: string[];
-}
-
-interface RuntimeToolExecutionOptions {
-  toolCallId: string;
-  abortSignal?: AbortSignal;
-  messages: unknown[];
 }
 
 function uniqueToolName(base: string, occupied: Set<string>): string {
@@ -61,23 +56,30 @@ function buildExecutionContext(params: {
 async function executePluginTool(params: {
   plugin: LoadedRuntimePlugin;
   args: unknown;
-  options: RuntimeToolExecutionOptions;
+  toolContext: ToolContext;
   context: RuntimePluginExecutionContext;
 }): Promise<unknown> {
   const execute = params.plugin.tool.execute;
   const mode = params.plugin.tool.executeMode;
 
   if (mode === "ai-sdk") {
-    return await execute(params.args, params.options, params.context);
+    // ai-sdk mode: (args, options, context) — map ToolContext to the expected shape
+    const options = {
+      toolCallId: params.toolContext.toolCallId,
+      abortSignal: params.toolContext.signal,
+      messages: [],
+    };
+    return await execute(params.args, options, params.context);
   }
   if (mode === "args-only") {
     return await execute(params.args, params.context);
   }
-  return await execute(params.options.toolCallId, params.args, params.context);
+  // legacy mode: (toolCallId, args, context)
+  return await execute(params.toolContext.toolCallId, params.args, params.context);
 }
 
-export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): Record<string, CoreTool> {
-  const out: Record<string, CoreTool> = {};
+export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): Record<string, RuntimeTool> {
+  const out: Record<string, RuntimeTool> = {};
   const occupied = new Set(params.reservedNames ?? []);
   const plugins = listWorkspaceRuntimePlugins(params.workspaceId);
 
@@ -92,10 +94,14 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
       depth: params.depth,
     });
 
-    out[toolName] = tool({
+    // Use Type.Unsafe to wrap the plugin's raw JSON Schema as a TypeBox schema
+    const parameters = Type.Unsafe(plugin.tool.parametersJsonSchema as any);
+
+    out[toolName] = {
+      name: toolName,
       description: plugin.tool.description,
-      parameters: jsonSchema(plugin.tool.parametersJsonSchema as any),
-      execute: async (args, options) => {
+      parameters,
+      execute: async (args: unknown, toolContext: ToolContext) => {
         const startedAtMs = Date.now();
         try {
           const guarded = await runtimePluginExecutionGuard.run({
@@ -104,7 +110,7 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
               executePluginTool({
                 plugin,
                 args,
-                options,
+                toolContext,
                 context: executionContext,
               }),
           });
@@ -114,7 +120,7 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
             plugin,
             context: executionContext,
             toolName,
-            toolCallId: options.toolCallId,
+            toolCallId: toolContext.toolCallId,
             startedAtMs,
             endedAtMs: Date.now(),
             result,
@@ -130,7 +136,7 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
             plugin,
             context: executionContext,
             toolName,
-            toolCallId: options.toolCallId,
+            toolCallId: toolContext.toolCallId,
             startedAtMs,
             endedAtMs: Date.now(),
             errorMessage: message,
@@ -145,7 +151,7 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
           };
         }
       },
-    });
+    };
   }
 
   return out;

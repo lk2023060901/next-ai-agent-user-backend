@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import type { ChannelPlugin, ParsedMessage, TestResult } from './types'
+import type { ChannelPlugin, ParsedMessage, TestResult } from './types.js'
 
 export const discordPlugin: ChannelPlugin = {
   type: 'discord',

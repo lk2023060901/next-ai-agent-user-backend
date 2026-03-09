@@ -24,6 +24,7 @@ export const config = {
     pluginToolMaxConcurrencyPerPlugin: Math.max(1, getIntEnv("PLUGIN_TOOL_MAX_CONCURRENCY_PER_PLUGIN", 2)),
     pluginToolFailureThreshold: Math.max(1, getIntEnv("PLUGIN_TOOL_FAILURE_THRESHOLD", 5)),
     pluginToolFailureCooldownMs: Math.max(1_000, getIntEnv("PLUGIN_TOOL_FAILURE_COOLDOWN_MS", 60_000)),
+    grpcCallTimeoutMs: getIntEnv("GRPC_CALL_TIMEOUT_MS", 15_000),
     protoDir: getEnv("PROTO_DIR", `${import.meta.dirname}/../../proto`),
     // LLM direct access (bypasses Bifrost). Set both to skip Bifrost.
     // For BigModel: LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4

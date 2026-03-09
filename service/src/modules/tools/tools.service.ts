@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { promises as fs } from "fs";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "../../db";
+import { db } from "../../db/index.js";
 import {
   aiModels,
   aiProviders,
@@ -11,7 +11,7 @@ import {
   tools,
   toolAuthorizations,
   workspaces,
-} from "../../db/schema";
+} from "../../db/schema.js";
 
 const DEFAULT_KB_CHUNK_SIZE = 1200;
 const DEFAULT_KB_CHUNK_OVERLAP = 200;

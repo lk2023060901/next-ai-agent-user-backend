@@ -131,10 +131,10 @@ async function main(): Promise<void> {
   const migrationsFolder = path.resolve(process.cwd(), "drizzle");
   assertTrue(fsSync.existsSync(migrationsFolder), `migrations folder not found: ${migrationsFolder}`);
 
-  const { db } = await import("../db/index");
-  const schema = await import("../db/schema");
-  const pluginService = await import("../modules/plugins/plugin.service");
-  const agentRunService = await import("../modules/agent-run/agent-run.service");
+  const { db } = await import("../db/index.js");
+  const schema = await import("../db/schema.js");
+  const pluginService = await import("../modules/plugins/plugin.service.js");
+  const agentRunService = await import("../modules/agent-run/agent-run.service.js");
 
   migrate(db, { migrationsFolder });
 

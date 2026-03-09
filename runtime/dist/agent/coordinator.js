@@ -1,35 +1,53 @@
-import { generateObject, streamText } from "ai";
+import { completeSimple } from "@mariozechner/pi-ai";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { makeDelegateTool } from "../tools/delegate.js";
 import { makeWebSearchTool } from "../tools/web-search.js";
 import { isToolAllowed } from "../policy/tool-policy.js";
-import { buildModelForAgent, getLlmCandidates } from "../llm/model-factory.js";
+import { buildModelForAgent, getLlmCandidates, resolveApiKey } from "../llm/model-factory.js";
 import { buildRuntimePluginToolset } from "../plugins/runtime-toolset.js";
+import { runStreamLoop } from "./stream-loop.js";
 const WEB_SEARCH_PLAN_SCHEMA = z.object({
     needWebSearch: z.boolean(),
     query: z.string().min(1).max(180),
     confidence: z.number().min(0).max(1),
     reason: z.string().min(1).max(240),
 });
-async function decideWebSearch(model, userMessage, systemPrompt) {
+async function decideWebSearch(model, apiKey, userMessage, systemPrompt) {
     try {
-        const { object } = await generateObject({
-            model,
-            schema: WEB_SEARCH_PLAN_SCHEMA,
+        const result = await completeSimple(model, {
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: [
+                                "You are a routing planner for an AI coordinator.",
+                                "Decide whether the request requires fresh public web information before answering.",
+                                "Use reasoning, not keyword matching.",
+                                "Set needWebSearch=true when the answer likely depends on recent/real-time facts, news, prices, schedules, or external verification.",
+                                "Set needWebSearch=false for stable knowledge, coding, writing, translation, summarization, or opinion.",
+                                "Return ONLY a JSON object: { needWebSearch: boolean, query: string, confidence: number, reason: string }",
+                                "No markdown, no explanation, just JSON.",
+                                "Return a concise search query in the same language as the user question.",
+                                `Coordinator system prompt (may be empty): ${systemPrompt || "(empty)"}`,
+                                `User request: ${userMessage}`,
+                            ].join("\n"),
+                        },
+                    ],
+                    timestamp: Date.now(),
+                },
+            ],
+        }, {
+            apiKey,
             temperature: 0,
-            prompt: [
-                "You are a routing planner for an AI coordinator.",
-                "Decide whether the request requires fresh public web information before answering.",
-                "Use reasoning, not keyword matching.",
-                "Set needWebSearch=true when the answer likely depends on recent/real-time facts, news, prices, schedules, or external verification.",
-                "Set needWebSearch=false for stable knowledge, coding, writing, translation, summarization, or opinion.",
-                "Return a concise search query in the same language as the user question.",
-                `Coordinator system prompt (may be empty): ${systemPrompt || "(empty)"}`,
-                `User request: ${userMessage}`,
-            ].join("\n"),
+            maxTokens: 256,
+            signal: AbortSignal.timeout(8000),
         });
-        return object;
+        const text = result.content.find((c) => c.type === "text")?.text ?? "";
+        const parsed = JSON.parse(text);
+        return WEB_SEARCH_PLAN_SCHEMA.parse(parsed);
     }
     catch {
         return null;
@@ -70,12 +88,9 @@ function formatWebSearchContext(result) {
     return sections.join("\n");
 }
 export async function runCoordinator(params) {
-    const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId);
+    const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId, params.modelIdOverride);
     const llmCandidates = getLlmCandidates(agentCfg);
-    const planningModel = buildModelForAgent(agentCfg, llmCandidates[0]);
-    let fullText = "";
     const messageId = uuidv4();
-    const pendingToolCalls = new Map();
     params.emit({
         type: "message-start",
         runId: params.runId,
@@ -97,9 +112,18 @@ export async function runCoordinator(params) {
         });
     }
     const webSearchAllowed = isToolAllowed("web_search", params.sandbox.toolPolicy);
+    // Pre-flight web search decision
     let webSearchContext = "";
+    const planningApiKey = resolveApiKey(agentCfg, llmCandidates[0]);
+    let planningModel;
+    try {
+        planningModel = buildModelForAgent(agentCfg, llmCandidates[0]);
+    }
+    catch {
+        planningModel = buildModelForAgent(agentCfg);
+    }
     const searchPlan = webSearchAllowed
-        ? await decideWebSearch(planningModel, params.userMessage, agentCfg.systemPrompt || "")
+        ? await decideWebSearch(planningModel, planningApiKey, params.userMessage, agentCfg.systemPrompt || "")
         : null;
     const shouldForceWebSearch = Boolean(searchPlan?.needWebSearch) &&
         Boolean(searchPlan?.query?.trim()) &&
@@ -107,17 +131,18 @@ export async function runCoordinator(params) {
     if (shouldForceWebSearch) {
         const toolCallId = uuidv4();
         const query = searchPlan.query.trim();
-        const args = { query, count: 5, provider: "auto" };
+        const searchArgs = { query, count: 5, provider: "auto" };
         params.emit({
             type: "tool-call",
             runId: params.runId,
             messageId,
             toolCallId,
             toolName: "web_search",
-            args,
+            args: searchArgs,
         });
         try {
-            const preflightResult = await makeWebSearchTool().execute(args);
+            const webSearchTool = makeWebSearchTool();
+            const preflightResult = await webSearchTool.execute(searchArgs, { toolCallId });
             params.emit({
                 type: "tool-result",
                 runId: params.runId,
@@ -172,22 +197,8 @@ export async function runCoordinator(params) {
     ]
         .filter((part) => part.trim().length > 0)
         .join("\n\n");
-    const userMessage = params.userMessage;
-    let result = null;
-    const resolveUsage = async () => {
-        try {
-            if (!result)
-                return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-            const usage = await result.usage;
-            const inputTokens = Math.max(0, usage.promptTokens ?? 0);
-            const outputTokens = Math.max(0, usage.completionTokens ?? 0);
-            const totalTokens = Math.max(0, usage.totalTokens ?? (inputTokens + outputTokens));
-            return { inputTokens, outputTokens, totalTokens };
-        }
-        catch {
-            return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-        }
-    };
+    let fullText = "";
+    let totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     try {
         const orderedCandidates = llmCandidates.length > 0 ? llmCandidates : [undefined];
         const rawStartOffset = params.startCandidateOffset ?? 0;
@@ -196,87 +207,23 @@ export async function runCoordinator(params) {
         let streamError = null;
         for (let index = 0; index < candidates.length; index += 1) {
             const candidate = candidates[index];
-            let emittedStreamData = false;
             fullText = "";
-            pendingToolCalls.clear();
             try {
-                result = streamText({
-                    model: buildModelForAgent(agentCfg, candidate),
-                    system: systemPrompt || undefined,
-                    messages: [{ role: "user", content: userMessage }],
-                    tools: Object.keys(tools).length > 0 ? tools : undefined,
+                const model = buildModelForAgent(agentCfg, candidate);
+                const apiKey = resolveApiKey(agentCfg, candidate ?? undefined);
+                const result = await runStreamLoop({
+                    model,
+                    systemPrompt,
+                    userMessage: params.userMessage,
+                    tools,
                     maxSteps: params.sandbox.maxTurns,
+                    apiKey,
+                    emit: params.emit,
+                    runId: params.runId,
+                    messageId,
                 });
-                for await (const chunk of result.fullStream) {
-                    const c = chunk;
-                    if (c.type === "text-delta" && c.textDelta !== undefined) {
-                        emittedStreamData = true;
-                        fullText += c.textDelta;
-                        params.emit({
-                            type: "text-delta",
-                            runId: params.runId,
-                            messageId,
-                            text: c.textDelta,
-                            delta: c.textDelta,
-                        });
-                    }
-                    else if (c.type === "reasoning-delta") {
-                        const text = c.textDelta ?? c.text ?? c.reasoning ?? "";
-                        if (text) {
-                            emittedStreamData = true;
-                            params.emit({
-                                type: "reasoning-delta",
-                                runId: params.runId,
-                                messageId,
-                                text,
-                                delta: text,
-                            });
-                        }
-                    }
-                    else if (c.type === "reasoning") {
-                        const text = c.text ?? c.reasoning ?? "";
-                        if (text) {
-                            emittedStreamData = true;
-                            params.emit({ type: "reasoning", runId: params.runId, messageId, text });
-                        }
-                    }
-                    else if (c.type === "tool-call") {
-                        emittedStreamData = true;
-                        const toolName = c.toolName ?? "unknown_tool";
-                        const toolCallId = c.toolCallId ?? uuidv4();
-                        const queue = pendingToolCalls.get(toolName) ?? [];
-                        queue.push(toolCallId);
-                        pendingToolCalls.set(toolName, queue);
-                        params.emit({
-                            type: "tool-call",
-                            runId: params.runId,
-                            messageId,
-                            toolCallId,
-                            toolName,
-                            args: c.args ?? {},
-                        });
-                    }
-                    else if (c.type === "tool-result") {
-                        emittedStreamData = true;
-                        const toolName = c.toolName ?? "unknown_tool";
-                        const queue = pendingToolCalls.get(toolName);
-                        const queuedToolCallId = queue && queue.length > 0 ? queue.shift() : undefined;
-                        if (queue && queue.length === 0)
-                            pendingToolCalls.delete(toolName);
-                        params.emit({
-                            type: "tool-result",
-                            runId: params.runId,
-                            messageId,
-                            toolCallId: c.toolCallId ?? queuedToolCallId,
-                            toolName,
-                            result: c.result ?? "",
-                            status: "success",
-                        });
-                    }
-                    else if (c.type === "error") {
-                        throw new Error(String(c.error));
-                    }
-                }
+                fullText = result.fullText;
+                totalUsage = result.usage;
                 streamError = null;
                 break;
             }
@@ -284,7 +231,7 @@ export async function runCoordinator(params) {
                 streamError = err;
                 const errorMessage = err instanceof Error ? err.message : String(err);
                 const hasNextCandidate = index + 1 < candidates.length;
-                if (hasNextCandidate && !emittedStreamData && fullText.trim().length === 0) {
+                if (hasNextCandidate && fullText.trim().length === 0) {
                     console.warn(`[coordinator] primary model failed before streaming, retrying fallback (${index + 1}/${candidates.length})`, {
                         runId: params.runId,
                         agentId: params.coordinatorAgentId,
@@ -302,23 +249,22 @@ export async function runCoordinator(params) {
         }
     }
     catch (err) {
-        const usage = await resolveUsage();
         params.emit({
             type: "usage",
             runId: params.runId,
             messageId,
             agentId: params.coordinatorAgentId,
             scope: "coordinator",
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            totalTokens: usage.totalTokens,
+            inputTokens: totalUsage.inputTokens,
+            outputTokens: totalUsage.outputTokens,
+            totalTokens: totalUsage.totalTokens,
         });
         try {
             await params.grpc.recordRunUsage({
                 runId: params.runId,
-                inputTokens: usage.inputTokens,
-                outputTokens: usage.outputTokens,
-                totalTokens: usage.totalTokens,
+                inputTokens: totalUsage.inputTokens,
+                outputTokens: totalUsage.outputTokens,
+                totalTokens: totalUsage.totalTokens,
             });
         }
         catch {
@@ -342,35 +288,39 @@ export async function runCoordinator(params) {
         params.emit({ type: "message-end", runId: params.runId, messageId });
         throw err;
     }
-    const usage = await resolveUsage();
     params.emit({
         type: "usage",
         runId: params.runId,
         messageId,
         agentId: params.coordinatorAgentId,
         scope: "coordinator",
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        totalTokens: usage.totalTokens,
+        inputTokens: totalUsage.inputTokens,
+        outputTokens: totalUsage.outputTokens,
+        totalTokens: totalUsage.totalTokens,
     });
     try {
         await params.grpc.recordRunUsage({
             runId: params.runId,
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            totalTokens: usage.totalTokens,
+            inputTokens: totalUsage.inputTokens,
+            outputTokens: totalUsage.outputTokens,
+            totalTokens: totalUsage.totalTokens,
         });
     }
     catch {
         // best effort
     }
     if (fullText.trim().length > 0) {
-        await params.grpc.appendMessage({
-            runId: params.runId,
-            role: "assistant",
-            content: fullText,
-            agentId: params.coordinatorAgentId,
-        });
+        try {
+            await params.grpc.appendMessage({
+                runId: params.runId,
+                role: "assistant",
+                content: fullText,
+                agentId: params.coordinatorAgentId,
+            });
+        }
+        catch {
+            // best effort — message-end must always fire
+        }
     }
     params.emit({ type: "message-end", runId: params.runId, messageId });
 }

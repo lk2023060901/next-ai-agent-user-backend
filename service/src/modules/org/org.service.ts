@@ -1,6 +1,6 @@
 import { eq, inArray } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "../../db";
+import { db } from "../../db/index.js";
 import {
   organizations,
   orgMembers,
@@ -10,7 +10,8 @@ import {
   chatSessions,
   channels,
   agentRuns,
-} from "../../db/schema";
+  usageRecords,
+} from "../../db/schema.js";
 
 function resolveOrgByRef(orgRef: string) {
   const ref = (orgRef ?? "").trim();
@@ -121,7 +122,9 @@ export function getDashboardStats(orgRef: string) {
       .filter((s) => (s.createdAt ?? "").slice(0, 10) === todayKey).length;
   }, 0);
 
+  // Aggregate tokens from agent_runs
   const runRows = db.select().from(agentRuns).where(inArray(agentRuns.workspaceId, wsIds)).all();
+  const countedRunIds = new Set<string>();
   const tokenSparkline = [0, 0, 0, 0, 0, 0, 0];
   let currentTokenTotal = 0;
   let previousTokenTotal = 0;
@@ -129,10 +132,31 @@ export function getDashboardStats(orgRef: string) {
   let previousCompletedTasks = 0;
 
   for (const run of runRows) {
+    countedRunIds.add(run.id);
     const day = (run.endedAt ?? run.updatedAt ?? run.createdAt ?? "").slice(0, 10);
     if (!day) continue;
     const totalTokens = run.totalTokens ?? 0;
     const completedTasks = run.taskSuccessCount ?? 0;
+
+    if (currentDateSet.has(day)) {
+      currentTokenTotal += totalTokens;
+      currentCompletedTasks += completedTasks;
+      const idx = dateToIndex.get(day);
+      if (idx !== undefined) tokenSparkline[idx] += totalTokens;
+    } else if (prevDateSet.has(day)) {
+      previousTokenTotal += totalTokens;
+      previousCompletedTasks += completedTasks;
+    }
+  }
+
+  // Supplement with usage_records for runs not already counted via agent_runs
+  const usageRows = db.select().from(usageRecords).where(inArray(usageRecords.workspaceId, wsIds)).all();
+  for (const rec of usageRows) {
+    if (rec.runId && countedRunIds.has(rec.runId)) continue;
+    const day = (rec.endedAt ?? rec.recordedAt ?? "").slice(0, 10);
+    if (!day) continue;
+    const totalTokens = rec.totalTokens ?? 0;
+    const completedTasks = rec.successCount ?? 0;
 
     if (currentDateSet.has(day)) {
       currentTokenTotal += totalTokens;

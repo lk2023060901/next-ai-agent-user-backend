@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { config } from "./config";
-import { startGrpcServer } from "./grpc/server";
+import { config } from "./config.js";
+import { startGrpcServer } from "./grpc/server.js";
 
 const app = Fastify({ logger: true });
 

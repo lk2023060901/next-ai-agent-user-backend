@@ -4,10 +4,12 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { config } from "../../config";
-import { db } from "../../db";
+import { config } from "../../config.js";
+import { db } from "../../db/index.js";
 import {
   installedPlugins,
   pluginFavorites,
@@ -17,7 +19,7 @@ import {
   plugins,
   users,
   workspaces,
-} from "../../db/schema";
+} from "../../db/schema.js";
 
 const MANIFEST_FILE = "openclaw.plugin.json";
 const ALLOWED_PLUGIN_TYPES = new Set([

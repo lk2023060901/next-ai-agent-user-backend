@@ -20,7 +20,8 @@ function createClient(pkg: any, ServiceClass: any): any {
 
 function promisify<T>(client: any, method: string, request: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
-    client[method](request, (err: grpc.ServiceError | null, response: T) => {
+    const deadline = new Date(Date.now() + config.grpcCallTimeoutMs);
+    client[method](request, { deadline }, (err: grpc.ServiceError | null, response: T) => {
       if (err) reject(err);
       else resolve(response);
     });
@@ -96,8 +97,11 @@ export interface PluginUsageEvent {
 }
 
 export const grpcClient = {
-  getAgentConfig(agentId: string): Promise<AgentConfig> {
-    return promisify<AgentConfig>(agentRunClient, "getAgentConfig", { agentId });
+  getAgentConfig(agentId: string, modelIdOverride?: string): Promise<AgentConfig> {
+    return promisify<AgentConfig>(agentRunClient, "getAgentConfig", {
+      agentId,
+      ...(modelIdOverride ? { modelIdOverride } : {}),
+    });
   },
 
   getContinueContextByMessage(assistantMessageId: string): Promise<ContinueContext> {

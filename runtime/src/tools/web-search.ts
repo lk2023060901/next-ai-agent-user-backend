@@ -1,5 +1,5 @@
-import { tool } from "ai";
-import { z } from "zod";
+import { Type } from "@sinclair/typebox";
+import type { RuntimeTool } from "./types.js";
 import { config } from "../config.js";
 
 interface WebSearchItem {
@@ -72,28 +72,40 @@ function classifyFailure(msg: string): string {
   return "unknown";
 }
 
-export function makeWebSearchTool() {
-  return tool({
+const WebSearchParams = Type.Object({
+  query: Type.String({ description: "Search query" }),
+  count: Type.Optional(Type.Number({ description: "Maximum number of results", default: 5 })),
+  maxResults: Type.Optional(Type.Number({ description: "Deprecated alias for count" })),
+  provider: Type.Optional(
+    Type.Union([
+      Type.Literal("auto"),
+      Type.Literal("duckduckgo"),
+      Type.Literal("brave"),
+      Type.Literal("searxng"),
+      Type.Literal("serpapi"),
+    ], { description: "Search provider selection" }),
+  ),
+  country: Type.Optional(Type.String({ description: "Optional country code (e.g. us, cn)" })),
+  search_lang: Type.Optional(Type.String({ description: "Optional search language code (e.g. en, zh)" })),
+  freshness: Type.Optional(
+    Type.Union([
+      Type.Literal("pd"),
+      Type.Literal("pw"),
+      Type.Literal("pm"),
+      Type.Literal("py"),
+    ], { description: "Optional freshness window: day/week/month/year" }),
+  ),
+});
+
+export function makeWebSearchTool(): RuntimeTool<typeof WebSearchParams> {
+  return {
+    name: "web_search",
     description:
       "Search the public web for up-to-date information. Prefer concise, source-linked results.",
-    parameters: z.object({
-      query: z.string().describe("Search query"),
-      count: z.number().optional().default(5).describe("Maximum number of results"),
-      maxResults: z.number().optional().describe("Deprecated alias for count"),
-      provider: z
-        .enum(["auto", "duckduckgo", "brave", "searxng", "serpapi"])
-        .optional()
-        .describe("Search provider selection"),
-      country: z.string().optional().describe("Optional country code (e.g. us, cn)"),
-      search_lang: z.string().optional().describe("Optional search language code (e.g. en, zh)"),
-      freshness: z
-        .enum(["pd", "pw", "pm", "py"])
-        .optional()
-        .describe("Optional freshness window: day/week/month/year"),
-    }),
-    execute: async ({ query, count, maxResults, provider, country, search_lang, freshness }) => {
-      const safeQuery = query.trim();
-      const limit = clampResults(count ?? maxResults);
+    parameters: WebSearchParams,
+    execute: async (args) => {
+      const safeQuery = (args.query ?? "").trim();
+      const limit = clampResults(args.count ?? args.maxResults);
       if (!safeQuery) {
         return {
           query: safeQuery,
@@ -109,10 +121,10 @@ export function makeWebSearchTool() {
       const payload = JSON.stringify({
         query: safeQuery,
         count: limit,
-        provider: provider ?? "auto",
-        ...(country ? { country } : {}),
-        ...(search_lang ? { search_lang } : {}),
-        ...(freshness ? { freshness } : {}),
+        provider: args.provider ?? "auto",
+        ...(args.country ? { country: args.country } : {}),
+        ...(args.search_lang ? { search_lang: args.search_lang } : {}),
+        ...(args.freshness ? { freshness: args.freshness } : {}),
       });
 
       try {
@@ -177,5 +189,5 @@ export function makeWebSearchTool() {
         };
       }
     },
-  });
+  };
 }

@@ -33,6 +33,7 @@ interface CreateRuntimeRunBody {
   resumeFromMessageId?: string;
   resumeFromRunId?: string;
   resumeMode?: "continue" | "regenerate";
+  modelId?: string;
 }
 
 interface RuntimePluginSyncBody {
@@ -185,6 +186,7 @@ app.post<{
 }>("/runtime/ws/:wsId/runs", async (request, reply) => {
   const { wsId } = request.params;
   const { sessionId, userRequest, coordinatorAgentId } = request.body;
+  const modelIdOverride = (request.body.modelId ?? "").trim() || undefined;
   const resumeFromMessageId = (request.body.resumeFromMessageId ?? "").trim();
   const explicitResumeFromRunId = (request.body.resumeFromRunId ?? "").trim();
   const resumeFromRunId =
@@ -281,6 +283,7 @@ app.post<{
         userRequest: effectiveUserRequest,
         coordinatorAgentId: effectiveCoordinatorAgentId,
         startCandidateOffset,
+        modelIdOverride,
       },
       idempotencyKey,
       fingerprint,
