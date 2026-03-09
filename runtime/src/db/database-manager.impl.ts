@@ -11,6 +11,7 @@ import type {
   VectorIndex,
 } from "../memory/store/interfaces.js";
 import type { EmbeddingCache } from "../embedding/embedding-types.js";
+import type { SessionStore } from "../agent/agent-types.js";
 import type { ObservabilityStore } from "./observability-types.js";
 import type { DatabaseManager, DatabaseManagerOptions } from "./database-types.js";
 import { SCHEMA_SQL, vecTableSQL, entityVecTableSQL } from "./schema.js";
@@ -23,6 +24,7 @@ import { SqliteCoreMemoryStore } from "./sqlite-core-memory-store.js";
 import { SqliteReflectionStateStore } from "./sqlite-reflection-state-store.js";
 import { SqliteAccessLogStore } from "./sqlite-access-log-store.js";
 import { SqliteMemoryViewStore } from "./sqlite-memory-view-store.js";
+import { SqliteSessionStore } from "./sqlite-session-store.js";
 import { SqliteObservabilityStore } from "./sqlite-observability-store.js";
 
 // ─── Default Database Manager ───────────────────────────────────────────────
@@ -51,6 +53,9 @@ export class DefaultDatabaseManager implements DatabaseManager {
   // Cross-cutting
   readonly embeddingCache: EmbeddingCache;
 
+  // Session persistence
+  readonly sessionStore: SessionStore;
+
   // Observability
   readonly observabilityStore: ObservabilityStore;
 
@@ -74,6 +79,7 @@ export class DefaultDatabaseManager implements DatabaseManager {
     this.accessLogStore = options.accessLogStore ?? new SqliteAccessLogStore(this.raw);
     this.memoryViewStore = options.memoryViewStore ?? new SqliteMemoryViewStore(this.raw);
     this.embeddingCache = options.embeddingCache ?? new SqliteEmbeddingCache(this.raw);
+    this.sessionStore = options.sessionStore ?? new SqliteSessionStore(this.raw);
     this.observabilityStore = options.observabilityStore ?? new SqliteObservabilityStore(this.raw);
   }
 

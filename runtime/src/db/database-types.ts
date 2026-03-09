@@ -10,6 +10,7 @@ import type {
   VectorIndex,
 } from "../memory/store/interfaces.js";
 import type { EmbeddingCache } from "../embedding/embedding-types.js";
+import type { SessionStore } from "../agent/agent-types.js";
 import type { ObservabilityStore } from "./observability-types.js";
 
 // ─── Database Manager ───────────────────────────────────────────────────────
@@ -36,6 +37,9 @@ export interface DatabaseManager {
 
   // ─── Cross-cutting ────────────────────────────────────────────────────
   readonly embeddingCache: EmbeddingCache;
+
+  // ─── Session persistence ─────────────────────────────────────────────
+  readonly sessionStore: SessionStore;
 
   // ─── Observability ────────────────────────────────────────────────────
   readonly observabilityStore: ObservabilityStore;
@@ -69,5 +73,6 @@ export interface DatabaseManagerOptions {
   accessLogStore?: AccessLogStore;
   memoryViewStore?: MemoryViewStore;
   embeddingCache?: EmbeddingCache;
+  sessionStore?: SessionStore;
   observabilityStore?: ObservabilityStore;
 }

@@ -61,6 +61,40 @@ export interface SessionManager {
   close(sessionId: string): Promise<void>;
 }
 
+// ─── Session Store ──────────────────────────────────────────────────────────
+//
+// Persistence layer for sessions and their message history.
+// Plugin injection point: replace with Redis, PostgreSQL, or any backend.
+
+export interface SessionStore {
+  // ─── Session CRUD ──────────────────────────────────────────────────────
+  saveSession(record: SessionRecord): Promise<void>;
+  getSession(sessionId: string): Promise<SessionRecord | null>;
+  getSessionByKey(sessionKey: string): Promise<SessionRecord | null>;
+  listActiveSessions(workspaceId: string): Promise<SessionRecord[]>;
+  updateSession(
+    sessionId: string,
+    updates: Partial<Pick<SessionRecord, "status" | "lastActiveAt">>,
+  ): Promise<void>;
+  getExpiredSessionIds(maxIdleMs: number): Promise<string[]>;
+  deleteSession(sessionId: string): Promise<void>;
+
+  // ─── Message History ───────────────────────────────────────────────────
+  appendMessage(sessionId: string, message: Message): Promise<void>;
+  getMessages(sessionId: string, limit?: number): Promise<Message[]>;
+  clearMessages(sessionId: string): Promise<void>;
+}
+
+export interface SessionRecord {
+  id: string;
+  agentId: string;
+  workspaceId: string;
+  sessionKey: string;
+  status: SessionStatus;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
 // ─── Run ─────────────────────────────────────────────────────────────────────
 
 export type RunStatus =

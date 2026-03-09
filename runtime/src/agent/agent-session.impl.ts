@@ -7,8 +7,10 @@ import type {
   RunContext,
   RunResult,
   SessionStatus,
+  SessionStore,
 } from "./agent-types.js";
 import { DefaultMessageHistory } from "./message-history.js";
+import { PersistentMessageHistory } from "./persistent-message-history.js";
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -21,6 +23,8 @@ export interface DefaultAgentSessionOptions {
   eventBus: EventBus;
   /** Optionally inject a pre-populated message history (e.g., resumed session). */
   messageHistory?: MessageHistory;
+  /** Optional session store — enables persistence across process restarts. */
+  sessionStore?: SessionStore;
   /** Default run timeout in ms. Can be overridden per-run. */
   defaultTimeoutMs?: number;
 }
@@ -33,6 +37,10 @@ export interface DefaultAgentSessionOptions {
  * Manages session lifecycle (idle → running → idle) and delegates run
  * execution to the AgentLoop. Message history persists across runs
  * within the same session.
+ *
+ * If a SessionStore is provided, lifecycle state changes and message
+ * history are persisted to SQLite (or any backend). Without a store,
+ * the session is purely in-memory (backward compatible).
  *
  * Concurrency guard: only one run at a time per session. Attempting
  * to start a run while another is active throws immediately.
@@ -51,6 +59,8 @@ export class DefaultAgentSession implements AgentSession {
   private readonly agentLoop: AgentLoop;
   private readonly eventBus: EventBus;
   private readonly defaultTimeoutMs: number;
+  private readonly sessionStore?: SessionStore;
+  private readonly persistentHistory?: PersistentMessageHistory;
 
   constructor(options: DefaultAgentSessionOptions) {
     this.id = options.id;
@@ -59,8 +69,21 @@ export class DefaultAgentSession implements AgentSession {
     this.sessionKey = options.sessionKey;
     this.agentLoop = options.agentLoop;
     this.eventBus = options.eventBus;
-    this.messageHistory = options.messageHistory ?? new DefaultMessageHistory();
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 120_000;
+    this.sessionStore = options.sessionStore;
+
+    // Priority: explicit messageHistory > persistent (from store) > in-memory
+    if (options.messageHistory) {
+      this.messageHistory = options.messageHistory;
+    } else if (options.sessionStore) {
+      this.persistentHistory = new PersistentMessageHistory(
+        options.id,
+        options.sessionStore,
+      );
+      this.messageHistory = this.persistentHistory;
+    } else {
+      this.messageHistory = new DefaultMessageHistory();
+    }
   }
 
   get status(): SessionStatus {
@@ -78,26 +101,44 @@ export class DefaultAgentSession implements AgentSession {
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   async initialize(): Promise<void> {
-    // Future: load persisted state from DB (message history, core memory)
+    // Hydrate persisted message history if available
+    if (this.persistentHistory) {
+      await this.persistentHistory.load();
+    }
     this._status = "idle";
   }
 
   async suspend(): Promise<void> {
     if (this._status === "closed") return;
-    // Future: serialize state to storage
     this._status = "suspended";
+    if (this.sessionStore) {
+      await this.sessionStore.updateSession(this.id, {
+        status: "suspended",
+        lastActiveAt: this._lastActiveAt,
+      });
+    }
   }
 
   async resume(): Promise<void> {
     if (this._status !== "suspended") return;
-    // Future: deserialize state from storage
     this._status = "idle";
+    if (this.sessionStore) {
+      await this.sessionStore.updateSession(this.id, {
+        status: "idle",
+        lastActiveAt: Date.now(),
+      });
+    }
   }
 
   async close(): Promise<void> {
     this._status = "closed";
     this._currentRunId = null;
-    // Future: persist final state, release resources
+    if (this.sessionStore) {
+      await this.sessionStore.updateSession(this.id, {
+        status: "closed",
+        lastActiveAt: Date.now(),
+      });
+    }
   }
 
   // ─── Execution ────────────────────────────────────────────────────────────
@@ -112,6 +153,14 @@ export class DefaultAgentSession implements AgentSession {
     this._status = "running";
     this._currentRunId = params.runId;
     this._lastActiveAt = Date.now();
+
+    // Persist running state
+    if (this.sessionStore) {
+      void this.sessionStore.updateSession(this.id, {
+        status: "running",
+        lastActiveAt: this._lastActiveAt,
+      });
+    }
 
     const runContext: RunContext = {
       id: params.runId,
@@ -149,6 +198,14 @@ export class DefaultAgentSession implements AgentSession {
     } finally {
       this._status = "idle";
       this._currentRunId = null;
+
+      // Persist idle state after run completes
+      if (this.sessionStore) {
+        void this.sessionStore.updateSession(this.id, {
+          status: "idle",
+          lastActiveAt: this._lastActiveAt,
+        });
+      }
     }
   }
 }

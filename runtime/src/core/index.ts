@@ -48,6 +48,13 @@ export type {
 
 export type { SessionManager } from "./session-manager.js";
 
+// ─── Session Store ──────────────────────────────────────────────────────────
+
+export type {
+  SessionStore,
+  SessionRecord,
+} from "../agent/agent-types.js";
+
 // ─── Agent Loop ─────────────────────────────────────────────────────────────
 
 export type {

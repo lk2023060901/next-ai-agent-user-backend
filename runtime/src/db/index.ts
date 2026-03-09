@@ -54,4 +54,5 @@ export { SqliteReflectionStateStore } from "./sqlite-reflection-state-store.js";
 export { SqliteAccessLogStore } from "./sqlite-access-log-store.js";
 export { SqliteMemoryViewStore } from "./sqlite-memory-view-store.js";
 export { SqliteEmbeddingCache } from "./sqlite-embedding-cache.js";
+export { SqliteSessionStore } from "./sqlite-session-store.js";
 export { SqliteObservabilityStore } from "./sqlite-observability-store.js";

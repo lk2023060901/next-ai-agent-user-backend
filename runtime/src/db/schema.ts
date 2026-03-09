@@ -183,6 +183,40 @@ CREATE INDEX IF NOT EXISTS idx_memory_views_agent ON agent_memory_views(agent_id
 CREATE INDEX IF NOT EXISTS idx_memory_views_memory ON agent_memory_views(memory_entry_id);
 
 -- ═══════════════════════════════════════════
+-- Session 持久化
+-- ═══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS sessions (
+  id              TEXT PRIMARY KEY,
+  agent_id        TEXT NOT NULL,
+  workspace_id    TEXT NOT NULL,
+  session_key     TEXT NOT NULL UNIQUE,
+  status          TEXT NOT NULL DEFAULT 'idle',
+  created_at      INTEGER NOT NULL,
+  last_active_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_sessions_key ON sessions(session_key);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
+
+-- ═══════════════════════════════════════════
+-- Session 消息历史
+-- ═══════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS session_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  seq             INTEGER NOT NULL,
+  role            TEXT NOT NULL,
+  content         TEXT NOT NULL,
+  tool_call_id    TEXT,
+  tool_name       TEXT,
+  is_error        INTEGER NOT NULL DEFAULT 0,
+  created_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id, seq);
+
+-- ═══════════════════════════════════════════
 -- 可观测性：LLM 用量记录
 -- ═══════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS usage_records (
