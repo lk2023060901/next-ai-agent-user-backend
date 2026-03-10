@@ -82,7 +82,7 @@ import {
   type PluginReviewItem,
   type RuntimePluginLoadCandidate,
 } from "../modules/plugins/plugin.service.js";
-import { assertOrgMember, assertWorkspaceMember } from "../modules/authz/authz.service.js";
+import { assertOrgMember, assertWorkspaceMember, assertChannelMember, assertRoutingRuleMember, assertKnowledgeBaseMember } from "../modules/authz/authz.service.js";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
 
@@ -291,13 +291,13 @@ export function startGrpcServer(port: number): grpc.Server {
     async login(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
         const { tokens, user } = await login(call.request.email, call.request.password);
-        callback(null, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user });
+        callback(null, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn, user });
       } catch (err) { handleError(callback, err); }
     },
     async signup(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
         const { tokens, user } = await signup(call.request.email, call.request.password, call.request.name);
-        callback(null, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user });
+        callback(null, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn, user });
       } catch (err) { handleError(callback, err); }
     },
     logout(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -307,7 +307,7 @@ export function startGrpcServer(port: number): grpc.Server {
     async refreshToken(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
         const { tokens, user } = await refresh(call.request.refreshToken);
-        callback(null, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user });
+        callback(null, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn, user });
       } catch (err) { handleError(callback, err); }
     },
     getMe(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -638,6 +638,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertKnowledgeBaseMember(call.request.id, call.request.userContext?.userId);
         callback(null, updateKnowledgeBase({
           id: call.request.id,
           name: call.request.name,
@@ -668,12 +669,14 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     deleteKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertKnowledgeBaseMember(call.request.id, call.request.userContext?.userId);
         deleteKnowledgeBase(call.request.id);
         callback(null, {});
       } catch (err) { handleError(callback, err); }
     },
     listKnowledgeBaseDocuments(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertKnowledgeBaseMember(call.request.id, call.request.userContext?.userId);
         callback(null, {
           documents: listKnowledgeBaseDocuments(call.request.id),
         });
@@ -681,6 +684,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     createKnowledgeBaseDocument(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertKnowledgeBaseMember(call.request.knowledgeBaseId, call.request.userContext?.userId);
         callback(null, createKnowledgeBaseDocument({
           knowledgeBaseId: call.request.knowledgeBaseId,
           name: call.request.name,
@@ -692,6 +696,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     deleteKnowledgeBaseDocument(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertKnowledgeBaseMember(call.request.knowledgeBaseId, call.request.userContext?.userId);
         deleteKnowledgeBaseDocument({
           knowledgeBaseId: call.request.knowledgeBaseId,
           documentId: call.request.documentId,
@@ -701,6 +706,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async searchKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertKnowledgeBaseMember(call.request.knowledgeBaseId, call.request.userContext?.userId);
         callback(null, {
           results: await searchKnowledgeBase({
             knowledgeBaseId: call.request.knowledgeBaseId,
@@ -723,7 +729,10 @@ export function startGrpcServer(port: number): grpc.Server {
       catch (err) { handleError(callback, err); }
     },
     getChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, getChannel(call.request.channelId)); }
+      try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
+        callback(null, getChannel(call.request.channelId));
+      }
       catch (err) { handleError(callback, err); }
     },
     createChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -737,6 +746,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
         const configJsonRaw = typeof call.request.configJson === "string"
           ? call.request.configJson
           : "";
@@ -749,15 +759,23 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteChannel(call.request.channelId); callback(null, {}); }
+      try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
+        deleteChannel(call.request.channelId);
+        callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
     listRoutingRules(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { rules: listRoutingRules(call.request.channelId) }); }
+      try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
+        callback(null, { rules: listRoutingRules(call.request.channelId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createRoutingRule(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
         callback(null, createRoutingRule({
           channelId: call.request.channelId, field: call.request.field,
           operator: call.request.operator, value: call.request.value,
@@ -767,6 +785,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateRoutingRule(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertRoutingRuleMember(call.request.ruleId, call.request.userContext?.userId);
         callback(null, updateRoutingRule(call.request.ruleId, {
           field: call.request.field, operator: call.request.operator,
           value: call.request.value, targetAgentId: call.request.targetAgentId,
@@ -775,7 +794,11 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteRoutingRule(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteRoutingRule(call.request.ruleId); callback(null, {}); }
+      try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
+        deleteRoutingRule(call.request.ruleId);
+        callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
     handleWebhook(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -786,6 +809,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     listChannelMessages(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
         callback(null, { messages: listChannelMessages(call.request.channelId, call.request.limit || 50) });
       } catch (err) { handleError(callback, err); }
     },

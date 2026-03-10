@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm"
 import { db } from "../../db/index.js"
-import { orgMembers, workspaces } from "../../db/schema.js"
+import { orgMembers, workspaces, channels, knowledgeBases, routingRules } from "../../db/schema.js"
 
 /**
  * Verify userId is a member of orgId. Throws gRPC-compatible error if not.
@@ -35,4 +35,58 @@ export function assertWorkspaceMember(workspaceId: string, userId: string | unde
     throw Object.assign(new Error("Workspace not found"), { code: "NOT_FOUND" })
   }
   assertOrgMember(ws.orgId, userId)
+}
+
+/**
+ * Verify userId has access to a channel (via the channel's workspace → org membership).
+ */
+export function assertChannelMember(channelId: string, userId: string | undefined): void {
+  if (!userId) {
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHENTICATED" })
+  }
+  const ch = db
+    .select({ workspaceId: channels.workspaceId })
+    .from(channels)
+    .where(eq(channels.id, channelId))
+    .get()
+  if (!ch) {
+    throw Object.assign(new Error("Channel not found"), { code: "NOT_FOUND" })
+  }
+  assertWorkspaceMember(ch.workspaceId, userId)
+}
+
+/**
+ * Verify userId has access to a routing rule (rule → channel → workspace → org membership).
+ */
+export function assertRoutingRuleMember(ruleId: string, userId: string | undefined): void {
+  if (!userId) {
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHENTICATED" })
+  }
+  const rule = db
+    .select({ channelId: routingRules.channelId })
+    .from(routingRules)
+    .where(eq(routingRules.id, ruleId))
+    .get()
+  if (!rule) {
+    throw Object.assign(new Error("Routing rule not found"), { code: "NOT_FOUND" })
+  }
+  assertChannelMember(rule.channelId, userId)
+}
+
+/**
+ * Verify userId has access to a knowledge base (via the KB's workspace → org membership).
+ */
+export function assertKnowledgeBaseMember(knowledgeBaseId: string, userId: string | undefined): void {
+  if (!userId) {
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHENTICATED" })
+  }
+  const kb = db
+    .select({ workspaceId: knowledgeBases.workspaceId })
+    .from(knowledgeBases)
+    .where(eq(knowledgeBases.id, knowledgeBaseId))
+    .get()
+  if (!kb) {
+    throw Object.assign(new Error("Knowledge base not found"), { code: "NOT_FOUND" })
+  }
+  assertWorkspaceMember(kb.workspaceId, userId)
 }
