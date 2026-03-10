@@ -8,6 +8,21 @@ const app = Fastify({ logger: true });
 async function main() {
   await app.register(cors, { origin: true });
 
+  // Warn if ENCRYPTION_SECRET is not set (falling back to JWT_SECRET or hardcoded default)
+  if (!process.env.ENCRYPTION_SECRET) {
+    if (process.env.JWT_SECRET) {
+      console.warn(
+        "[config] ENCRYPTION_SECRET not set — falling back to JWT_SECRET for API key encryption. " +
+        "Set ENCRYPTION_SECRET to an independent secret in production.",
+      );
+    } else {
+      console.warn(
+        "[config] ENCRYPTION_SECRET and JWT_SECRET are not set — using hardcoded default. " +
+        "This is insecure; set ENCRYPTION_SECRET in production.",
+      );
+    }
+  }
+
   // Health check
   app.get("/health", async () => ({ status: "ok" }));
 
