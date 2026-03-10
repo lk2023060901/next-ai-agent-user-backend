@@ -105,6 +105,8 @@ export interface EventDataMap {
     toolCallId: string;
     toolName: string;
     args: unknown;
+    category: string;
+    riskLevel: string;
   };
   "tool-result": {
     toolCallId: string;
@@ -149,7 +151,7 @@ export interface EventDataMap {
 
   // Memory
   "memory-injection": {
-    memories: Array<{ memoryId: string; source: string; score: number }>;
+    memories: Array<{ memoryId: string; source: string; score: number; contentPreview?: string }>;
   };
   "memory-extracted": {
     memoryIds: string[];

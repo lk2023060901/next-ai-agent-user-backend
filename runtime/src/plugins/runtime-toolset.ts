@@ -101,6 +101,8 @@ export function buildRuntimePluginToolset(params: RuntimePluginToolsetParams): R
       name: toolName,
       description: plugin.tool.description,
       parameters,
+      category: "plugin",
+      riskLevel: "medium",
       execute: async (args: unknown, toolContext: ToolContext) => {
         const startedAtMs = Date.now();
         try {

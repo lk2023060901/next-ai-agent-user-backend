@@ -1,7 +1,8 @@
-import { stream, type Model, type Api, type Context, type Tool, type AssistantMessageEvent } from "@mariozechner/pi-ai";
+import { stream, type Model, type Api, type Context, type Tool, type Message as PiAiMessage, type AssistantMessageEvent } from "@mariozechner/pi-ai";
 import type { TSchema } from "@sinclair/typebox";
 import type { RuntimeTool } from "../tools/types.js";
 import type { SseEmitter } from "../sse/emitter.js";
+import { approvalGate } from "../tools/approval-gate.js";
 
 export type ToolMap = Record<string, RuntimeTool>;
 
@@ -15,11 +16,15 @@ export interface StreamLoopParams {
   emit: SseEmitter;
   runId: string;
   messageId: string;
+  /** Prior history messages (pi-ai format) to prepend before the current user message. */
+  priorHistory?: PiAiMessage[];
 }
 
 export interface StreamLoopResult {
   fullText: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  /** Messages added during this run (user + assistant + tool results), in pi-ai format. */
+  newMessages: PiAiMessage[];
 }
 
 function toPiTools(tools: ToolMap): Tool<TSchema>[] {
@@ -31,13 +36,21 @@ function toPiTools(tools: ToolMap): Tool<TSchema>[] {
 }
 
 export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoopResult> {
+  const historyMessages: PiAiMessage[] = params.priorHistory ?? [];
+  const userMsg: PiAiMessage = {
+    role: "user",
+    content: [{ type: "text", text: params.userMessage }],
+    timestamp: Date.now(),
+  };
+
   const context: Context = {
     systemPrompt: params.systemPrompt || undefined,
-    messages: [
-      { role: "user", content: [{ type: "text", text: params.userMessage }], timestamp: Date.now() },
-    ],
+    messages: [...historyMessages, userMsg],
     tools: toPiTools(params.tools),
   };
+
+  // Track where new messages start (after history + user)
+  const newMessagesStart = context.messages.length;
 
   let fullText = "";
   const totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
@@ -59,7 +72,6 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
             runId: params.runId,
             messageId: params.messageId,
             text: event.delta,
-            delta: event.delta,
           });
           break;
 
@@ -69,7 +81,6 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
             runId: params.runId,
             messageId: params.messageId,
             text: event.delta,
-            delta: event.delta,
           });
           break;
 
@@ -82,12 +93,13 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
           });
           break;
 
-        case "toolcall_end":
+        case "toolcall_end": {
           pendingToolCalls.push({
             id: event.toolCall.id,
             name: event.toolCall.name,
             args: event.toolCall.arguments,
           });
+          const calledTool = params.tools[event.toolCall.name];
           params.emit({
             type: "tool-call",
             runId: params.runId,
@@ -95,8 +107,11 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
             toolCallId: event.toolCall.id,
             toolName: event.toolCall.name,
             args: event.toolCall.arguments,
+            category: calledTool?.category ?? "system",
+            riskLevel: calledTool?.riskLevel ?? "low",
           });
           break;
+        }
 
         case "done": {
           const usage = event.message.usage;
@@ -132,6 +147,42 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
       }
 
       try {
+        // Approval gating — if the tool requires approval, wait for user decision
+        if (tool.requiresApproval) {
+          const decision = await approvalGate.requestApproval({
+            runId: params.runId,
+            messageId: params.messageId,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            args: tc.args,
+            emit: params.emit,
+          });
+          if (decision !== "approved") {
+            const rejectMsg =
+              decision === "rejected"
+                ? `Tool "${tc.name}" execution rejected by user`
+                : `Tool "${tc.name}" approval request expired`;
+            params.emit({
+              type: "tool-result",
+              runId: params.runId,
+              messageId: params.messageId,
+              toolCallId: tc.id,
+              toolName: tc.name,
+              result: { error: rejectMsg },
+              status: "error",
+            });
+            context.messages.push({
+              role: "toolResult",
+              toolCallId: tc.id,
+              toolName: tc.name,
+              content: [{ type: "text", text: rejectMsg }],
+              isError: true,
+              timestamp: Date.now(),
+            });
+            continue;
+          }
+        }
+
         const result = await tool.execute(tc.args, { toolCallId: tc.id });
         const resultText = typeof result === "string" ? result : JSON.stringify(result);
         params.emit({
@@ -174,5 +225,11 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
     }
   }
 
-  return { fullText, usage: totalUsage };
+  // Collect new messages: user message + everything the loop added
+  const newMessages: PiAiMessage[] = [
+    userMsg,
+    ...context.messages.slice(newMessagesStart),
+  ];
+
+  return { fullText, usage: totalUsage, newMessages };
 }

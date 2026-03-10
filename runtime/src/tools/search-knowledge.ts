@@ -39,6 +39,8 @@ export function makeSearchKnowledgeTool(
       "Search the knowledge base for relevant information. " +
       "Returns document chunks ranked by relevance to the query.",
     parameters: SearchKnowledgeParams,
+    category: "knowledge",
+    riskLevel: "low",
 
     execute: async (
       args: { query: string; knowledgeBaseId?: string; limit?: number },

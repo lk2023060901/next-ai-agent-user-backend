@@ -77,15 +77,15 @@ function isAllowed(name: string, policy: ResolvedToolPolicy): boolean {
  */
 export function fromRuntimeTool(
   tool: RuntimeTool,
-  category: ToolCategory = "system",
-  riskLevel: "low" | "medium" | "high" | "critical" = "low",
+  category?: ToolCategory,
+  riskLevel?: "low" | "medium" | "high" | "critical",
 ): AgentTool {
   return {
     definition: {
       name: tool.name,
       description: tool.description,
-      category,
-      riskLevel,
+      category: category ?? tool.category,
+      riskLevel: riskLevel ?? tool.riskLevel,
       parameters: tool.parameters as Record<string, unknown>,
       isLocal: true,
     },

@@ -97,6 +97,7 @@ export class DefaultAgentLoop implements AgentLoop {
         const turnResult = await this.executeTurn({
           messages,
           providerTools: providerTools.length > 0 ? providerTools : undefined,
+          tools,
           agent,
           providerAdapter,
           eventBus,
@@ -190,6 +191,7 @@ export class DefaultAgentLoop implements AgentLoop {
   private async executeTurn(params: {
     messages: Message[];
     providerTools?: ProviderToolDefinition[];
+    tools: AgentTool[];
     agent: AgentConfig;
     providerAdapter: ProviderAdapter;
     eventBus: EventBus;
@@ -240,16 +242,21 @@ export class DefaultAgentLoop implements AgentLoop {
             toolName: chunk.toolName,
             args: chunk.args,
           });
-          params.eventBus.emit(params.runId, {
-            type: "tool-call",
-            data: {
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              args: safeParseJson(chunk.args),
-            },
-            agentId: params.agent.id,
-            messageId: params.messageId,
-          });
+          {
+            const calledTool = params.tools.find((t) => t.definition.name === chunk.toolName);
+            params.eventBus.emit(params.runId, {
+              type: "tool-call",
+              data: {
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+                args: safeParseJson(chunk.args),
+                category: calledTool?.definition.category ?? "system",
+                riskLevel: calledTool?.definition.riskLevel ?? "low",
+              },
+              agentId: params.agent.id,
+              messageId: params.messageId,
+            });
+          }
           break;
 
         case "usage":

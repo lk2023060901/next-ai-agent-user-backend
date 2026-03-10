@@ -32,7 +32,6 @@ export function agentEventToSse(event: AgentEvent): SseEvent | null {
         runId: event.runId,
         messageId: event.messageId,
         text: event.data.delta,
-        delta: event.data.delta,
       };
 
     case "reasoning-delta":
@@ -42,7 +41,6 @@ export function agentEventToSse(event: AgentEvent): SseEvent | null {
         runId: event.runId,
         messageId: event.messageId,
         text: event.data.delta,
-        delta: event.data.delta,
       };
 
     case "reasoning":
@@ -63,6 +61,8 @@ export function agentEventToSse(event: AgentEvent): SseEvent | null {
         toolCallId: event.data.toolCallId,
         toolName: event.data.toolName,
         args: event.data.args,
+        category: event.data.category,
+        riskLevel: event.data.riskLevel,
       };
 
     case "tool-result":
@@ -122,8 +122,12 @@ export function agentEventToSse(event: AgentEvent): SseEvent | null {
         type: "approval-request",
         runId: event.runId,
         messageId: event.messageId,
+        approvalId: event.data.approvalId,
+        toolCallId: event.data.toolCallId,
+        toolName: event.data.toolName,
+        args: event.data.params,
         message: event.data.reason,
-        taskId: event.data.toolCallId,
+        expiresAt: event.data.expiresAt,
       };
 
     case "usage":
@@ -154,6 +158,21 @@ export function agentEventToSse(event: AgentEvent): SseEvent | null {
     case "error":
       return { ...base, type: "error", runId: event.runId, message: event.data.message };
 
+    case "memory-injection":
+      return {
+        ...base,
+        type: "memory-injection",
+        runId: event.runId,
+        messageId: event.messageId,
+        memories: event.data.memories.map((m) => ({
+          memoryId: m.memoryId,
+          source: m.source,
+          score: m.score,
+          contentPreview: m.contentPreview ?? "",
+        })),
+        count: event.data.memories.length,
+      };
+
     // Internal-only events — no SSE representation
     case "run-start":
     case "run-end":
@@ -162,7 +181,6 @@ export function agentEventToSse(event: AgentEvent): SseEvent | null {
     case "compaction-start":
     case "compaction-end":
     case "approval-response":
-    case "memory-injection":
     case "memory-extracted":
     case "reflection-triggered":
     case "entity-discovered":

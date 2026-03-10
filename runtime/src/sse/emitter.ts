@@ -7,8 +7,8 @@ export type SseEnvelope = {
 export type SseEvent = SseEnvelope &
   (
     | { type: "message-start"; runId?: string; messageId?: string; agentId: string }
-    | { type: "text-delta"; runId?: string; messageId?: string; text: string; delta?: string }
-    | { type: "reasoning-delta"; runId?: string; messageId?: string; text: string; delta?: string }
+    | { type: "text-delta"; runId?: string; messageId?: string; text: string }
+    | { type: "reasoning-delta"; runId?: string; messageId?: string; text: string }
     | { type: "reasoning"; runId?: string; messageId?: string; text: string }
   | {
       type: "tool-call";
@@ -17,6 +17,8 @@ export type SseEvent = SseEnvelope &
       toolCallId?: string;
       toolName: string;
       args: unknown;
+      category: string;
+      riskLevel: string;
     }
   | {
       type: "tool-result";
@@ -31,7 +33,17 @@ export type SseEvent = SseEnvelope &
   | { type: "task-progress"; runId?: string; messageId?: string; taskId: string; progress: number }
   | { type: "task-complete"; runId?: string; messageId?: string; taskId: string; result: string }
   | { type: "task-failed"; runId?: string; messageId?: string; taskId: string; error: string }
-  | { type: "approval-request"; runId?: string; messageId?: string; message: string; taskId: string }
+  | {
+      type: "approval-request";
+      runId?: string;
+      messageId?: string;
+      approvalId: string;
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+      message: string;
+      expiresAt: number;
+    }
   | {
       type: "usage";
       runId?: string;
@@ -42,6 +54,13 @@ export type SseEvent = SseEnvelope &
       inputTokens: number;
       outputTokens: number;
       totalTokens: number;
+    }
+    | {
+      type: "memory-injection";
+      runId?: string;
+      messageId?: string;
+      memories: Array<{ memoryId: string; source: string; score: number; contentPreview: string }>;
+      count: number;
     }
     | { type: "message-end"; runId: string; messageId?: string }
     | { type: "done"; runId: string }
