@@ -83,6 +83,7 @@ export interface SessionStore {
   appendMessage(sessionId: string, message: Message): Promise<void>;
   getMessages(sessionId: string, limit?: number): Promise<Message[]>;
   clearMessages(sessionId: string): Promise<void>;
+  replaceMessages(sessionId: string, messages: Message[]): Promise<void>;
 }
 
 export interface SessionRecord {
@@ -223,6 +224,7 @@ export interface MessageHistory {
 export interface SubAgentSpawnParams {
   parentRunId: string;
   parentSessionId: string;
+  workspaceId: string;
   targetAgentId: string;
   instruction: string;
   taskId: string;

@@ -45,6 +45,9 @@ export interface AssembleParams {
   coreMemorySnapshot?: CoreMemorySnapshot;
   injectedMemories?: InjectedMemory[];
   channelContext?: ChannelContext;
+  /** Additional context to append to system prompt (e.g. web search results).
+   *  Counted in the token budget so it doesn't silently overflow. */
+  additionalSystemContext?: string;
 }
 
 export interface AssembledContext {

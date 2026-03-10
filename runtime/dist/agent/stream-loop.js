@@ -1,4 +1,5 @@
 import { stream } from "@mariozechner/pi-ai";
+import { approvalGate } from "../tools/approval-gate.js";
 function toPiTools(tools) {
     return Object.values(tools).map((t) => ({
         name: t.name,
@@ -7,13 +8,19 @@ function toPiTools(tools) {
     }));
 }
 export async function runStreamLoop(params) {
+    const historyMessages = params.priorHistory ?? [];
+    const userMsg = {
+        role: "user",
+        content: [{ type: "text", text: params.userMessage }],
+        timestamp: Date.now(),
+    };
     const context = {
         systemPrompt: params.systemPrompt || undefined,
-        messages: [
-            { role: "user", content: [{ type: "text", text: params.userMessage }], timestamp: Date.now() },
-        ],
+        messages: [...historyMessages, userMsg],
         tools: toPiTools(params.tools),
     };
+    // Track where new messages start (after history + user)
+    const newMessagesStart = context.messages.length;
     let fullText = "";
     const totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     for (let step = 0; step < params.maxSteps; step++) {
@@ -97,6 +104,40 @@ export async function runStreamLoop(params) {
                 continue;
             }
             try {
+                // Approval gating — if the tool requires approval, wait for user decision
+                if (tool.requiresApproval) {
+                    const decision = await approvalGate.requestApproval({
+                        runId: params.runId,
+                        messageId: params.messageId,
+                        toolCallId: tc.id,
+                        toolName: tc.name,
+                        args: tc.args,
+                        emit: params.emit,
+                    });
+                    if (decision !== "approved") {
+                        const rejectMsg = decision === "rejected"
+                            ? `Tool "${tc.name}" execution rejected by user`
+                            : `Tool "${tc.name}" approval request expired`;
+                        params.emit({
+                            type: "tool-result",
+                            runId: params.runId,
+                            messageId: params.messageId,
+                            toolCallId: tc.id,
+                            toolName: tc.name,
+                            result: { error: rejectMsg },
+                            status: "error",
+                        });
+                        context.messages.push({
+                            role: "toolResult",
+                            toolCallId: tc.id,
+                            toolName: tc.name,
+                            content: [{ type: "text", text: rejectMsg }],
+                            isError: true,
+                            timestamp: Date.now(),
+                        });
+                        continue;
+                    }
+                }
                 const result = await tool.execute(tc.args, { toolCallId: tc.id });
                 const resultText = typeof result === "string" ? result : JSON.stringify(result);
                 params.emit({
@@ -139,5 +180,10 @@ export async function runStreamLoop(params) {
             }
         }
     }
-    return { fullText, usage: totalUsage };
+    // Collect new messages: user message + everything the loop added
+    const newMessages = [
+        userMsg,
+        ...context.messages.slice(newMessagesStart),
+    ];
+    return { fullText, usage: totalUsage, newMessages };
 }

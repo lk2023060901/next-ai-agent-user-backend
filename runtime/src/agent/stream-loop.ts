@@ -18,6 +18,8 @@ export interface StreamLoopParams {
   messageId: string;
   /** Prior history messages (pi-ai format) to prepend before the current user message. */
   priorHistory?: PiAiMessage[];
+  /** Run-level abort signal — combined with per-step timeout. */
+  abortSignal?: AbortSignal;
 }
 
 export interface StreamLoopResult {
@@ -58,9 +60,14 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
   for (let step = 0; step < params.maxSteps; step++) {
     const pendingToolCalls: Array<{ id: string; name: string; args: Record<string, any> }> = [];
 
+    const stepTimeout = AbortSignal.timeout(120_000);
+    const signal = params.abortSignal
+      ? AbortSignal.any([stepTimeout, params.abortSignal])
+      : stepTimeout;
+
     const eventStream = stream(params.model, context, {
       apiKey: params.apiKey,
-      signal: AbortSignal.timeout(120_000),
+      signal,
     });
 
     for await (const event of eventStream as AsyncIterable<AssistantMessageEvent>) {
@@ -156,6 +163,7 @@ export async function runStreamLoop(params: StreamLoopParams): Promise<StreamLoo
             toolName: tc.name,
             args: tc.args,
             emit: params.emit,
+            abortSignal: params.abortSignal,
           });
           if (decision !== "approved") {
             const rejectMsg =

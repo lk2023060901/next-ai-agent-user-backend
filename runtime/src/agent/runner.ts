@@ -12,6 +12,7 @@ export interface RunRequest {
   coordinatorAgentId: string;
   startCandidateOffset?: number;
   modelIdOverride?: string;
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -42,6 +43,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
       setMemoryProvider: services.setMemoryProvider,
       sessionId: req.sessionId,
       sessionStore: services.sessionStore ?? undefined,
+      abortSignal: req.abortSignal,
     });
 
     await grpcClient.updateRunStatus(req.runId, "completed");

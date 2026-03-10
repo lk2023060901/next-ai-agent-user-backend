@@ -13,6 +13,8 @@ import {
   workspaces,
 } from "../../db/schema.js";
 
+import { config } from "../../config.js";
+
 const DEFAULT_KB_CHUNK_SIZE = 1200;
 const DEFAULT_KB_CHUNK_OVERLAP = 200;
 const DEFAULT_KB_REQUESTED_DOCUMENT_CHUNKS = 5;
@@ -40,6 +42,57 @@ const SUPPORTED_TEXT_FILE_TYPES = new Set([
 ]);
 
 const runningKbDocumentProcessors = new Set<string>();
+
+// ─── Runtime KB sync notification ────────────────────────────────────────────
+//
+// After KB document processing (embed + chunk), we notify the runtime so it
+// can index the chunks into its unified memory system (vector + FTS + graph).
+// This bridges the service-layer KB storage with runtime's cognitive architecture.
+
+async function notifyRuntimeKbSync(
+  workspaceId: string,
+  body: {
+    action: "sync-document" | "delete-document" | "delete-kb";
+    knowledgeBaseId: string;
+    documentId?: string;
+    documentName?: string;
+    chunks?: Array<{ chunkIndex: number; content: string; embedding: number[] }>;
+    documentIds?: string[];
+  },
+): Promise<void> {
+  const runtimeBase = (config.runtimeAddr ?? "").trim().replace(/\/+$/, "");
+  if (!runtimeBase) return;
+
+  try {
+    const response = await fetch(
+      `${runtimeBase}/runtime/ws/${encodeURIComponent(workspaceId)}/kb/sync`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Runtime-Secret": config.runtimeSecret,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.warn(
+        `[kb-sync] Runtime sync failed (${response.status}): ${detail.slice(0, 200)}`,
+        { workspaceId, action: body.action, documentId: body.documentId },
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[kb-sync] Runtime sync request failed: ${message}`, {
+      workspaceId,
+      action: body.action,
+      documentId: body.documentId,
+    });
+  }
+}
 
 // Seed built-in tools on first call if empty
 function ensureToolsSeed() {
@@ -249,8 +302,10 @@ function normalizeProviderType(type: string | null | undefined): string {
   return (type ?? "").trim().toLowerCase();
 }
 
+import { decryptSecretCompat } from "../../utils/crypto.js";
+
 function decryptApiKey(encrypted: string): string {
-  return Buffer.from(encrypted, "base64").toString("utf-8").trim();
+  return decryptSecretCompat(encrypted, config.encryptionSecret);
 }
 
 function resolveDefaultEmbeddingBaseUrl(providerType: string): string {
@@ -535,6 +590,9 @@ async function processKnowledgeBaseDocument(documentId: string): Promise<void> {
       .where(eq(kbDocumentChunks.documentId, documentId))
       .run();
 
+    // Collect chunk data for runtime sync notification
+    const syncChunks: Array<{ chunkIndex: number; content: string; embedding: number[] }> = [];
+
     for (let offset = 0; offset < chunks.length; offset += KB_EMBEDDING_BATCH_SIZE) {
       const batch = chunks.slice(offset, offset + KB_EMBEDDING_BATCH_SIZE);
       const vectors = await fetchEmbeddingsBatch(runtime, batch);
@@ -553,6 +611,7 @@ async function processKnowledgeBaseDocument(documentId: string): Promise<void> {
             createdAt: startedAt,
           })
           .run();
+        syncChunks.push({ chunkIndex, content: batch[i], embedding: vector });
       }
     }
 
@@ -571,6 +630,15 @@ async function processKnowledgeBaseDocument(documentId: string): Promise<void> {
       .set({ updatedAt: finishedAt })
       .where(eq(knowledgeBases.id, documentRow.knowledgeBaseId))
       .run();
+
+    // Notify runtime to index chunks into memory system (fire-and-forget)
+    void notifyRuntimeKbSync(kb.workspaceId, {
+      action: "sync-document",
+      knowledgeBaseId: documentRow.knowledgeBaseId,
+      documentId,
+      documentName: documentRow.name,
+      chunks: syncChunks,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     db.delete(kbDocumentChunks)
@@ -755,16 +823,26 @@ function requeueKnowledgeBaseDocumentsForReindex(knowledgeBaseId: string) {
 }
 
 export function deleteKnowledgeBase(id: string) {
-  ensureKnowledgeBaseExists(id);
+  const kb = ensureKnowledgeBaseExists(id);
   const docs = db
-    .select({ filePath: kbDocuments.filePath })
+    .select({ id: kbDocuments.id, filePath: kbDocuments.filePath })
     .from(kbDocuments)
     .where(eq(kbDocuments.knowledgeBaseId, id))
     .all();
+  const documentIds = docs.map((d) => d.id);
   db.delete(knowledgeBases).where(eq(knowledgeBases.id, id)).run();
   for (const doc of docs) {
     if (!doc.filePath) continue;
     void fs.unlink(doc.filePath).catch(() => undefined);
+  }
+
+  // Notify runtime to remove all KB entries from memory system
+  if (documentIds.length > 0) {
+    void notifyRuntimeKbSync(kb.workspaceId, {
+      action: "delete-kb",
+      knowledgeBaseId: id,
+      documentIds,
+    });
   }
 }
 
@@ -856,7 +934,7 @@ export function deleteKnowledgeBaseDocument(data: {
   knowledgeBaseId: string;
   documentId: string;
 }) {
-  ensureKnowledgeBaseExists(data.knowledgeBaseId);
+  const kb = ensureKnowledgeBaseExists(data.knowledgeBaseId);
   const doc = db
     .select()
     .from(kbDocuments)
@@ -885,6 +963,13 @@ export function deleteKnowledgeBaseDocument(data: {
     .set({ documentCount: nextCount, updatedAt: now })
     .where(eq(knowledgeBases.id, data.knowledgeBaseId))
     .run();
+
+  // Notify runtime to remove document from memory system
+  void notifyRuntimeKbSync(kb.workspaceId, {
+    action: "delete-document",
+    knowledgeBaseId: data.knowledgeBaseId,
+    documentId: data.documentId,
+  });
 }
 
 export async function searchKnowledgeBase(data: {

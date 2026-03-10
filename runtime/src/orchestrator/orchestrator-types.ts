@@ -45,6 +45,8 @@ export interface EnqueueResult {
 
 export interface Orchestrator {
   enqueue(request: OrchestratorRunRequest): Promise<EnqueueResult>;
+  /** Enqueue and await completion. Returns the RunResult when finished. */
+  executeAndAwait(request: OrchestratorRunRequest): Promise<RunResult>;
   getRunStatus(runId: string): RunStatus | undefined;
   getQueueDepth(): number;
   cancel(runId: string): Promise<void>;

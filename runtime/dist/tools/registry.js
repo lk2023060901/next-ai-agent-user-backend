@@ -9,7 +9,11 @@ export function buildToolset(params) {
     const allTools = {
         code_read: makeCodeReadTool(params.sandbox.fsPolicy),
         code_write: makeCodeWriteTool(params.sandbox.fsPolicy),
-        search_knowledge: makeSearchKnowledgeTool(),
+        search_knowledge: makeSearchKnowledgeTool({
+            workspaceId: params.workspaceId,
+            reranker: params.reranker,
+            rerankerModel: params.rerankerModel,
+        }),
         web_search: makeWebSearchTool(),
         delegate_to_agent: makeDelegateTool(params),
     };

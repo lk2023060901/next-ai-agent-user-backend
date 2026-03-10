@@ -833,8 +833,13 @@ func (h *SettingsHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeData(w, http.StatusCreated, map[string]any{
-		"apiKey": resp.ApiKey,
-		"rawKey": resp.RawKey,
+		"id":        resp.ApiKey.GetId(),
+		"name":      resp.ApiKey.GetName(),
+		"prefix":    resp.ApiKey.GetKeyPrefix(),
+		"fullKey":   resp.RawKey,
+		"status":    "active",
+		"expiresAt": resp.ApiKey.GetExpiresAt(),
+		"createdAt": resp.ApiKey.GetCreatedAt(),
 	})
 }
 

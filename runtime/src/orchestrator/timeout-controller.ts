@@ -11,6 +11,7 @@ export class RunTimeoutController {
   private readonly ac = new AbortController();
   private timer: ReturnType<typeof setTimeout>;
   private onParentAbort: (() => void) | null = null;
+  private parentSignal: AbortSignal | null = null;
 
   constructor(timeoutMs: number, parentSignal?: AbortSignal) {
     this.timer = setTimeout(() => this.ac.abort(), timeoutMs);
@@ -22,6 +23,7 @@ export class RunTimeoutController {
 
     // Chain to parent signal (e.g., orchestrator shutdown)
     if (parentSignal) {
+      this.parentSignal = parentSignal;
       this.onParentAbort = () => this.ac.abort();
       parentSignal.addEventListener("abort", this.onParentAbort, { once: true });
     }
@@ -34,8 +36,10 @@ export class RunTimeoutController {
   /** Cancel the timeout (does NOT abort — used for normal completion). */
   clear(): void {
     clearTimeout(this.timer);
-    if (this.onParentAbort) {
-      // Cleanup is best-effort; parent signal may already be detached
+    if (this.onParentAbort && this.parentSignal) {
+      this.parentSignal.removeEventListener("abort", this.onParentAbort);
+      this.onParentAbort = null;
+      this.parentSignal = null;
     }
   }
 

@@ -9,6 +9,7 @@ import { config } from "../../config.js";
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
+  expiresIn: number;
 }
 
 export interface UserProfile {
@@ -17,6 +18,7 @@ export interface UserProfile {
   name: string;
   avatarUrl: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export async function signup(
@@ -98,6 +100,19 @@ export function getMe(userId: string): UserProfile {
   return toProfile(user);
 }
 
+function parseExpiryToSeconds(expiry: string): number {
+  const match = /^(\d+)\s*(s|m|h|d)$/i.exec(expiry.trim());
+  if (!match) return 900;
+  const value = parseInt(match[1]!, 10);
+  switch (match[2]!.toLowerCase()) {
+    case "s": return value;
+    case "m": return value * 60;
+    case "h": return value * 3600;
+    case "d": return value * 86400;
+    default: return 900;
+  }
+}
+
 async function issueTokens(userId: string, email: string, name: string): Promise<AuthTokens> {
   const accessToken = jwt.sign(
     { user_id: userId, email, name },
@@ -111,7 +126,7 @@ async function issueTokens(userId: string, email: string, name: string): Promise
     .values({ id: uuidv4(), userId, token: rawRefresh, expiresAt })
     .run();
 
-  return { accessToken, refreshToken: rawRefresh };
+  return { accessToken, refreshToken: rawRefresh, expiresIn: parseExpiryToSeconds(config.jwtAccessExpiry) };
 }
 
 function toProfile(user: typeof users.$inferSelect): UserProfile {
@@ -121,5 +136,6 @@ function toProfile(user: typeof users.$inferSelect): UserProfile {
     name: user.name,
     avatarUrl: user.avatarUrl ?? null,
     createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }

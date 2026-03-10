@@ -18,6 +18,7 @@ import { DefaultHistoryTrimmer } from "./history-trimmer.js";
 import { StubMemoryInjector } from "./memory-injector.js";
 import { DefaultPromptBuilder } from "./prompt-builder.js";
 import { DefaultTokenBudgetAllocator } from "./token-budget.js";
+import { estimateTokens } from "../utils/token-estimator.js";
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -278,41 +279,37 @@ export class DefaultContextEngine implements ContextEngine {
 
 // ─── Token Estimation ────────────────────────────────────────────────────────
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
 function estimateTokensMessages(messages: Message[]): number {
-  let chars = 0;
+  let total = 0;
   for (const msg of messages) {
     for (const block of msg.content) {
       if ("text" in block) {
-        chars += block.text.length;
+        total += estimateTokens(block.text);
       } else if (block.type === "tool-call") {
-        chars += block.toolName.length + block.args.length;
+        total += estimateTokens(block.toolName) + estimateTokens(block.args);
       }
     }
   }
-  return Math.ceil(chars / 4);
+  return total;
 }
 
 function estimateCoreMemoryTokens(
   snapshot: NonNullable<AssembleParams["coreMemorySnapshot"]>,
 ): number {
-  let chars = 0;
-  if (snapshot.persona) chars += snapshot.persona.length;
-  if (snapshot.user) chars += snapshot.user.length;
-  if (snapshot.working) chars += snapshot.working.length;
-  if (snapshot.knowledgeSummary) chars += snapshot.knowledgeSummary.length;
-  return Math.ceil(chars / 4);
+  let total = 0;
+  if (snapshot.persona) total += estimateTokens(snapshot.persona);
+  if (snapshot.user) total += estimateTokens(snapshot.user);
+  if (snapshot.working) total += estimateTokens(snapshot.working);
+  if (snapshot.knowledgeSummary) total += estimateTokens(snapshot.knowledgeSummary);
+  return total;
 }
 
 function estimateInjectedMemoryTokens(
   memories: NonNullable<AssembleParams["injectedMemories"]>,
 ): number {
-  let chars = 0;
+  let total = 0;
   for (const m of memories) {
-    chars += m.content.length;
+    total += estimateTokens(m.content);
   }
-  return Math.ceil(chars / 4);
+  return total;
 }

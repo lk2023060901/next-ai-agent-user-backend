@@ -31,4 +31,29 @@ export const config = {
   // For BigModel: LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
   llmBaseUrl: getEnv("LLM_BASE_URL", ""),
   llmApiKey: getEnv("LLM_API_KEY", ""),
+
+  // ─── Approval ──────────────────────────────────────────────────────────
+  // M1: Configurable approval timeout (default 5 minutes)
+  approvalTimeoutMs: getIntEnv("APPROVAL_TIMEOUT_MS", 5 * 60_000),
+
+  // ─── File tool limits ─────────────────────────────────────────────────
+  // M9: Maximum file size for code_read (default 10MB)
+  codeReadMaxFileSizeBytes: getIntEnv("CODE_READ_MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
+
+  // ─── Channel reply ────────────────────────────────────────────────────
+  // M5: Max retries for channel reply (exponential backoff)
+  channelReplyMaxRetries: getIntEnv("CHANNEL_REPLY_MAX_RETRIES", 3),
+
+  // ─── Memory System ────────────────────────────────────────────────────
+  // Set DB_PATH to enable the memory system. Leave empty to disable
+  // (the runtime works exactly as before — pure stateless).
+  dbPath: getEnv("DB_PATH", ""),
+
+  // Embedding config — optional. Without it, vector search is skipped
+  // and memory retrieval falls back to FTS + graph search.
+  embeddingModel: getEnv("EMBEDDING_MODEL", ""),
+  embeddingDimensions: getIntEnv("EMBEDDING_DIMENSIONS", 1536),
+  embeddingApiKey: getEnv("EMBEDDING_API_KEY", ""),
+  embeddingBaseUrl: getEnv("EMBEDDING_BASE_URL", ""),
+  embeddingProvider: getEnv("EMBEDDING_PROVIDER", "openai"),
 };

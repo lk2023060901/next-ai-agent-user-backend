@@ -195,12 +195,15 @@ function sanitizeCapabilities(input: string[] | null | undefined): string[] {
   return out;
 }
 
+import { encryptSecret, decryptSecretCompat } from "../../utils/crypto.js";
+import { config } from "../../config.js";
+
 function encryptKey(key: string): string {
-  return Buffer.from(key).toString("base64");
+  return encryptSecret(key, config.encryptionSecret);
 }
 
 function decryptKey(encrypted: string): string {
-  return Buffer.from(encrypted, "base64").toString("utf-8");
+  return decryptSecretCompat(encrypted, config.encryptionSecret);
 }
 
 function staticModelRuntimeId(providerId: string, modelName: string): string {

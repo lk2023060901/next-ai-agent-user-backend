@@ -53,6 +53,7 @@ export interface DefaultSessionManagerOptions {
 export class DefaultSessionManager implements SessionManager {
   private readonly sessions = new Map<string, AgentSession>();
   private readonly keyIndex = new Map<string, string>(); // sessionKey → sessionId
+  private readonly createLocks = new Map<string, Promise<AgentSession>>();
   private readonly agentLoop: AgentLoop;
   private readonly eventBus: EventBus;
   private readonly defaultTimeoutMs: number;
@@ -116,31 +117,54 @@ export class DefaultSessionManager implements SessionManager {
     sessionKey: string,
     params: CreateSessionParams,
   ): Promise<AgentSession> {
-    // 1. Check in-memory cache by key
+    // Fast path: in-memory cache
     const existingId = this.keyIndex.get(sessionKey);
     if (existingId) {
       const existing = this.sessions.get(existingId);
       if (existing && existing.status !== "closed") {
-        if (existing.status === "suspended") {
-          await existing.resume();
-        }
+        if (existing.status === "suspended") await existing.resume();
         return existing;
       }
     }
 
-    // 2. Try restoring from persistent store by key
+    // Deduplicate concurrent creates for the same key
+    const inflight = this.createLocks.get(sessionKey);
+    if (inflight) return inflight;
+
+    const promise = this._getOrCreateInner(sessionKey, params);
+    this.createLocks.set(sessionKey, promise);
+    try {
+      return await promise;
+    } finally {
+      this.createLocks.delete(sessionKey);
+    }
+  }
+
+  private async _getOrCreateInner(
+    sessionKey: string,
+    params: CreateSessionParams,
+  ): Promise<AgentSession> {
+    // Re-check cache after acquiring "lock"
+    const existingId = this.keyIndex.get(sessionKey);
+    if (existingId) {
+      const existing = this.sessions.get(existingId);
+      if (existing && existing.status !== "closed") {
+        if (existing.status === "suspended") await existing.resume();
+        return existing;
+      }
+    }
+
+    // Try restoring from persistent store by key
     if (this.sessionStore) {
       const record = await this.sessionStore.getSessionByKey(sessionKey);
       if (record && record.status !== "closed") {
         const session = await this.restoreSession(record);
-        if (session.status === "suspended") {
-          await session.resume();
-        }
+        if (session.status === "suspended") await session.resume();
         return session;
       }
     }
 
-    // 3. Create new session
+    // Create new session
     return this.create({ ...params, sessionKey });
   }
 

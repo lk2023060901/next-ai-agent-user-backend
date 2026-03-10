@@ -795,7 +795,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     deleteRoutingRule(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        assertChannelMember(call.request.channelId, call.request.userContext?.userId);
+        assertRoutingRuleMember(call.request.ruleId, call.request.userContext?.userId);
         deleteRoutingRule(call.request.ruleId);
         callback(null, {});
       }
@@ -828,6 +828,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async sendChannelMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        // sendChannelMessage is called by the AI runtime via X-Runtime-Secret; no user context auth required.
         await sendChannelMessage({
           channelId: call.request.channelId,
           chatId: call.request.chatId,

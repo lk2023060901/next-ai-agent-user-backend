@@ -85,7 +85,7 @@ const runStore = new RunStore({
 // ─── Orchestrator (lane-based concurrency + session locking + retry) ──────
 const eventBus = new DefaultEventBus();
 const orchestrator = new DefaultOrchestrator({
-  runHandler: async (request) => {
+  runHandler: async (request, context) => {
     if (request.lane === "channel") {
       // Channel lane — run directly without RunStore/SSE.
       // Collect text via a lightweight emit, return fullText in RunResult.
@@ -104,6 +104,7 @@ const orchestrator = new DefaultOrchestrator({
           userRequest: request.userRequest,
           coordinatorAgentId: request.coordinatorAgentId,
           modelIdOverride: request.modelOverride,
+          abortSignal: context.abortSignal,
         },
         collectEmit,
       );
@@ -134,6 +135,7 @@ const orchestrator = new DefaultOrchestrator({
           userRequest: request.userRequest,
           coordinatorAgentId: request.coordinatorAgentId,
           modelIdOverride: request.modelOverride,
+          abortSignal: context.abortSignal,
         },
         collectEmit,
       );
@@ -149,7 +151,7 @@ const orchestrator = new DefaultOrchestrator({
 
     // Interactive/other lanes — bridge through RunStore for SSE streaming
     await runStore.startRun(request.runId, async ({ runId, params, emit }) => {
-      await startRun({ runId, ...params }, emit);
+      await startRun({ runId, ...params, abortSignal: context.abortSignal }, emit);
     });
     return {
       runId: request.runId,

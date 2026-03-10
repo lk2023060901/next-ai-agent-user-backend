@@ -32,6 +32,7 @@ export class SubAgentSpawner {
     const {
       parentRunId,
       parentSessionId,
+      workspaceId,
       targetAgentId,
       instruction,
       taskId,
@@ -61,7 +62,7 @@ export class SubAgentSpawner {
     const childRunContext: RunContext = {
       id: parentRunId, // Same run — sub-agent is part of the parent run
       sessionId: parentSessionId,
-      workspaceId: agent.id, // Will be overridden; placeholder
+      workspaceId,
       coordinatorAgentId: targetAgentId,
       userRequest: instruction,
       status: "running",

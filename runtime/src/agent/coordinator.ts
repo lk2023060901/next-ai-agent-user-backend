@@ -1,4 +1,5 @@
 import { completeSimple, type Model, type Api, type Message as PiAiMessage } from "@mariozechner/pi-ai";
+import { estimateTokens } from "../utils/token-estimator.js";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import type { RuntimeTool } from "../tools/types.js";
@@ -49,6 +50,8 @@ export interface CoordinatorParams {
   sessionId?: string;
   /** Session store — if provided with sessionId, enables multi-turn history. */
   sessionStore?: SessionStore;
+  /** Run-level abort signal — propagated to stream-loop and approval gate. */
+  abortSignal?: AbortSignal;
 }
 
 const WEB_SEARCH_PLAN_SCHEMA = z.object({
@@ -453,6 +456,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
           runId: params.runId,
           messageId,
           priorHistory,
+          abortSignal: params.abortSignal,
         });
 
         fullText = result.fullText;
@@ -761,15 +765,15 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
 // ─── Token Estimation ────────────────────────────────────────────────────────
 
 function estimateTokensForCompaction(messages: InternalMessage[]): number {
-  let chars = 0;
+  let total = 0;
   for (const msg of messages) {
     for (const block of msg.content) {
       if ("text" in block) {
-        chars += block.text.length;
+        total += estimateTokens(block.text);
       } else if (block.type === "tool-call") {
-        chars += block.toolName.length + block.args.length;
+        total += estimateTokens(block.toolName) + estimateTokens(block.args);
       }
     }
   }
-  return Math.ceil(chars / 4);
+  return total;
 }

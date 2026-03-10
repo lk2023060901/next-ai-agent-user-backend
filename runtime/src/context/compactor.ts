@@ -4,6 +4,7 @@ import type {
   Compactor,
   ContextState,
 } from "./context-types.js";
+import { estimateTokens } from "../utils/token-estimator.js";
 
 /**
  * Automatic context compaction (design doc §6.5).
@@ -77,8 +78,8 @@ export class DefaultCompactor implements Compactor {
 
     // Generate summary via LLM
     const summary = await generateSummary(toCompact, provider);
-    const removedTokens = estimateTokens(toCompact);
-    const summaryTokens = Math.ceil(summary.length / 4);
+    const removedTokens = estimateTokensMessages(toCompact);
+    const summaryTokens = estimateTokens(summary);
 
     return {
       removedMessages: toCompact.length,
@@ -161,16 +162,16 @@ function findSplitIndex(messages: Message[], turnsToKeep: number): number {
   return 0;
 }
 
-function estimateTokens(messages: Message[]): number {
-  let chars = 0;
+function estimateTokensMessages(messages: Message[]): number {
+  let total = 0;
   for (const msg of messages) {
     for (const block of msg.content) {
       if ("text" in block) {
-        chars += block.text.length;
+        total += estimateTokens(block.text);
       } else if (block.type === "tool-call") {
-        chars += block.toolName.length + block.args.length;
+        total += estimateTokens(block.toolName) + estimateTokens(block.args);
       }
     }
   }
-  return Math.ceil(chars / 4);
+  return total;
 }

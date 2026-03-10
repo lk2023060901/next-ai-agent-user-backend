@@ -1,7 +1,11 @@
 import { grpcClient } from "../grpc/client.js";
 import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
+import { getRuntimeServices } from "../bootstrap.js";
 import type { SseEvent } from "../sse/emitter.js";
+import type { Orchestrator } from "../orchestrator/orchestrator-types.js";
+import type { EventBus } from "../events/event-types.js";
 import { runCoordinator } from "./coordinator.js";
+import { startRun } from "./runner.js";
 
 export interface ChannelRunInput {
   sessionId: string;
@@ -15,7 +19,14 @@ export interface ChannelRunResult {
   replyText: string;
 }
 
-export async function runChannelRequest(input: ChannelRunInput): Promise<ChannelRunResult> {
+/**
+ * Execute a channel run through the orchestrator with "channel" lane.
+ * Falls back to direct execution if orchestrator is not provided.
+ */
+export async function runChannelRequest(
+  input: ChannelRunInput,
+  deps?: { orchestrator: Orchestrator; eventBus: EventBus },
+): Promise<ChannelRunResult> {
   const { runId } = await grpcClient.createRun({
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -23,6 +34,27 @@ export async function runChannelRequest(input: ChannelRunInput): Promise<Channel
     coordinatorAgentId: input.agentId,
   });
 
+  if (deps) {
+    // Orchestrated path — uses "channel" lane for concurrency control
+    deps.eventBus.registerRun(runId, {
+      sessionId: input.sessionId,
+      coordinatorAgentId: input.agentId,
+      workspaceId: input.workspaceId,
+    });
+
+    const result = await deps.orchestrator.executeAndAwait({
+      runId,
+      sessionKey: input.sessionId,
+      workspaceId: input.workspaceId,
+      coordinatorAgentId: input.agentId,
+      userRequest: input.message,
+      lane: "channel",
+    });
+
+    return { runId, replyText: result.fullText.trim() };
+  }
+
+  // Direct execution fallback (no orchestrator)
   let replyText = "";
   const emit = (event: SseEvent) => {
     if (event.type === "text-delta") {

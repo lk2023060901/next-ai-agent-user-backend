@@ -6,10 +6,9 @@ import type { MessageHistory, SessionStore } from "./agent-types.js";
 // Write-through cache: keeps an in-memory array for fast reads, persists
 // every append to the SessionStore. On load(), hydrates from the store.
 //
-// append() is synchronous (per MessageHistory interface) so DB writes
-// are fire-and-forget. SQLite WAL writes are ~microseconds, so the
-// risk of data loss is minimal. The in-memory copy is the source of
-// truth for the current process lifetime.
+// H7: Critical paths (append, replaceAll) now await persistence to prevent
+// data loss on crash. The sync append() still exists for interface compat
+// but callers should prefer appendAsync() for the critical message path.
 
 export class PersistentMessageHistory implements MessageHistory {
   private messages: Message[] = [];
@@ -33,10 +32,17 @@ export class PersistentMessageHistory implements MessageHistory {
     return this.messages.length;
   }
 
+  /** Sync append — updates in-memory array and fires persistence without waiting.
+   *  Kept for backward compat with MessageHistory interface. */
   append(message: Message): void {
     this.messages.push(message);
-    // Fire-and-forget persistence
     void this.store.appendMessage(this.sessionId, message);
+  }
+
+  /** H7: Async append — awaits persistence to guarantee crash safety. */
+  async appendAsync(message: Message): Promise<void> {
+    this.messages.push(message);
+    await this.store.appendMessage(this.sessionId, message);
   }
 
   getAll(): Message[] {
@@ -53,5 +59,20 @@ export class PersistentMessageHistory implements MessageHistory {
   clear(): void {
     this.messages = [];
     void this.store.clearMessages(this.sessionId);
+  }
+
+  /**
+   * Replace all messages with a new set (used after compaction).
+   * Uses atomic replaceMessages for data integrity.
+   */
+  replaceAll(messages: Message[]): void {
+    this.messages = [...messages];
+    void this.replaceAllAsync(messages);
+  }
+
+  /** H7: Async replaceAll — awaits full persistence for crash safety. */
+  async replaceAllAsync(messages: Message[]): Promise<void> {
+    this.messages = [...messages];
+    await this.store.replaceMessages(this.sessionId, messages);
   }
 }

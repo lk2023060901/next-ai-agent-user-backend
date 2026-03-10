@@ -42,6 +42,7 @@ message AuthResponse {
   string access_token = 1;
   string refresh_token = 2;
   UserProfile user = 3;
+  int32 expires_in = 4;
 }
 
 message UserProfile {
@@ -50,4 +51,5 @@ message UserProfile {
   string name = 3;
   string avatar_url = 4;
   string created_at = 5;
+  string updated_at = 6;
 }

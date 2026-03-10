@@ -1,5 +1,6 @@
 import type { Message } from "../providers/adapter.js";
 import type { HistoryTrimmer, TrimResult } from "./context-types.js";
+import { estimateTokens } from "../utils/token-estimator.js";
 
 /**
  * History trimmer (design doc §6.4).
@@ -26,7 +27,7 @@ export class DefaultHistoryTrimmer implements HistoryTrimmer {
       return { kept: [], removed: [] };
     }
 
-    const currentTokens = estimateTokens(messages);
+    const currentTokens = estimateTokensMessages(messages);
     if (currentTokens <= tokenBudget) {
       return { kept: [...messages], removed: [] };
     }
@@ -60,7 +61,7 @@ export class DefaultHistoryTrimmer implements HistoryTrimmer {
       // Skip if any message in this group is protected
       if (group.indices.some((i) => protectedIndices.has(i))) continue;
 
-      const groupTokens = estimateTokens(group.messages);
+      const groupTokens = estimateTokensMessages(group.messages);
       for (const idx of group.indices) {
         removedIndices.add(idx);
       }
@@ -93,7 +94,7 @@ export class DefaultHistoryTrimmer implements HistoryTrimmer {
       kept,
       removed,
       summary: removed.length > 0
-        ? `Trimmed ${removed.length} messages (${estimateTokens(removed)} tokens)`
+        ? `Trimmed ${removed.length} messages (${estimateTokensMessages(removed)} tokens)`
         : undefined,
     };
   }
@@ -174,17 +175,16 @@ function findRecentBoundary(messages: Message[], turnsToKeep: number): number {
 
 // ─── Token Estimation ────────────────────────────────────────────────────────
 
-/** Rough token estimate: ~4 characters per token. */
-function estimateTokens(messages: Message[]): number {
-  let chars = 0;
+function estimateTokensMessages(messages: Message[]): number {
+  let total = 0;
   for (const msg of messages) {
     for (const block of msg.content) {
       if ("text" in block) {
-        chars += block.text.length;
+        total += estimateTokens(block.text);
       } else if (block.type === "tool-call") {
-        chars += block.toolName.length + block.args.length;
+        total += estimateTokens(block.toolName) + estimateTokens(block.args);
       }
     }
   }
-  return Math.ceil(chars / 4);
+  return total;
 }

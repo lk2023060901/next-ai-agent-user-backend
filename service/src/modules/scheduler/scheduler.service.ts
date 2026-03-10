@@ -2,7 +2,8 @@ import { CronJob } from "cron";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "../../db/index.js";
-import { scheduledTasks, taskExecutions } from "../../db/schema.js";
+import { scheduledTasks, taskExecutions, chatSessions } from "../../db/schema.js";
+import { config } from "../../config.js";
 
 // In-memory registry of running cron jobs
 const runningJobs = new Map<string, CronJob>();
@@ -156,18 +157,63 @@ async function executeTask(task: typeof scheduledTasks.$inferSelect) {
     .run();
 
   try {
-    // TODO: dispatch to Agent when chat module is implemented
-    // For now, log the instruction
-    console.log(`[Scheduler] Executing task "${task.name}": ${task.instruction}`);
+    if (!task.targetAgentId || !task.instruction) {
+      throw new Error("targetAgentId and instruction are required for execution");
+    }
+
+    // Create a dedicated session for this scheduled execution
+    const sessionId = uuidv4();
+    db.insert(chatSessions)
+      .values({
+        id: sessionId,
+        workspaceId: task.workspaceId,
+        title: `[定时] ${task.name} #${(task.runCount ?? 0) + 1}`,
+        status: "active",
+        messageCount: 0,
+      })
+      .run();
+
+    // Dispatch to runtime via HTTP — blocks until agent run completes
+    const response = await fetch(`${config.runtimeAddr}/runtime/scheduled-run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Runtime-Secret": config.runtimeSecret,
+      },
+      body: JSON.stringify({
+        workspaceId: task.workspaceId,
+        sessionId,
+        agentId: task.targetAgentId,
+        instruction: task.instruction,
+        executionId: execId,
+      }),
+      signal: AbortSignal.timeout(660_000), // 11 min (slightly above scheduled lane 600s timeout)
+    });
+
+    if (!response.ok) {
+      let detail = "";
+      try { detail = (await response.text()).trim(); } catch { /* ignore */ }
+      throw new Error(`Runtime dispatch failed (${response.status}): ${detail || response.statusText}`);
+    }
+
+    const result = await response.json() as {
+      data: { runId: string; status: string; resultSummary: string };
+    };
 
     const endedAt = new Date().toISOString();
     db.update(taskExecutions).set({
-      status: "success",
+      status: result.data.status === "completed" ? "success" : "failed",
       endedAt,
-      result: JSON.stringify({ message: "executed", instruction: task.instruction }),
+      result: JSON.stringify({
+        runId: result.data.runId,
+        sessionId,
+        status: result.data.status,
+        summary: result.data.resultSummary,
+      }),
     }).where(eq(taskExecutions.id, execId)).run();
 
   } catch (err: any) {
+    console.error(`[Scheduler] Task "${task.name}" execution failed:`, err.message);
     db.update(taskExecutions).set({
       status: "failed",
       endedAt: new Date().toISOString(),

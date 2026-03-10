@@ -54,3 +54,4 @@ export { DefaultTokenBudgetAllocator } from "./token-budget.js";
 export { DefaultHistoryTrimmer } from "./history-trimmer.js";
 export { DefaultCompactor } from "./compactor.js";
 export { StubMemoryInjector } from "./memory-injector.js";
+export { RealMemoryInjector } from "./real-memory-injector.js";

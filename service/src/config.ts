@@ -7,4 +7,5 @@ export const config = {
   dbPath: process.env.DB_PATH ?? "../data/app.db",
   runtimeAddr: process.env.RUNTIME_ADDR ?? "http://localhost:8082",
   runtimeSecret: process.env.RUNTIME_SECRET ?? "dev-runtime-secret",
+  encryptionSecret: process.env.ENCRYPTION_SECRET ?? process.env.JWT_SECRET ?? "dev-secret-change-in-production",
 };

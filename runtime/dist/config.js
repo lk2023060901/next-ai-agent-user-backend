@@ -30,4 +30,15 @@ export const config = {
     // For BigModel: LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
     llmBaseUrl: getEnv("LLM_BASE_URL", ""),
     llmApiKey: getEnv("LLM_API_KEY", ""),
+    // ─── Memory System ────────────────────────────────────────────────────
+    // Set DB_PATH to enable the memory system. Leave empty to disable
+    // (the runtime works exactly as before — pure stateless).
+    dbPath: getEnv("DB_PATH", ""),
+    // Embedding config — optional. Without it, vector search is skipped
+    // and memory retrieval falls back to FTS + graph search.
+    embeddingModel: getEnv("EMBEDDING_MODEL", ""),
+    embeddingDimensions: getIntEnv("EMBEDDING_DIMENSIONS", 1536),
+    embeddingApiKey: getEnv("EMBEDDING_API_KEY", ""),
+    embeddingBaseUrl: getEnv("EMBEDDING_BASE_URL", ""),
+    embeddingProvider: getEnv("EMBEDDING_PROVIDER", "openai"),
 };

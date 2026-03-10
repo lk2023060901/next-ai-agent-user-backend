@@ -50,18 +50,47 @@ export class DefaultOrchestrator implements Orchestrator {
   private readonly eventBus: EventBus;
   private readonly runs = new Map<string, TrackedRun>();
   private readonly shutdownAc = new AbortController();
+  /** Pending await resolvers for executeAndAwait() callers. */
+  private readonly completionWaiters = new Map<string, {
+    resolve: (result: RunResult) => void;
+    reject: (error: Error) => void;
+  }>();
+  /** H4: Periodic GC timer for completed/failed runs. */
+  private readonly gcTimer: ReturnType<typeof setInterval>;
+  /** How long to retain completed/failed runs before GC (default 10 minutes). */
+  private readonly runRetentionMs: number;
 
   constructor(options: DefaultOrchestratorOptions) {
     const configs = options.laneConfigs ?? DEFAULT_LANE_CONFIGS;
 
     this.laneManager = options.laneManager ?? new LaneManager(configs);
     this.eventBus = options.eventBus;
+    this.runRetentionMs = 10 * 60 * 1000; // 10 minutes
 
     this.runExecutor = new RunExecutor({
       sessionLock: options.sessionLock ?? new InMemorySessionLock(),
       runHandler: options.runHandler,
       lockTimeoutMs: options.lockTimeoutMs,
     });
+
+    // H4: Start periodic GC for completed/failed runs
+    this.gcTimer = setInterval(() => this.cleanupCompletedRuns(), 60_000);
+    // Don't block process exit
+    if (this.gcTimer.unref) this.gcTimer.unref();
+  }
+
+  /** H4: Remove tracked runs that completed/failed more than runRetentionMs ago. */
+  private cleanupCompletedRuns(): void {
+    const cutoff = Date.now() - this.runRetentionMs;
+    for (const [runId, tracked] of this.runs) {
+      if (
+        tracked.completedAt &&
+        tracked.completedAt < cutoff &&
+        (tracked.status === "completed" || tracked.status === "failed" || tracked.status === "cancelled")
+      ) {
+        this.runs.delete(runId);
+      }
+    }
   }
 
   async enqueue(request: OrchestratorRunRequest): Promise<EnqueueResult> {
@@ -114,6 +143,31 @@ export class DefaultOrchestrator implements Orchestrator {
     };
   }
 
+  async executeAndAwait(request: OrchestratorRunRequest): Promise<RunResult> {
+    const enqueueResult = await this.enqueue(request);
+    if (enqueueResult.status === "rejected") {
+      return {
+        runId: request.runId,
+        status: "failed",
+        fullText: "",
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        turnsUsed: 0,
+        error: "Run rejected by orchestrator",
+      };
+    }
+
+    // If already completed (fast path), return immediately
+    const tracked = this.runs.get(request.runId);
+    if (tracked?.result) {
+      return tracked.result;
+    }
+
+    // Wait for completion
+    return new Promise<RunResult>((resolve, reject) => {
+      this.completionWaiters.set(request.runId, { resolve, reject });
+    });
+  }
+
   getRunStatus(runId: string): RunStatus | undefined {
     return this.runs.get(runId)?.status;
   }
@@ -142,7 +196,25 @@ export class DefaultOrchestrator implements Orchestrator {
     }
   }
 
+  getStatus(): { activeRuns: number; queueDepth: number; runsByLane: Record<string, number> } {
+    const runsByLane: Record<string, number> = {};
+    let activeRuns = 0;
+    for (const tracked of this.runs.values()) {
+      if (tracked.status === "running") {
+        activeRuns++;
+        const lane = tracked.request.lane ?? "interactive";
+        runsByLane[lane] = (runsByLane[lane] ?? 0) + 1;
+      }
+    }
+    return {
+      activeRuns,
+      queueDepth: this.laneManager.queuedCount(),
+      runsByLane,
+    };
+  }
+
   async shutdown(): Promise<void> {
+    clearInterval(this.gcTimer);
     this.laneManager.shutdown();
     this.shutdownAc.abort();
 
@@ -154,6 +226,19 @@ export class DefaultOrchestrator implements Orchestrator {
         tracked.completedAt = Date.now();
       }
     }
+
+    // Reject all pending executeAndAwait() waiters
+    for (const [runId, waiter] of this.completionWaiters) {
+      waiter.resolve({
+        runId,
+        status: "cancelled",
+        fullText: "",
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        turnsUsed: 0,
+        error: "Orchestrator shutdown",
+      });
+    }
+    this.completionWaiters.clear();
   }
 
   // ─── Private ────────────────────────────────────────────────────────────
@@ -192,6 +277,13 @@ export class DefaultOrchestrator implements Orchestrator {
       tracked.result = result;
       tracked.completedAt = Date.now();
 
+      // Resolve any executeAndAwait() waiter
+      const waiter = this.completionWaiters.get(tracked.request.runId);
+      if (waiter) {
+        this.completionWaiters.delete(tracked.request.runId);
+        waiter.resolve(result);
+      }
+
       // Emit run-end
       if (this.eventBus.hasRun(tracked.request.runId)) {
         this.eventBus.emit(tracked.request.runId, {
@@ -213,6 +305,20 @@ export class DefaultOrchestrator implements Orchestrator {
       tracked.completedAt = Date.now();
 
       const message = err instanceof Error ? err.message : String(err);
+
+      // Resolve any executeAndAwait() waiter with a failed result
+      const waiter = this.completionWaiters.get(tracked.request.runId);
+      if (waiter) {
+        this.completionWaiters.delete(tracked.request.runId);
+        waiter.resolve({
+          runId: tracked.request.runId,
+          status: "failed",
+          fullText: "",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          turnsUsed: 0,
+          error: message,
+        });
+      }
 
       if (this.eventBus.hasRun(tracked.request.runId)) {
         this.eventBus.emit(tracked.request.runId, {

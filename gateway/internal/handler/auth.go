@@ -30,12 +30,12 @@ func authResponse(resp *authpb.AuthResponse) map[string]any {
 				"email":     resp.User.Email,
 				"avatarUrl": resp.User.AvatarUrl,
 				"createdAt": resp.User.CreatedAt,
-				"updatedAt": resp.User.CreatedAt,
+				"updatedAt": resp.User.UpdatedAt,
 			},
 			"tokens": map[string]any{
 				"accessToken":  resp.AccessToken,
 				"refreshToken": resp.RefreshToken,
-				"expiresIn":    900,
+				"expiresIn":    resp.ExpiresIn,
 			},
 		},
 	}
@@ -134,7 +134,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		"data": map[string]any{
 			"accessToken":  resp.AccessToken,
 			"refreshToken": resp.RefreshToken,
-			"expiresIn":    900,
+			"expiresIn":    resp.ExpiresIn,
 		},
 	})
 }
@@ -163,7 +163,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 			"email":     resp.Email,
 			"avatarUrl": resp.AvatarUrl,
 			"createdAt": resp.CreatedAt,
-			"updatedAt": resp.CreatedAt,
+			"updatedAt": resp.UpdatedAt,
 		},
 	})
 }

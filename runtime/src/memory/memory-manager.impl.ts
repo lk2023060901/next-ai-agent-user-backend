@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ProviderAdapter } from "../providers/adapter.js";
+import { estimateTokens } from "../utils/token-estimator.js";
 import type {
   AccessType,
   ConsolidationResult,
@@ -253,7 +254,7 @@ export class DefaultMemoryManager implements MemoryManager {
 
       if (injectionScore < INJECTION_THRESHOLD) continue;
 
-      const contentTokens = Math.ceil(result.entry.content.length / 4);
+      const contentTokens = estimateTokens(result.entry.content);
       if (tokenCount + contentTokens > context.tokenBudget) break;
 
       injections.push({

@@ -7,6 +7,10 @@ import { IdempotencyConflictError, RunStore } from "./sse/run-store.js";
 import { startRun } from "./agent/runner.js";
 import { runChannelRequest } from "./agent/channel-runner.js";
 import { initializeRuntimePlugins, syncRuntimePlugin } from "./plugins/runtime-loader.js";
+import { getRuntimeServices, closeRuntimeServices } from "./bootstrap.js";
+import { approvalGate } from "./tools/approval-gate.js";
+import { DefaultOrchestrator } from "./orchestrator/orchestrator.impl.js";
+import { DefaultEventBus } from "./events/event-bus.js";
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 // ─── Health ───────────────────────────────────────────────────────────────────
@@ -16,6 +20,49 @@ const runStore = new RunStore({
     runRetentionMs: config.runRetentionMs,
     idempotencyTtlMs: config.runIdempotencyTtlMs,
     cleanupIntervalMs: config.runStoreCleanupIntervalMs,
+});
+// ─── Orchestrator (lane-based concurrency + session locking + retry) ──────
+const eventBus = new DefaultEventBus();
+const orchestrator = new DefaultOrchestrator({
+    runHandler: async (request) => {
+        if (request.lane === "channel") {
+            // Channel lane — run directly without RunStore/SSE.
+            // Collect text via a lightweight emit, return fullText in RunResult.
+            let fullText = "";
+            const collectEmit = (event) => {
+                if (event.type === "text-delta") {
+                    fullText += event.text;
+                }
+            };
+            await startRun({
+                runId: request.runId,
+                sessionId: request.sessionKey,
+                workspaceId: request.workspaceId,
+                userRequest: request.userRequest,
+                coordinatorAgentId: request.coordinatorAgentId,
+                modelIdOverride: request.modelOverride,
+            }, collectEmit);
+            return {
+                runId: request.runId,
+                status: "completed",
+                fullText,
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                turnsUsed: 0,
+            };
+        }
+        // Interactive/other lanes — bridge through RunStore for SSE streaming
+        await runStore.startRun(request.runId, async ({ runId, params, emit }) => {
+            await startRun({ runId, ...params }, emit);
+        });
+        return {
+            runId: request.runId,
+            status: "completed",
+            fullText: "",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            turnsUsed: 0,
+        };
+    },
+    eventBus,
 });
 // ─── Channel run (async, no SSE) ──────────────────────────────────────────────
 // POST /channel-run
@@ -218,13 +265,25 @@ app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
                 coordinatorAgentId: effectiveCoordinatorAgentId,
             }),
         });
+        // Register run in EventBus for orchestrator lifecycle events
+        eventBus.registerRun(createResult.runId, {
+            sessionId: effectiveSessionId,
+            coordinatorAgentId: effectiveCoordinatorAgentId,
+            workspaceId: wsId,
+        });
         setImmediate(() => {
-            runStore
-                .startRun(createResult.runId, async ({ runId, params, emit }) => {
-                await startRun({ runId, ...params }, emit);
+            orchestrator
+                .enqueue({
+                runId: createResult.runId,
+                sessionKey: effectiveSessionId,
+                workspaceId: wsId,
+                coordinatorAgentId: effectiveCoordinatorAgentId,
+                userRequest: effectiveUserRequest,
+                lane: "interactive",
+                modelOverride: modelIdOverride,
             })
                 .catch((err) => {
-                app.log.error({ err, runId: createResult.runId }, "Agent run failed");
+                app.log.error({ err, runId: createResult.runId }, "Agent run enqueue failed");
             });
         });
         return reply.send({
@@ -299,7 +358,25 @@ app.get("/runtime/runs/:runId/stream", async (request, reply) => {
 app.post("/runtime/runs/:runId/cancel", async (request, reply) => {
     const { runId } = request.params;
     await grpcClient.updateRunStatus(runId, "cancelled");
+    await orchestrator.cancel(runId);
     runStore.cancel(runId, "Run cancelled by user");
+    return reply.send({ ok: true });
+});
+// ─── Tool approval ──────────────────────────────────────────────────────────
+// POST /runtime/approvals/:approvalId/approve
+// POST /runtime/approvals/:approvalId/reject
+app.post("/runtime/approvals/:approvalId/approve", async (request, reply) => {
+    const found = approvalGate.approve(request.params.approvalId);
+    if (!found) {
+        return reply.status(404).send({ error: "approval not found or expired" });
+    }
+    return reply.send({ ok: true });
+});
+app.post("/runtime/approvals/:approvalId/reject", async (request, reply) => {
+    const found = approvalGate.reject(request.params.approvalId);
+    if (!found) {
+        return reply.status(404).send({ error: "approval not found or expired" });
+    }
     return reply.send({ ok: true });
 });
 async function processChannelRun(body) {
@@ -308,7 +385,7 @@ async function processChannelRun(body) {
         workspaceId: body.workspaceId,
         agentId: body.agentId,
         message: body.message,
-    });
+    }, { orchestrator, eventBus });
     if (!replyText) {
         app.log.warn({ runId, channelId: body.channelId, agentId: body.agentId }, "Channel run produced empty reply; skip send");
         return;
@@ -351,6 +428,19 @@ async function sendReplyToChannel(params) {
 }
 // ─── Start ────────────────────────────────────────────────────────────────────
 try {
+    // Bootstrap memory system (no-op if DB_PATH is not set)
+    try {
+        const services = getRuntimeServices();
+        if (services.db) {
+            app.log.info({ dbPath: config.dbPath, embedding: !!services.embedding }, "Memory system bootstrapped");
+        }
+        else {
+            app.log.info("Memory system disabled (DB_PATH not set)");
+        }
+    }
+    catch (err) {
+        app.log.error({ err }, "Memory system bootstrap failed — continuing without memory");
+    }
     try {
         const summary = await initializeRuntimePlugins({
             grpc: grpcClient,
@@ -365,6 +455,8 @@ try {
     app.log.info(`Runtime listening on :${config.port}`);
 }
 catch (err) {
+    await orchestrator.shutdown();
+    closeRuntimeServices();
     runStore.close();
     app.log.error(err);
     process.exit(1);

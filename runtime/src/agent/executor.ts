@@ -6,6 +6,12 @@ import { buildToolset } from "../tools/registry.js";
 import { buildModelForAgent, getLlmCandidates, resolveApiKey } from "../llm/model-factory.js";
 import { runStreamLoop } from "./stream-loop.js";
 
+export interface ContextSlice {
+  summary?: string;
+  relevantFacts?: string[];
+  constraints?: string;
+}
+
 export interface ExecutorParams {
   agentId: string;
   instruction: string;
@@ -16,6 +22,7 @@ export interface ExecutorParams {
   sandbox: SandboxPolicy;
   emit: SseEmitter;
   grpc: typeof GrpcClientType;
+  contextSlice?: ContextSlice;
 }
 
 export async function runExecutor(params: ExecutorParams): Promise<{ result: string }> {
@@ -63,9 +70,29 @@ export async function runExecutor(params: ExecutorParams): Promise<{ result: str
         const model = buildModelForAgent(agentCfg, candidate);
         const apiKey = resolveApiKey(agentCfg, candidate ?? undefined);
 
+        // Build system prompt with optional context slice from parent
+        let systemPrompt = agentCfg.systemPrompt || "";
+        if (params.contextSlice) {
+          const sliceParts: string[] = [];
+          if (params.contextSlice.summary) {
+            sliceParts.push(`## Parent Context\n${params.contextSlice.summary}`);
+          }
+          if (params.contextSlice.relevantFacts?.length) {
+            sliceParts.push(
+              `## Relevant Facts\n${params.contextSlice.relevantFacts.map((f) => `- ${f}`).join("\n")}`,
+            );
+          }
+          if (params.contextSlice.constraints) {
+            sliceParts.push(`## Constraints\n${params.contextSlice.constraints}`);
+          }
+          if (sliceParts.length > 0) {
+            systemPrompt = `${systemPrompt}\n\n${sliceParts.join("\n\n")}`;
+          }
+        }
+
         const result = await runStreamLoop({
           model,
-          systemPrompt: agentCfg.systemPrompt || "",
+          systemPrompt,
           userMessage: params.instruction,
           tools,
           maxSteps: params.sandbox.maxTurns,

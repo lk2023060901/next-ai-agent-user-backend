@@ -78,20 +78,21 @@ export class SqliteSessionStore implements SessionStore {
   // ─── Message History ───────────────────────────────────────────────────
 
   async appendMessage(sessionId: string, message: Message): Promise<void> {
-    // Get next sequence number
-    const row = this.stmts.maxSeq.get({ session_id: sessionId }) as { max_seq: number | null } | undefined;
-    const seq = (row?.max_seq ?? -1) + 1;
-
-    this.stmts.insertMessage.run({
-      session_id: sessionId,
-      seq,
-      role: message.role,
-      content: JSON.stringify(message.content),
-      tool_call_id: message.toolCallId ?? null,
-      tool_name: message.toolName ?? null,
-      is_error: message.isError ? 1 : 0,
-      created_at: Date.now(),
+    const insert = this.db.transaction(() => {
+      const row = this.stmts.maxSeq.get({ session_id: sessionId }) as { max_seq: number | null } | undefined;
+      const seq = (row?.max_seq ?? -1) + 1;
+      this.stmts.insertMessage.run({
+        session_id: sessionId,
+        seq,
+        role: message.role,
+        content: JSON.stringify(message.content),
+        tool_call_id: message.toolCallId ?? null,
+        tool_name: message.toolName ?? null,
+        is_error: message.isError ? 1 : 0,
+        created_at: Date.now(),
+      });
     });
+    insert();
   }
 
   async getMessages(sessionId: string, limit?: number): Promise<Message[]> {
@@ -111,6 +112,26 @@ export class SqliteSessionStore implements SessionStore {
 
   async clearMessages(sessionId: string): Promise<void> {
     this.stmts.clearMessages.run({ session_id: sessionId });
+  }
+
+  async replaceMessages(sessionId: string, messages: Message[]): Promise<void> {
+    const replace = this.db.transaction(() => {
+      this.stmts.clearMessages.run({ session_id: sessionId });
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i]!;
+        this.stmts.insertMessage.run({
+          session_id: sessionId,
+          seq: i,
+          role: msg.role,
+          content: JSON.stringify(msg.content),
+          tool_call_id: msg.toolCallId ?? null,
+          tool_name: msg.toolName ?? null,
+          is_error: msg.isError ? 1 : 0,
+          created_at: Date.now(),
+        });
+      }
+    });
+    replace();
   }
 }
 

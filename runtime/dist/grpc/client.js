@@ -29,6 +29,9 @@ function promisify(client, method, request) {
 // ─── AgentRunService client ───────────────────────────────────────────────────
 const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto"));
 const agentRunClient = createClient(agentRunPkg, agentRunPkg.agent_run.AgentRunService);
+// ─── ToolsService client ────────────────────────────────────────────────────
+const toolsPkg = grpc.loadPackageDefinition(loadProto("tools.proto"));
+const toolsClient = createClient(toolsPkg, toolsPkg.tools.ToolsService);
 export const grpcClient = {
     getAgentConfig(agentId, modelIdOverride) {
         return promisify(agentRunClient, "getAgentConfig", {
@@ -95,6 +98,22 @@ export const grpcClient = {
             operation: params.operation ?? "load",
             message: params.message ?? "",
             actorUserId: params.actorUserId ?? "runtime",
+        });
+    },
+    // ─── KB Search (ToolsService) ──────────────────────────────────────────
+    searchKnowledgeBase(params) {
+        return promisify(toolsClient, "searchKnowledgeBase", {
+            knowledgeBaseId: params.knowledgeBaseId,
+            query: params.query,
+            topK: params.topK ?? 5,
+            // Runtime calls don't need user context
+            userContext: { userId: "runtime", role: "service" },
+        });
+    },
+    listKnowledgeBases(workspaceId) {
+        return promisify(toolsClient, "listKnowledgeBases", {
+            workspaceId,
+            userContext: { userId: "runtime", role: "service" },
         });
     },
 };
