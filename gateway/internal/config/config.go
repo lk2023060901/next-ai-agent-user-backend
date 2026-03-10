@@ -46,6 +46,18 @@ func Load() *Config {
 	}
 }
 
+// Validate returns warnings when default/insecure secrets are still in use.
+func (c *Config) Validate() []string {
+	var warnings []string
+	if c.JWTSecret == "dev-secret-change-in-production" {
+		warnings = append(warnings, "JWT_SECRET is using the default development value — set a strong secret in production")
+	}
+	if c.RuntimeSecret == "dev-runtime-secret" {
+		warnings = append(warnings, "RUNTIME_SECRET is using the default development value — set a strong secret in production")
+	}
+	return warnings
+}
+
 func buildAllowedOrigins(frontendURL string) []string {
 	origins := []string{
 		"http://localhost:3000",

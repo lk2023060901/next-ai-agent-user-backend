@@ -218,6 +218,28 @@ export class RunStore {
 
     const afterSeq = parseNonNegativeInt(cursorSeq);
     let replayed = 0;
+
+    // M11: Detect event gap — if client's cursor is behind the oldest buffered event,
+    // notify them that events were lost so the frontend can surface a warning.
+    if (afterSeq > 0 && run.events.length > 0) {
+      const oldestSeq = run.events[0]!.seq;
+      if (afterSeq < oldestSeq) {
+        const gapEvent: SseEvent = {
+          type: "tool-result",
+          runId,
+          toolName: "_buffer_gap_warning",
+          toolCallId: `gap-${Date.now()}`,
+          result: {
+            warning: `事件缓冲区溢出：序列 ${afterSeq + 1} 到 ${oldestSeq - 1} 的事件已丢失`,
+            missedFrom: afterSeq + 1,
+            missedTo: oldestSeq - 1,
+          },
+          status: "error",
+        };
+        emit(gapEvent);
+      }
+    }
+
     for (const row of run.events) {
       if (row.seq <= afterSeq) continue;
       emit(row.event);
@@ -258,7 +280,8 @@ export class RunStore {
 
     run.events.push({ seq, event: enriched });
     if (run.events.length > this.options.maxEventsPerRun) {
-      run.events.splice(0, run.events.length - this.options.maxEventsPerRun);
+      const overflow = run.events.length - this.options.maxEventsPerRun;
+      run.events.splice(0, overflow);
     }
 
     if (event.type === "error") {
@@ -281,6 +304,14 @@ export class RunStore {
         // ignore subscriber-level failures
       }
     }
+  }
+
+  /** H5: Emit an error event followed by done, so SSE clients are notified of enqueue failures. */
+  emitError(runId: string, message: string): void {
+    const run = this.runs.get(runId);
+    if (!run || run.terminal) return;
+    this.emit(runId, { type: "error", runId, message });
+    this.emit(runId, { type: "done", runId });
   }
 
   cancel(runId: string, message?: string): boolean {
@@ -315,7 +346,8 @@ export class RunStore {
       const stale = now - run.updatedAt > this.options.runRetentionMs;
       if (!stale) continue;
       if (!run.terminal && run.startPromise) continue;
-      if (run.subscribers.size > 0) continue;
+      // Terminal stale runs: force-clean even with subscribers (leaked connections)
+      run.subscribers.clear();
       this.runs.delete(runId);
     }
   }

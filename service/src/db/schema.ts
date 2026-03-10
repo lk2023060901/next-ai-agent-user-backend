@@ -56,7 +56,11 @@ export const orgMembers = sqliteTable("org_members", {
   joinedAt: text("joined_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxOrgId: index("org_members_org_id_idx").on(t.orgId),
+  idxUserId: index("org_members_user_id_idx").on(t.userId),
+  uqOrgUser: uniqueIndex("org_members_org_user_uq").on(t.orgId, t.userId),
+}));
 
 // ─── Workspaces ──────────────────────────────────────────────────────────────
 
@@ -94,7 +98,9 @@ export const agents = sqliteTable("agents", {
   description: text("description"),
   configJson: text("config_json").notNull().default("{}"),
   ...timestamps,
-});
+}, (t) => ({
+  idxWorkspace: index("agents_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const agentKnowledgeBases = sqliteTable("agent_knowledge_bases", {
   agentId: text("agent_id")
@@ -161,7 +167,9 @@ export const chatSessions = sqliteTable("chat_sessions", {
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxWorkspace: index("chat_sessions_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(),
@@ -178,6 +186,7 @@ export const messages = sqliteTable("messages", {
     .notNull()
     .default(sql`(datetime('now'))`),
 }, (t) => ({
+  idxSession: index("messages_session_id_idx").on(t.sessionId),
   idxRun: index("messages_run_id_idx").on(t.runId),
 }));
 
@@ -222,7 +231,10 @@ export const agentRuns = sqliteTable("agent_runs", {
   startedAt: text("started_at"),
   endedAt: text("ended_at"),
   ...timestamps,
-});
+}, (t) => ({
+  idxSession: index("agent_runs_session_id_idx").on(t.sessionId),
+  idxWorkspace: index("agent_runs_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const agentTasks = sqliteTable("agent_tasks", {
   id: text("id").primaryKey(),
@@ -245,7 +257,9 @@ export const agentTasks = sqliteTable("agent_tasks", {
   startedAt: text("started_at"),
   endedAt: text("ended_at"),
   ...timestamps,
-});
+}, (t) => ({
+  idxRun: index("agent_tasks_run_id_idx").on(t.runId),
+}));
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
 
@@ -271,7 +285,9 @@ export const toolAuthorizations = sqliteTable("tool_authorizations", {
   updatedAt: text("updated_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxWorkspace: index("tool_authorizations_workspace_id_idx").on(t.workspaceId),
+}));
 
 // ─── Knowledge Bases ─────────────────────────────────────────────────────────
 
@@ -343,7 +359,9 @@ export const channels = sqliteTable("channels", {
   status: text("status").notNull().default("inactive"),
   configJson: text("config_json").default("{}"),
   ...timestamps,
-});
+}, (t) => ({
+  idxWorkspace: index("channels_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const channelMessages = sqliteTable("channel_messages", {
   id: text("id").primaryKey(),
@@ -357,7 +375,9 @@ export const channelMessages = sqliteTable("channel_messages", {
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxChannel: index("channel_messages_channel_id_idx").on(t.channelId),
+}));
 
 export const routingRules = sqliteTable("routing_rules", {
   id: text("id").primaryKey(),
@@ -538,7 +558,9 @@ export const scheduledTasks = sqliteTable("scheduled_tasks", {
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxWorkspace: index("scheduled_tasks_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const taskExecutions = sqliteTable("task_executions", {
   id: text("id").primaryKey(),

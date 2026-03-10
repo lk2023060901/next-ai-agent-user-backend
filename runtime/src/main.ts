@@ -6,7 +6,18 @@ import { formatSseData, type SseEvent } from "./sse/emitter.js";
 import { IdempotencyConflictError, RunStore } from "./sse/run-store.js";
 import { startRun } from "./agent/runner.js";
 import { runChannelRequest } from "./agent/channel-runner.js";
+import { runScheduledTask } from "./agent/scheduled-runner.js";
 import { initializeRuntimePlugins, syncRuntimePlugin } from "./plugins/runtime-loader.js";
+import { getRuntimeServices, closeRuntimeServices } from "./bootstrap.js";
+import { approvalGate } from "./tools/approval-gate.js";
+import { DefaultOrchestrator } from "./orchestrator/orchestrator.impl.js";
+import { DefaultEventBus } from "./events/event-bus.js";
+import type { RunResult } from "./agent/agent-types.js";
+import {
+  syncKbDocument,
+  deleteKbDocument,
+  deleteKbEntireKnowledgeBase,
+} from "./kb/kb-sync.js";
 
 const app = Fastify({ logger: true });
 
@@ -54,13 +65,101 @@ interface RuntimePluginSyncBody {
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 
-app.get("/health", async () => ({ status: "ok" }));
+// L3: Track shutdown state so the health endpoint can report 503
+let isShuttingDown = false;
+
+app.get("/health", async (_request, reply) => {
+  if (isShuttingDown) {
+    return reply.status(503).send({ status: "shutting_down" });
+  }
+  return reply.send({ status: "ok" });
+});
 
 const runStore = new RunStore({
   maxEventsPerRun: config.runEventBufferSize,
   runRetentionMs: config.runRetentionMs,
   idempotencyTtlMs: config.runIdempotencyTtlMs,
   cleanupIntervalMs: config.runStoreCleanupIntervalMs,
+});
+
+// ─── Orchestrator (lane-based concurrency + session locking + retry) ──────
+const eventBus = new DefaultEventBus();
+const orchestrator = new DefaultOrchestrator({
+  runHandler: async (request) => {
+    if (request.lane === "channel") {
+      // Channel lane — run directly without RunStore/SSE.
+      // Collect text via a lightweight emit, return fullText in RunResult.
+      let fullText = "";
+      const collectEmit = (event: SseEvent) => {
+        if (event.type === "text-delta") {
+          fullText += event.text;
+        }
+      };
+
+      await startRun(
+        {
+          runId: request.runId,
+          sessionId: request.sessionKey,
+          workspaceId: request.workspaceId,
+          userRequest: request.userRequest,
+          coordinatorAgentId: request.coordinatorAgentId,
+          modelIdOverride: request.modelOverride,
+        },
+        collectEmit,
+      );
+
+      return {
+        runId: request.runId,
+        status: "completed",
+        fullText,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        turnsUsed: 0,
+      } satisfies RunResult;
+    }
+
+    // Scheduled lane — run without RunStore/SSE, collect text for result.
+    if (request.lane === "scheduled") {
+      let fullText = "";
+      const collectEmit = (event: SseEvent) => {
+        if (event.type === "text-delta") {
+          fullText += event.text;
+        }
+      };
+
+      await startRun(
+        {
+          runId: request.runId,
+          sessionId: request.sessionKey,
+          workspaceId: request.workspaceId,
+          userRequest: request.userRequest,
+          coordinatorAgentId: request.coordinatorAgentId,
+          modelIdOverride: request.modelOverride,
+        },
+        collectEmit,
+      );
+
+      return {
+        runId: request.runId,
+        status: "completed",
+        fullText,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        turnsUsed: 0,
+      } satisfies RunResult;
+    }
+
+    // Interactive/other lanes — bridge through RunStore for SSE streaming
+    await runStore.startRun(request.runId, async ({ runId, params, emit }) => {
+      await startRun({ runId, ...params }, emit);
+    });
+    return {
+      runId: request.runId,
+      status: "completed",
+      fullText: "",
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      turnsUsed: 0,
+    } satisfies RunResult;
+  },
+  eventBus,
 });
 
 // ─── Channel run (async, no SSE) ──────────────────────────────────────────────
@@ -104,10 +203,74 @@ app.post<{ Body: ChannelRunBody }>("/channel-run", async (request, reply) => {
         },
         "Channel run failed"
       );
+
+      // M1: Try to send an error message back to the channel so the user
+      // is informed instead of silently dropping the failure.
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      sendReplyToChannel({
+        channelId: body.channelId,
+        chatId: body.chatId,
+        text: `[Agent Error] Failed to process message: ${errorMsg}`,
+        threadId: body.threadId,
+      }).catch((sendErr) => {
+        app.log.error(
+          { err: sendErr, channelId: body.channelId },
+          "Failed to send error reply to channel"
+        );
+      });
     });
   });
 
   return reply.status(202).send({ accepted: true });
+});
+
+// ─── Scheduled run (cron task dispatch) ───────────────────────────────────────
+// POST /runtime/scheduled-run
+// Body: { workspaceId, sessionId, agentId, instruction, executionId }
+// Authenticated via X-Runtime-Secret. Blocks until agent run completes.
+
+interface ScheduledRunBody {
+  workspaceId: string;
+  sessionId: string;
+  agentId: string;
+  instruction: string;
+  executionId: string;
+}
+
+app.post<{ Body: ScheduledRunBody }>("/runtime/scheduled-run", async (request, reply) => {
+  const runtimeSecretHeader = request.headers["x-runtime-secret"];
+  const providedSecret = Array.isArray(runtimeSecretHeader)
+    ? (runtimeSecretHeader[0] ?? "")
+    : (runtimeSecretHeader ?? "");
+  if (providedSecret !== config.runtimeSecret) {
+    return reply.status(401).send({ error: "invalid runtime secret" });
+  }
+
+  const body = request.body;
+  if (!body?.workspaceId || !body?.sessionId || !body?.agentId || !body?.instruction || !body?.executionId) {
+    return reply.status(400).send({
+      error: "workspaceId, sessionId, agentId, instruction, executionId required",
+    });
+  }
+
+  try {
+    const result = await runScheduledTask(
+      {
+        workspaceId: body.workspaceId,
+        sessionId: body.sessionId,
+        agentId: body.agentId,
+        instruction: body.instruction,
+        executionId: body.executionId,
+      },
+      { orchestrator, eventBus },
+    );
+
+    return reply.send({ data: result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    app.log.error({ err, executionId: body.executionId }, "Scheduled run failed");
+    return reply.status(500).send({ error: message });
+  }
 });
 
 // ─── Runtime plugin sync (hot load/reload/unload) ────────────────────────────
@@ -151,6 +314,169 @@ app.post<{ Body: RuntimePluginSyncBody }>("/runtime/plugins/sync", async (reques
     return reply.status(500).send(result);
   }
   return reply.send(result);
+});
+
+// ─── KB sync (R3: service → runtime knowledge base synchronization) ──────────
+// POST /runtime/ws/:wsId/kb/sync
+// Body: { action, knowledgeBaseId, documentId?, documentName?, chunks?, documentIds? }
+// Authenticated via X-Runtime-Secret. Called by the service after KB document
+// processing completes, or after document/KB deletion.
+
+interface KbSyncBody {
+  action: "sync-document" | "delete-document" | "delete-kb";
+  knowledgeBaseId: string;
+  documentId?: string;
+  documentName?: string;
+  chunks?: Array<{
+    chunkIndex: number;
+    content: string;
+    embedding: number[];
+  }>;
+  documentIds?: string[];
+}
+
+app.post<{ Params: { wsId: string }; Body: KbSyncBody }>(
+  "/runtime/ws/:wsId/kb/sync",
+  async (request, reply) => {
+    const runtimeSecretHeader = request.headers["x-runtime-secret"];
+    const providedSecret = Array.isArray(runtimeSecretHeader)
+      ? (runtimeSecretHeader[0] ?? "")
+      : (runtimeSecretHeader ?? "");
+    if (providedSecret !== config.runtimeSecret) {
+      return reply.status(401).send({ error: "invalid runtime secret" });
+    }
+
+    const { wsId } = request.params;
+    const body = request.body;
+
+    if (!body?.action || !body?.knowledgeBaseId) {
+      return reply.status(400).send({ error: "action and knowledgeBaseId required" });
+    }
+
+    try {
+      switch (body.action) {
+        case "sync-document": {
+          if (!body.documentId || !body.chunks || body.chunks.length === 0) {
+            return reply.status(400).send({ error: "documentId and non-empty chunks required for sync-document" });
+          }
+          const result = await syncKbDocument({
+            workspaceId: wsId,
+            knowledgeBaseId: body.knowledgeBaseId,
+            documentId: body.documentId,
+            documentName: body.documentName ?? "",
+            chunks: body.chunks,
+          });
+          return reply.send({ data: result });
+        }
+
+        case "delete-document": {
+          if (!body.documentId) {
+            return reply.status(400).send({ error: "documentId required for delete-document" });
+          }
+          const result = await deleteKbDocument({ documentId: body.documentId });
+          return reply.send({ data: result });
+        }
+
+        case "delete-kb": {
+          if (!body.documentIds || body.documentIds.length === 0) {
+            return reply.status(400).send({ error: "documentIds required for delete-kb" });
+          }
+          const result = await deleteKbEntireKnowledgeBase({
+            knowledgeBaseId: body.knowledgeBaseId,
+            documentIds: body.documentIds,
+          });
+          return reply.send({ data: result });
+        }
+
+        default:
+          return reply.status(400).send({ error: `Unknown action: ${body.action}` });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      app.log.error({ err, wsId, action: body.action }, "KB sync failed");
+      return reply.status(500).send({ error: message });
+    }
+  },
+);
+
+// ─── Memory query (L1: memory visualization) ────────────────────────────────
+// GET /runtime/ws/:wsId/agents/:agentId/memory?type=episodic&limit=50
+// Returns: { data: MemoryEntry[] }
+
+app.get<{
+  Params: { wsId: string; agentId: string };
+  Querystring: { type?: string; limit?: string; query?: string };
+}>("/runtime/ws/:wsId/agents/:agentId/memory", async (request, reply) => {
+  const { wsId, agentId } = request.params;
+  const services = getRuntimeServices();
+
+  if (!services.memoryManager) {
+    return reply.status(503).send({ error: "Memory system not available" });
+  }
+
+  const typeParam = (request.query.type ?? "").trim();
+  const validTypes = ["episodic", "semantic", "reflection", "meta_reflection", "knowledge"];
+  const types = typeParam
+    ? typeParam.split(",").filter((t) => validTypes.includes(t))
+    : undefined;
+
+  const limit = Math.min(
+    Math.max(1, Number.parseInt(request.query.limit ?? "50", 10) || 50),
+    200,
+  );
+
+  const queryText = (request.query.query ?? "").trim();
+
+  if (queryText) {
+    const results = await services.memoryManager.search({
+      query: queryText,
+      agentId,
+      workspaceId: wsId,
+      types: types as any,
+      limit,
+    });
+    return reply.send({
+      data: results.map((r) => ({
+        ...r.entry,
+        embedding: undefined,
+        score: r.score,
+        breakdown: r.breakdown,
+        source: r.source,
+      })),
+    });
+  }
+
+  // Without query — list recent memories by type
+  const results = await services.memoryManager.search({
+    query: "",
+    agentId,
+    workspaceId: wsId,
+    types: types as any,
+    limit,
+    includeDecayed: true,
+  });
+  return reply.send({
+    data: results.map((r) => ({
+      ...r.entry,
+      embedding: undefined,
+      score: r.score,
+      breakdown: r.breakdown,
+      source: r.source,
+    })),
+  });
+});
+
+// ─── Runtime status (L3: agent status panel real data) ─────────────────────
+// GET /runtime/status
+// Returns: { lanes, activeRuns, queueDepth }
+
+app.get("/runtime/status", async (_request, reply) => {
+  const status = orchestrator.getStatus?.() ?? {
+    lanes: {},
+    activeRuns: 0,
+    queueDepth: 0,
+  };
+  return reply.send({ data: status });
 });
 
 // ─── Create run (async) ───────────────────────────────────────────────────────
@@ -296,13 +622,37 @@ app.post<{
         }),
     });
 
+    // Register run in EventBus for orchestrator lifecycle events
+    eventBus.registerRun(createResult.runId, {
+      sessionId: effectiveSessionId,
+      coordinatorAgentId: effectiveCoordinatorAgentId,
+      workspaceId: wsId,
+    });
+
+    // H5: If enqueue fails, emit an error event so the SSE client is notified
+    // instead of silently logging and leaving the client hanging.
     setImmediate(() => {
-      runStore
-        .startRun(createResult.runId, async ({ runId, params, emit }) => {
-          await startRun({ runId, ...params }, emit);
+      orchestrator
+        .enqueue({
+          runId: createResult.runId,
+          sessionKey: effectiveSessionId,
+          workspaceId: wsId,
+          coordinatorAgentId: effectiveCoordinatorAgentId,
+          userRequest: effectiveUserRequest,
+          lane: "interactive",
+          modelOverride: modelIdOverride,
+        })
+        .then((enqueueResult) => {
+          if (enqueueResult.status === "rejected") {
+            const errorMsg = "Run rejected by orchestrator (lane full or shutting down)";
+            app.log.error({ runId: createResult.runId }, errorMsg);
+            runStore.emitError(createResult.runId, errorMsg);
+          }
         })
         .catch((err) => {
-          app.log.error({ err, runId: createResult.runId }, "Agent run failed");
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          app.log.error({ err, runId: createResult.runId }, "Agent run enqueue failed");
+          runStore.emitError(createResult.runId, `Enqueue failed: ${errorMsg}`);
         });
     });
 
@@ -392,17 +742,47 @@ app.get<{ Params: { runId: string }; Querystring: { cursor?: string } }>(
 app.post<{ Params: { runId: string } }>("/runtime/runs/:runId/cancel", async (request, reply) => {
   const { runId } = request.params;
   await grpcClient.updateRunStatus(runId, "cancelled");
+  await orchestrator.cancel(runId);
   runStore.cancel(runId, "Run cancelled by user");
   return reply.send({ ok: true });
 });
 
+// ─── Tool approval ──────────────────────────────────────────────────────────
+// POST /runtime/approvals/:approvalId/approve
+// POST /runtime/approvals/:approvalId/reject
+
+app.post<{ Params: { approvalId: string } }>(
+  "/runtime/approvals/:approvalId/approve",
+  async (request, reply) => {
+    const found = approvalGate.approve(request.params.approvalId);
+    if (!found) {
+      return reply.status(404).send({ error: "approval not found or expired" });
+    }
+    return reply.send({ ok: true });
+  },
+);
+
+app.post<{ Params: { approvalId: string } }>(
+  "/runtime/approvals/:approvalId/reject",
+  async (request, reply) => {
+    const found = approvalGate.reject(request.params.approvalId);
+    if (!found) {
+      return reply.status(404).send({ error: "approval not found or expired" });
+    }
+    return reply.send({ ok: true });
+  },
+);
+
 async function processChannelRun(body: ChannelRunBody): Promise<void> {
-  const { runId, replyText } = await runChannelRequest({
-    sessionId: body.sessionId,
-    workspaceId: body.workspaceId,
-    agentId: body.agentId,
-    message: body.message,
-  });
+  const { runId, replyText } = await runChannelRequest(
+    {
+      sessionId: body.sessionId,
+      workspaceId: body.workspaceId,
+      agentId: body.agentId,
+      message: body.message,
+    },
+    { orchestrator, eventBus },
+  );
 
   if (!replyText) {
     app.log.warn(
@@ -436,33 +816,71 @@ async function sendReplyToChannel(params: {
     payload.threadId = params.threadId;
   }
 
-  const response = await fetch(
-    `${config.gatewayAddr}/channels/${encodeURIComponent(params.channelId)}/send`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Runtime-Secret": config.runtimeSecret,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(config.channelSendTimeoutMs),
-    }
-  );
+  const url = `${config.gatewayAddr}/channels/${encodeURIComponent(params.channelId)}/send`;
+  const maxRetries = config.channelReplyMaxRetries;
 
-  if (!response.ok) {
-    let detail = "";
+  // M5: Retry with exponential backoff (base 500ms, max 3 attempts)
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      detail = (await response.text()).trim();
-    } catch {
-      // ignore body parse failures
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Runtime-Secret": config.runtimeSecret,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(config.channelSendTimeoutMs),
+      });
+
+      if (response.ok) return;
+
+      let detail = "";
+      try {
+        detail = (await response.text()).trim();
+      } catch {
+        // ignore body parse failures
+      }
+
+      // Don't retry on 4xx (client errors) — only on 5xx / network issues
+      if (response.status >= 400 && response.status < 500) {
+        throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
+      }
+
+      if (attempt >= maxRetries) {
+        throw new Error(`Gateway send failed after ${maxRetries} attempts (${response.status}): ${detail || response.statusText}`);
+      }
+    } catch (err) {
+      if (attempt >= maxRetries) throw err;
+
+      // Don't retry non-retryable errors
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      if (isAbort) throw err;
     }
-    throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
+
+    // Exponential backoff: 500ms, 1000ms, 2000ms
+    const delayMs = 500 * Math.pow(2, attempt - 1);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 try {
+  // Bootstrap memory system (no-op if DB_PATH is not set)
+  try {
+    const services = getRuntimeServices();
+    if (services.db) {
+      app.log.info(
+        { dbPath: config.dbPath, embedding: !!services.embedding },
+        "Memory system bootstrapped",
+      );
+    } else {
+      app.log.info("Memory system disabled (DB_PATH not set)");
+    }
+  } catch (err) {
+    app.log.error({ err }, "Memory system bootstrap failed — continuing without memory");
+  }
+
   try {
     const summary = await initializeRuntimePlugins({
       grpc: grpcClient,
@@ -475,7 +893,26 @@ try {
 
   await app.listen({ port: config.port, host: "0.0.0.0" });
   app.log.info(`Runtime listening on :${config.port}`);
+
+  // M4: Graceful shutdown on SIGTERM/SIGINT — wait for in-flight runs, then flush DB
+  const gracefulShutdown = async (signal: string) => {
+    app.log.info(`Received ${signal}, shutting down gracefully...`);
+    isShuttingDown = true;
+    try {
+      await orchestrator.shutdown();
+      closeRuntimeServices();
+      runStore.close();
+      await app.close();
+    } catch (err) {
+      app.log.error({ err }, "Error during graceful shutdown");
+    }
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => { gracefulShutdown("SIGTERM"); });
+  process.on("SIGINT", () => { gracefulShutdown("SIGINT"); });
 } catch (err) {
+  await orchestrator.shutdown();
+  closeRuntimeServices();
   runStore.close();
   app.log.error(err);
   process.exit(1);

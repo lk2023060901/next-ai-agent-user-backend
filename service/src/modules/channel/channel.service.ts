@@ -84,11 +84,15 @@ function parseChannelConfig(configJson?: string | null): Record<string, string> 
   if (!configJson) return {}
   try {
     const parsed = JSON.parse(configJson) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.warn(`[channel] parseChannelConfig: parsed value is not a plain object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`)
+      return {}
+    }
     return Object.fromEntries(
       Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [k, String(v ?? '')]),
     )
-  } catch {
+  } catch (err) {
+    console.warn(`[channel] parseChannelConfig: failed to parse JSON: ${err instanceof Error ? err.message : String(err)}`)
     return {}
   }
 }

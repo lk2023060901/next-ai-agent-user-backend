@@ -2,6 +2,7 @@ import { grpcClient } from "../grpc/client.js";
 import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import { runCoordinator } from "./coordinator.js";
+import { getRuntimeServices } from "../bootstrap.js";
 
 export interface RunRequest {
   runId: string;
@@ -24,6 +25,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
 
     const agentCfg = await grpcClient.getAgentConfig(req.coordinatorAgentId, req.modelIdOverride);
     const sandbox = buildSandboxFromAgentConfig(agentCfg);
+    const services = getRuntimeServices();
 
     await runCoordinator({
       runId: req.runId,
@@ -35,6 +37,11 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
       sandbox,
       emit,
       grpc: grpcClient,
+      memoryManager: services.memoryManager ?? undefined,
+      embeddingService: services.embedding ?? undefined,
+      setMemoryProvider: services.setMemoryProvider,
+      sessionId: req.sessionId,
+      sessionStore: services.sessionStore ?? undefined,
     });
 
     await grpcClient.updateRunStatus(req.runId, "completed");
@@ -48,6 +55,5 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
     }
     emit({ type: "error", runId: req.runId, message: msg });
     emit({ type: "done", runId: req.runId });
-    throw err;
   }
 }

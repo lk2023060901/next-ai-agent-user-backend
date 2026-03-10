@@ -22,7 +22,10 @@ export function isFsPathAllowed(filePath: string, policy: FsPolicy): boolean {
 
   return policy.allowedPaths.some((allowed) => {
     const normalizedAllowed = path.normalize(allowed);
-    return normalized.startsWith(normalizedAllowed);
+    return (
+      normalized === normalizedAllowed ||
+      normalized.startsWith(normalizedAllowed + path.sep)
+    );
   });
 }
 

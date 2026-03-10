@@ -76,6 +76,10 @@ func (h *ChannelsHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if body.Name == "" {
+		writeError(w, http.StatusBadRequest, "channel name is required")
+		return
+	}
 	configJSON := strings.TrimSpace(body.ConfigJSON)
 	if configJSON == "" && body.Config != nil {
 		if encoded, err := json.Marshal(body.Config); err == nil {
@@ -207,7 +211,15 @@ func (h *ChannelsHandler) DeleteRoutingRule(w http.ResponseWriter, r *http.Reque
 
 // HandleWebhook — public endpoint, no JWT auth required
 func (h *ChannelsHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	// Limit webhook body to 1MB
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	channelID := chi.URLParam(r, "channelId")
+	if channelID == "" || len(channelID) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid channel ID")
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read body")

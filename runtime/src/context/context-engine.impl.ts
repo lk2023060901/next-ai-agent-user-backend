@@ -79,16 +79,23 @@ export class DefaultContextEngine implements ContextEngine {
       coreMemorySnapshot,
       injectedMemories: preInjected,
       channelContext,
+      additionalSystemContext,
     } = params;
 
-    // 1. Build system prompt
-    const systemPrompt = this.promptBuilder.build({
+    // 1. Build system prompt (includes additional context like web search results)
+    let systemPrompt = this.promptBuilder.build({
       agent,
       tools,
       coreMemory: includeCoreMemory ? coreMemorySnapshot : undefined,
       injectedMemories: includeInjectedMemories ? preInjected : undefined,
       channelContext,
     });
+
+    // H2: Append additional system context (web search, etc.) INSIDE assembly
+    // so it counts toward the token budget instead of bypassing it.
+    if (additionalSystemContext) {
+      systemPrompt += "\n\n" + additionalSystemContext;
+    }
 
     const systemPromptTokens = estimateTokens(systemPrompt);
 
@@ -128,14 +135,37 @@ export class DefaultContextEngine implements ContextEngine {
       ? estimateInjectedMemoryTokens(preInjected)
       : 0;
 
+    // ─── H1: Enforce token budget against context window ──────────────────
+    // If total tokens exceed maxContextWindow (minus output reserve), trim
+    // history more aggressively. estimateTokens uses char/4 which can be
+    // 20-40% off, so add a 10% safety margin.
+    const safetyMargin = 0.9;
+    const effectiveLimit = Math.floor(this.maxContextWindow * safetyMargin) - allocation.outputReserved;
+    let finalMessages = messages;
+    let finalHistoryTokens = historyTokens;
+
+    if (systemPromptTokens + historyTokens > effectiveLimit) {
+      const historyBudget = Math.max(0, effectiveLimit - systemPromptTokens);
+      const { kept } = this.historyTrimmer.trim(trimmedHistory, historyBudget);
+      finalHistoryTokens = estimateTokensMessages(kept);
+      finalMessages = [];
+      if (systemPrompt) {
+        finalMessages.push({
+          role: "system",
+          content: [{ type: "text", text: systemPrompt }],
+        });
+      }
+      finalMessages.push(...kept);
+    }
+
     return {
-      messages,
-      totalTokens: systemPromptTokens + historyTokens,
+      messages: finalMessages,
+      totalTokens: systemPromptTokens + finalHistoryTokens,
       breakdown: {
         systemPrompt: systemPromptTokens,
         coreMemory: coreMemoryTokens,
         injectedMemories: injectedMemoryTokens,
-        messageHistory: historyTokens,
+        messageHistory: finalHistoryTokens,
         reserved: allocation.outputReserved,
       },
     };
@@ -146,20 +176,23 @@ export class DefaultContextEngine implements ContextEngine {
     _toolName: string,
     _result: unknown,
   ): void {
-    // Future: update working memory, extract entities from tool results
-    // For now, tool results are added to message history by the AgentLoop
+    // M6: Log so the no-op is visible during debugging
+    console.debug(
+      "[ContextEngine] ingestToolResult called (no-op) — tool results are added to message history by the AgentLoop",
+    );
   }
 
   async afterTurn(summary: TurnSummary): Promise<void> {
     this.turnCount = summary.turnIndex + 1;
-
-    // Check if compaction is needed (only if we have a provider for LLM calls)
-    // Actual compaction is triggered by the AgentLoop calling compact() directly
+    console.debug(
+      `[ContextEngine] afterTurn called (turn ${this.turnCount}) — compaction is triggered by the AgentLoop calling compact() directly`,
+    );
   }
 
   async afterRun(_params: AfterRunParams): Promise<void> {
-    // Future: trigger memory extraction, reflection check, decay update
-    // These will be delegated to the memory/ module when built
+    console.debug(
+      "[ContextEngine] afterRun called (no-op) — memory extraction/reflection delegated to memory module",
+    );
     this.turnCount = 0;
   }
 

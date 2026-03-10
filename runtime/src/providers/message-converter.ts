@@ -8,6 +8,38 @@
 import type { Context } from "@mariozechner/pi-ai";
 import type { Message, MessageContent, ProviderToolDefinition } from "./adapter.js";
 
+// ─── Structural types for pi-ai messages ────────────────────────────────────
+
+interface PiAiTextBlock {
+  type: "text";
+  text: string;
+}
+interface PiAiToolCallBlock {
+  type: "toolCall";
+  id: string;
+  name: string;
+  arguments: Record<string, unknown> | string;
+}
+interface PiAiThinkingBlock {
+  type: "thinking";
+  thinking: string;
+}
+type PiAiContentBlock =
+  | PiAiTextBlock
+  | PiAiToolCallBlock
+  | PiAiThinkingBlock
+  | { type: string; [key: string]: unknown };
+
+interface PiAiMessage {
+  role: "user" | "assistant" | "toolResult";
+  content: PiAiContentBlock[];
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
+  timestamp?: number;
+  usage?: { input: number; output: number; totalTokens: number };
+}
+
 // ─── Message[] → pi-ai Context ──────────────────────────────────────────────
 
 export function messagesToPiAiContext(
@@ -15,8 +47,7 @@ export function messagesToPiAiContext(
   tools?: ProviderToolDefinition[],
 ): Context {
   let systemPrompt: string | undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const piMessages: any[] = [];
+  const piMessages: PiAiMessage[] = [];
 
   for (const msg of messages) {
     switch (msg.role) {
@@ -61,13 +92,12 @@ export function messagesToPiAiContext(
 
   return {
     systemPrompt,
-    messages: piMessages,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messages: piMessages as Context["messages"],
     tools: (tools ?? []).map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters,
-    })) as any[],
+    })) as Context["tools"],
   };
 }
 
@@ -77,30 +107,38 @@ export function messagesToPiAiContext(
  * Convert a pi-ai "done" event's message into our unified Message.
  * Used by the adapter to build the assistant Message after streaming.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function piAiAssistantToMessage(piMsg: any): Message {
+export function piAiAssistantToMessage(piMsg: PiAiMessage): Message {
   const content: MessageContent[] = [];
 
   if (Array.isArray(piMsg.content)) {
     for (const block of piMsg.content) {
       switch (block.type) {
         case "text":
-          if (typeof block.text === "string" && block.text.length > 0) {
+          if ("text" in block && typeof block.text === "string" && block.text.length > 0) {
             content.push({ type: "text", text: block.text });
           }
           break;
         case "toolCall":
-          content.push({
-            type: "tool-call",
-            toolCallId: block.id ?? "",
-            toolName: block.name ?? "",
-            args: typeof block.arguments === "string"
-              ? block.arguments
-              : JSON.stringify(block.arguments ?? {}),
-          });
+          if ("id" in block && "name" in block) {
+            content.push({
+              type: "tool-call",
+              toolCallId: (block.id as string) ?? "",
+              toolName: (block.name as string) ?? "",
+              args:
+                "arguments" in block && typeof block.arguments === "string"
+                  ? block.arguments
+                  : JSON.stringify(
+                      "arguments" in block ? (block.arguments ?? {}) : {},
+                    ),
+            });
+          }
           break;
         case "thinking":
-          if (typeof block.thinking === "string" && block.thinking.length > 0) {
+          if (
+            "thinking" in block &&
+            typeof block.thinking === "string" &&
+            block.thinking.length > 0
+          ) {
             content.push({ type: "thinking", text: block.thinking });
           }
           break;
@@ -127,10 +165,8 @@ function textParts(content: MessageContent[]): string[] {
  * pi-ai expects { role: "assistant", content: ContentBlock[], usage }.
  * We supply stub usage since we don't track per-message usage in our format.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function assistantToPiAi(msg: Message): any {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const content: any[] = [];
+function assistantToPiAi(msg: Message): PiAiMessage {
+  const content: PiAiContentBlock[] = [];
 
   for (const c of msg.content) {
     switch (c.type) {

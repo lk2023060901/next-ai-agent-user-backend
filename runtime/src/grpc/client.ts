@@ -14,14 +14,22 @@ function loadProto(file: string) {
   });
 }
 
-function createClient(pkg: any, ServiceClass: any): any {
-  return new ServiceClass(config.grpcAddr, grpc.credentials.createInsecure());
+function createClient(pkg: grpc.GrpcObject, serviceName: string): grpc.Client {
+  const ServiceCtor = pkg[serviceName] as unknown as new (
+    addr: string,
+    creds: grpc.ChannelCredentials,
+  ) => grpc.Client;
+  return new ServiceCtor(config.grpcAddr, grpc.credentials.createInsecure());
 }
 
-function promisify<T>(client: any, method: string, request: unknown): Promise<T> {
+function promisify<T>(client: grpc.Client, method: string, request: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     const deadline = new Date(Date.now() + config.grpcCallTimeoutMs);
-    client[method](request, { deadline }, (err: grpc.ServiceError | null, response: T) => {
+    const fn = (client as unknown as Record<string, Function>)[method];
+    if (typeof fn !== "function") {
+      return reject(new Error(`gRPC method "${method}" not found on client`));
+    }
+    fn.call(client, request, { deadline }, (err: grpc.ServiceError | null, response: T) => {
       if (err) reject(err);
       else resolve(response);
     });
@@ -30,13 +38,15 @@ function promisify<T>(client: any, method: string, request: unknown): Promise<T>
 
 // ─── AgentRunService client ───────────────────────────────────────────────────
 
-const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto")) as any;
-const agentRunClient = createClient(agentRunPkg, agentRunPkg.agent_run.AgentRunService);
+const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto")) as grpc.GrpcObject;
+const agentRunNs = agentRunPkg["agent_run"] as grpc.GrpcObject;
+const agentRunClient = createClient(agentRunNs, "AgentRunService");
 
 // ─── ToolsService client ────────────────────────────────────────────────────
 
-const toolsPkg = grpc.loadPackageDefinition(loadProto("tools.proto")) as any;
-const toolsClient = createClient(toolsPkg, toolsPkg.tools.ToolsService);
+const toolsPkg = grpc.loadPackageDefinition(loadProto("tools.proto")) as grpc.GrpcObject;
+const toolsNs = toolsPkg["tools"] as grpc.GrpcObject;
+const toolsClient = createClient(toolsNs, "ToolsService");
 
 export interface AgentConfig {
   id: string;

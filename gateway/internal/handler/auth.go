@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
@@ -40,10 +41,27 @@ func authResponse(resp *authpb.AuthResponse) map[string]any {
 	}
 }
 
+func isValidEmail(email string) bool {
+	email = strings.TrimSpace(email)
+	if email == "" || len(email) > 254 {
+		return false
+	}
+	at := strings.LastIndex(email, "@")
+	if at < 1 || at >= len(email)-1 {
+		return false
+	}
+	domain := email[at+1:]
+	return strings.Contains(domain, ".")
+}
+
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req authpb.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !isValidEmail(req.Email) {
+		writeError(w, http.StatusBadRequest, "valid email is required")
 		return
 	}
 	resp, err := h.clients.Auth.Login(r.Context(), &req)
@@ -60,6 +78,10 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if !isValidEmail(req.Email) {
+		writeError(w, http.StatusBadRequest, "valid email is required")
+		return
+	}
 	resp, err := h.clients.Auth.Signup(r.Context(), &req)
 	if err != nil {
 		writeGRPCError(w, err)
@@ -72,7 +94,10 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RefreshToken string `json:"refreshToken"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	user, _ := middleware.GetUser(r)
 	_, err := h.clients.Auth.Logout(r.Context(), &authpb.LogoutRequest{

@@ -18,6 +18,11 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// M3: Warn when default/insecure secrets are in use
+	for _, warning := range cfg.Validate() {
+		log.Printf("WARNING: %s", warning)
+	}
+
 	clients, err := grpcclient.New(cfg.GRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to connect to gRPC service: %v", err)
@@ -219,8 +224,14 @@ func main() {
 
 		// LLM proxy → Bifrost sidecar
 		r.Handle("/v1/*", stream.BifrostProxy(cfg.BifrostAddr))
+	})
 
-		// Agent Runtime proxy → Runtime process (:8082)
+	// ── Runtime proxy (JWT or X-Runtime-Secret) ──────────────────────────────
+	// H3: /runtime/* accepts either JWT (user-facing) or X-Runtime-Secret
+	// (service-to-service). This allows scheduled tasks, channel runs, and
+	// monitoring to reach runtime endpoints through the gateway without JWT.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AuthOrRuntimeSecret(cfg.JWTSecret, cfg.RuntimeSecret))
 		r.Handle("/runtime/*", stream.RuntimeProxy(cfg.RuntimeAddr))
 	})
 

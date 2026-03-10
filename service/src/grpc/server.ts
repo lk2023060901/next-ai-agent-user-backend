@@ -82,6 +82,7 @@ import {
   type PluginReviewItem,
   type RuntimePluginLoadCandidate,
 } from "../modules/plugins/plugin.service.js";
+import { assertOrgMember, assertWorkspaceMember } from "../modules/authz/authz.service.js";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
 
@@ -109,6 +110,7 @@ function mapErrorCode(code?: string): grpc.status {
     case "SQLITE_CONSTRAINT_UNIQUE":
       return grpc.status.ALREADY_EXISTS;
     case "UNAUTHENTICATED": return grpc.status.UNAUTHENTICATED;
+    case "PERMISSION_DENIED": return grpc.status.PERMISSION_DENIED;
     case "NOT_FOUND": return grpc.status.NOT_FOUND;
     case "UNIMPLEMENTED": return grpc.status.UNIMPLEMENTED;
     case "INVALID_ARGUMENT": return grpc.status.INVALID_ARGUMENT;
@@ -327,24 +329,35 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     getOrg(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, getOrg(call.request.orgId)); }
+      try {
+        assertOrgMember(call.request.orgId, call.request.userContext?.userId);
+        callback(null, getOrg(call.request.orgId));
+      }
       catch (err) { handleError(callback, err); }
     },
     updateOrg(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertOrgMember(call.request.orgId, call.request.userContext?.userId);
         callback(null, updateOrg(call.request.orgId, { name: call.request.name, avatarUrl: call.request.avatarUrl }));
       } catch (err) { handleError(callback, err); }
     },
     listMembers(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { members: listMembers(call.request.orgId) }); }
+      try {
+        assertOrgMember(call.request.orgId, call.request.userContext?.userId);
+        callback(null, { members: listMembers(call.request.orgId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     listWorkspaces(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { workspaces: listWorkspaces(call.request.orgId) }); }
+      try {
+        assertOrgMember(call.request.orgId, call.request.userContext?.userId);
+        callback(null, { workspaces: listWorkspaces(call.request.orgId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     getDashboardStats(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertOrgMember(call.request.orgId, call.request.userContext?.userId);
         const stats = getDashboardStats(call.request.orgId);
         callback(null, {
           activeAgents:   { value: stats.activeAgents.value,   trend: stats.activeAgents.trend,   sparkline: stats.activeAgents.sparkline },
@@ -360,11 +373,15 @@ export function startGrpcServer(port: number): grpc.Server {
   const wsPkg = grpc.loadPackageDefinition(loadProto("workspace.proto")) as any;
   server.addService(wsPkg.workspace.WorkspaceService.service, {
     getWorkspace(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, getWorkspace(call.request.workspaceId)); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, getWorkspace(call.request.workspaceId));
+      }
       catch (err) { handleError(callback, err); }
     },
     createWorkspace(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertOrgMember(call.request.orgId, call.request.userContext?.userId);
         callback(null, createWorkspace({
           orgId: call.request.orgId,
           name: call.request.name,
@@ -375,6 +392,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateWorkspace(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, updateWorkspace(call.request.workspaceId, {
           name: call.request.name,
           emoji: call.request.emoji,
@@ -383,7 +401,10 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteWorkspace(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteWorkspace(call.request.workspaceId); callback(null, {}); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        deleteWorkspace(call.request.workspaceId); callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
   });
@@ -393,11 +414,13 @@ export function startGrpcServer(port: number): grpc.Server {
   server.addService(settingsPkg.settings.SettingsService.service, {
     getWorkspaceSettings(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, getWorkspaceSettings(call.request.workspaceId));
       } catch (err) { handleError(callback, err); }
     },
     updateWorkspaceSettings(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, updateWorkspaceSettings(call.request.workspaceId, {
           name: call.request.name,
           description: call.request.description,
@@ -431,11 +454,15 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     listProviders(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { providers: listProviders(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { providers: listProviders(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, createProvider({
           workspaceId: call.request.workspaceId, name: call.request.name,
           type: call.request.type, apiKey: call.request.apiKey, baseUrl: call.request.baseUrl,
@@ -444,6 +471,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, updateProvider(call.request.workspaceId, call.request.id, {
           name: call.request.name, apiKey: call.request.apiKey,
           baseUrl: call.request.baseUrl, status: call.request.status,
@@ -451,33 +479,50 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteProvider(call.request.workspaceId, call.request.id); callback(null, {}); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        deleteProvider(call.request.workspaceId, call.request.id); callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
     async testProvider(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const result = await testProvider(call.request.workspaceId, call.request.id);
         callback(null, { success: result.success, message: result.message });
       } catch (err) { handleError(callback, err); }
     },
     listModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { models: listModels(call.request.workspaceId, call.request.providerId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { models: listModels(call.request.workspaceId, call.request.providerId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     listModelSeries(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { series: listModelSeries(call.request.workspaceId, call.request.providerId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { series: listModelSeries(call.request.workspaceId, call.request.providerId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     listModelCatalog(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { series: listModelCatalog(call.request.workspaceId, call.request.providerId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { series: listModelCatalog(call.request.workspaceId, call.request.providerId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     listAllModels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { models: listAllModels(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { models: listAllModels(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createModel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const costPer1kTokens = readNumberField(call.request as Record<string, unknown>, [
           "costPer1kTokens",
           "costPer1KTokens",
@@ -494,6 +539,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateModel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const costPer1kTokens = readNumberField(call.request as Record<string, unknown>, [
           "costPer1kTokens",
           "costPer1KTokens",
@@ -507,15 +553,22 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteModel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteModel(call.request.workspaceId, call.request.id); callback(null, {}); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        deleteModel(call.request.workspaceId, call.request.id); callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
     listApiKeys(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { apiKeys: listApiKeys(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { apiKeys: listApiKeys(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createApiKey(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const { apiKey, rawKey } = createApiKey({
           workspaceId: call.request.workspaceId, name: call.request.name, expiresAt: call.request.expiresAt,
         });
@@ -523,7 +576,10 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteApiKey(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteApiKey(call.request.id); callback(null, {}); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        deleteApiKey(call.request.id); callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
   });
@@ -536,11 +592,15 @@ export function startGrpcServer(port: number): grpc.Server {
       catch (err) { handleError(callback, err); }
     },
     listToolAuthorizations(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { authorizations: listToolAuthorizations(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { authorizations: listToolAuthorizations(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     upsertToolAuthorization(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, upsertToolAuthorization({
           workspaceId: call.request.workspaceId,
           toolId: call.request.toolId,
@@ -549,11 +609,15 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     listKnowledgeBases(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { knowledgeBases: listKnowledgeBases(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { knowledgeBases: listKnowledgeBases(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createKnowledgeBase(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, createKnowledgeBase({
           workspaceId: call.request.workspaceId,
           name: call.request.name,
@@ -652,7 +716,10 @@ export function startGrpcServer(port: number): grpc.Server {
   const channelsPkg = grpc.loadPackageDefinition(loadProto("channels.proto")) as any;
   server.addService(channelsPkg.channels.ChannelsService.service, {
     listChannels(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { channels: listChannels(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { channels: listChannels(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     getChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -661,6 +728,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     createChannel(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, createChannel({
           workspaceId: call.request.workspaceId, name: call.request.name,
           type: call.request.type, configJson: call.request.configJson,
@@ -762,11 +830,15 @@ export function startGrpcServer(port: number): grpc.Server {
   const schedulerPkg = grpc.loadPackageDefinition(loadProto("scheduler.proto")) as any;
   server.addService(schedulerPkg.scheduler.SchedulerService.service, {
     listTasks(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { tasks: listTasks(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { tasks: listTasks(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     async createTask(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, createTask({
           workspaceId: call.request.workspaceId,
           name: call.request.name,
@@ -868,6 +940,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     createRun(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const { runId } = createRun({
           sessionId: call.request.sessionId,
           workspaceId: call.request.workspaceId,
@@ -990,11 +1063,17 @@ export function startGrpcServer(port: number): grpc.Server {
   const chatPkg = grpc.loadPackageDefinition(loadProto("chat.proto")) as any;
   server.addService(chatPkg.chat.ChatService.service, {
     listSessions(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { sessions: listSessions(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { sessions: listSessions(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, createSession(call.request.workspaceId, call.request.title)); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, createSession(call.request.workspaceId, call.request.title));
+      }
       catch (err) { handleError(callback, err); }
     },
     updateSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -1046,6 +1125,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     getRuntimeMetrics(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const result = getRuntimeMetrics(call.request.workspaceId, call.request.days);
         callback(null, {
           totalInputTokens: result.totalInputTokens,
@@ -1088,6 +1168,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     listUsageRecords(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const result = listUsageRecords(call.request.workspaceId, {
           limit: call.request.limit,
           offset: call.request.offset,
@@ -1134,6 +1215,7 @@ export function startGrpcServer(port: number): grpc.Server {
     reportPluginUsageEvents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
         const workspaceId = (call.request.workspaceId ?? "").trim();
+        assertWorkspaceMember(workspaceId, call.request.userContext?.userId);
         const events = Array.isArray(call.request.events)
           ? call.request.events.map((item: Record<string, unknown>) => ({
               specVersion: String(item.specVersion ?? ""),
@@ -1212,12 +1294,14 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async listWorkspacePlugins(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const items = await listWorkspaceInstalledPlugins(call.request.workspaceId);
         callback(null, { plugins: items.map(installedPluginToProto) });
       } catch (err) { handleError(callback, err); }
     },
     async installWorkspacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         const installed = await installWorkspacePlugin({
           workspaceId: String(call.request.workspaceId ?? ""),
           pluginId: String(call.request.pluginId ?? ""),
@@ -1233,6 +1317,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async updateWorkspacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         const updated = await updateWorkspacePluginStatus({
           workspaceId: String(call.request.workspaceId ?? ""),
           pluginKey: String(call.request.pluginId ?? ""),
@@ -1244,6 +1329,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async updateWorkspacePluginConfig(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         const updated = await updateWorkspacePluginConfig({
           workspaceId: String(call.request.workspaceId ?? ""),
           pluginKey: String(call.request.pluginId ?? ""),
@@ -1255,6 +1341,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     async uninstallWorkspacePlugin(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         await uninstallWorkspacePlugin(
           String(call.request.workspaceId ?? ""),
           String(call.request.pluginId ?? ""),
@@ -1264,11 +1351,15 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     listAgents(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, { agents: listAgents(call.request.workspaceId) }); }
+      try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        callback(null, { agents: listAgents(call.request.workspaceId) });
+      }
       catch (err) { handleError(callback, err); }
     },
     createAgent(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         callback(null, createAgent({
           workspaceId: call.request.workspaceId,
           name: call.request.name,
@@ -1307,12 +1398,14 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     listWorkflows(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
         const workflows = listWorkflows(call.request.workspaceId);
         callback(null, { workflows: workflows.map(workflowToProto) });
       } catch (err) { handleError(callback, err); }
     },
     createWorkflow(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         const workflow = createWorkflow({
           workspaceId: String(call.request.workspaceId ?? ""),
           name: String(call.request.name ?? ""),
@@ -1384,6 +1477,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     getBlueprint(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         const blueprint = getLegacyBlueprintByWorkflow({
           workspaceId: String(call.request.workspaceId ?? ""),
           workflowId: String(call.request.workflowId ?? ""),
@@ -1412,6 +1506,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     saveBlueprint(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertWorkspaceMember(String(call.request.workspaceId ?? ""), call.request.userContext?.userId);
         const nodes = (Array.isArray(call.request.nodes) ? call.request.nodes : []).map((node: Record<string, unknown>) => {
           let data: Record<string, unknown> = {};
           try {
