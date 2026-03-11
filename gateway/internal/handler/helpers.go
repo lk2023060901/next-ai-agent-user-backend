@@ -8,6 +8,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
+	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 )
 
 var pj = protojson.MarshalOptions{
@@ -75,7 +78,25 @@ func grpcCodeToHTTP(code codes.Code) int {
 		return http.StatusTooManyRequests
 	case codes.Unimplemented:
 		return http.StatusNotImplemented
+	case codes.Canceled:
+		return 499
+	case codes.DeadlineExceeded:
+		return http.StatusGatewayTimeout
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable
+	case codes.FailedPrecondition:
+		return http.StatusPreconditionFailed
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// userCtxFromRequest extracts a UserContext from the request's JWT claims.
+// Returns nil if no authenticated user is found.
+func userCtxFromRequest(r *http.Request) *commonpb.UserContext {
+	u, ok := middleware.GetUser(r)
+	if !ok {
+		return nil
+	}
+	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
 }

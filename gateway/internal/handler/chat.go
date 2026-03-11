@@ -13,9 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
-	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
 	chatpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/chat"
-	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 )
 
 type ChatHandler struct {
@@ -26,10 +24,6 @@ func NewChatHandler(clients *grpcclient.Clients) *ChatHandler {
 	return &ChatHandler{clients: clients}
 }
 
-func (h *ChatHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 // ─── Helpers: camelCase maps ──────────────────────────────────────────────────
 
@@ -210,7 +204,7 @@ func blueprintMap(item *chatpb.BlueprintData) map[string]any {
 
 func (h *ChatHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.ListSessions(r.Context(), &chatpb.ListSessionsRequest{
-		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -233,7 +227,7 @@ func (h *ChatHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := h.clients.Chat.CreateSession(r.Context(), &chatpb.CreateSessionRequest{
-		WorkspaceId: chi.URLParam(r, "wsId"), Title: body.Title, UserContext: h.userCtx(r),
+		WorkspaceId: chi.URLParam(r, "wsId"), Title: body.Title, UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -258,7 +252,7 @@ func (h *ChatHandler) UpdateSession(w http.ResponseWriter, r *http.Request) {
 
 	req := &chatpb.UpdateSessionRequest{
 		SessionId:   chi.URLParam(r, "sessionId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 	if body.Title != nil {
 		req.Title = *body.Title
@@ -280,7 +274,7 @@ func (h *ChatHandler) UpdateSession(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Chat.DeleteSession(r.Context(), &chatpb.DeleteSessionRequest{
 		SessionId:   chi.URLParam(r, "sessionId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -302,7 +296,7 @@ func (h *ChatHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.clients.Chat.ListMessages(r.Context(), &chatpb.ListMessagesRequest{
 		SessionId:       chi.URLParam(r, "sessionId"),
-		UserContext:     h.userCtx(r),
+		UserContext:     userCtxFromRequest(r),
 		Limit:           limit,
 		BeforeMessageId: beforeMessageId,
 	})
@@ -333,7 +327,7 @@ func (h *ChatHandler) SaveUserMessage(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.SaveUserMessage(r.Context(), &chatpb.SaveUserMessageRequest{
 		SessionId:   chi.URLParam(r, "sessionId"),
 		Content:     body.Content,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -355,7 +349,7 @@ func (h *ChatHandler) UpdateUserMessage(w http.ResponseWriter, r *http.Request) 
 		SessionId:   chi.URLParam(r, "sessionId"),
 		MessageId:   chi.URLParam(r, "messageId"),
 		Content:     body.Content,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -379,7 +373,7 @@ func (h *ChatHandler) GetRuntimeMetrics(w http.ResponseWriter, r *http.Request) 
 	resp, err := h.clients.Chat.GetRuntimeMetrics(r.Context(), &chatpb.GetRuntimeMetricsRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		Days:        days,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -456,7 +450,7 @@ func (h *ChatHandler) ListUsageRecords(w http.ResponseWriter, r *http.Request) {
 		Offset:      offset,
 		StartDate:   r.URL.Query().Get("startDate"),
 		EndDate:     r.URL.Query().Get("endDate"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -719,7 +713,7 @@ func (h *ChatHandler) ReportPluginUsageEvents(w http.ResponseWriter, r *http.Req
 	resp, err := h.clients.Chat.ReportPluginUsageEvents(r.Context(), &chatpb.ReportPluginUsageEventsRequest{
 		WorkspaceId: workspaceID,
 		Events:      events,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -735,7 +729,7 @@ func (h *ChatHandler) ReportPluginUsageEvents(w http.ResponseWriter, r *http.Req
 
 func (h *ChatHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.ListAgents(r.Context(), &chatpb.ListAgentsRequest{
-		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -785,7 +779,7 @@ func (h *ChatHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt:   body.SystemPrompt,
 		KnowledgeBases: body.KnowledgeBases,
 		ConfigJson:     configJSON,
-		UserContext:    h.userCtx(r),
+		UserContext:    userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -796,7 +790,7 @@ func (h *ChatHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *ChatHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.GetAgent(r.Context(), &chatpb.GetAgentRequest{
-		Id: chi.URLParam(r, "agentId"), UserContext: h.userCtx(r),
+		Id: chi.URLParam(r, "agentId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -839,7 +833,7 @@ func (h *ChatHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBases:   body.KnowledgeBases,
 		ConfigJson:       configJSON,
 		UpdateConfigJson: hasConfig,
-		UserContext:      h.userCtx(r),
+		UserContext:      userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -850,7 +844,7 @@ func (h *ChatHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 func (h *ChatHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Chat.DeleteAgent(r.Context(), &chatpb.DeleteAgentRequest{
-		Id: chi.URLParam(r, "agentId"), UserContext: h.userCtx(r),
+		Id: chi.URLParam(r, "agentId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -864,7 +858,7 @@ func (h *ChatHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.ListWorkflows(r.Context(), &chatpb.ListWorkflowsRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -908,7 +902,7 @@ func (h *ChatHandler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		Description: body.Description,
 		Status:      body.Status,
 		DataJson:    dataJSON,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -920,7 +914,7 @@ func (h *ChatHandler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.GetWorkflow(r.Context(), &chatpb.GetWorkflowRequest{
 		WorkflowId:  chi.URLParam(r, "workflowId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -945,7 +939,7 @@ func (h *ChatHandler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	req := &chatpb.UpdateWorkflowRequest{
 		WorkflowId:  chi.URLParam(r, "workflowId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 	if body.Name != nil {
 		req.Name = *body.Name
@@ -993,7 +987,7 @@ func (h *ChatHandler) ValidateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	req := &chatpb.ValidateWorkflowRequest{
 		WorkflowId:  strings.TrimSpace(chi.URLParam(r, "workflowId")),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 	if req.WorkflowId == "" && body.WorkflowID != nil {
 		req.WorkflowId = strings.TrimSpace(*body.WorkflowID)
@@ -1039,7 +1033,7 @@ func (h *ChatHandler) ValidateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 func (h *ChatHandler) ListWorkflowNodeTypes(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.ListWorkflowNodeTypes(r.Context(), &chatpb.ListWorkflowNodeTypesRequest{
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -1071,7 +1065,7 @@ func (h *ChatHandler) GetBlueprint(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.GetBlueprint(r.Context(), &chatpb.GetBlueprintRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		WorkflowId:  strings.TrimSpace(r.URL.Query().Get("workflowId")),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -1138,7 +1132,7 @@ func (h *ChatHandler) SaveBlueprint(w http.ResponseWriter, r *http.Request) {
 		WorkflowId:  strings.TrimSpace(r.URL.Query().Get("workflowId")),
 		Nodes:       nodes,
 		Connections: connections,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)

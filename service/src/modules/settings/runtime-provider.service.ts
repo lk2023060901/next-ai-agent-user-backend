@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { completeSimple, type Api, type Model } from "@mariozechner/pi-ai";
 import { db } from "../../db/index.js";
@@ -48,112 +48,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-let runtimeOverlayTablesEnsured = false;
-
-function ensureRuntimeOverlayTables() {
-  if (runtimeOverlayTablesEnsured) return;
-
-  db.run(sql`
-    CREATE TABLE IF NOT EXISTS provider_overrides (
-      id TEXT PRIMARY KEY NOT NULL,
-      workspace_id TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      name TEXT,
-      type TEXT,
-      base_url TEXT,
-      api_key_encrypted TEXT,
-      status TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    )
-  `);
-  db.run(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS provider_overrides_ws_provider_uq
-    ON provider_overrides(workspace_id, provider_id)
-  `);
-  db.run(sql`
-    CREATE INDEX IF NOT EXISTS provider_overrides_workspace_idx
-    ON provider_overrides(workspace_id)
-  `);
-
-  db.run(sql`
-    CREATE TABLE IF NOT EXISTS custom_providers (
-      id TEXT PRIMARY KEY NOT NULL,
-      workspace_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      base_url TEXT,
-      api_key_encrypted TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    )
-  `);
-  db.run(sql`
-    CREATE INDEX IF NOT EXISTS custom_providers_workspace_idx
-    ON custom_providers(workspace_id)
-  `);
-
-  db.run(sql`
-    CREATE TABLE IF NOT EXISTS model_overrides (
-      id TEXT PRIMARY KEY NOT NULL,
-      workspace_id TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      model_name TEXT NOT NULL,
-      display_name TEXT,
-      context_window INTEGER,
-      max_output INTEGER,
-      input_price REAL,
-      output_price REAL,
-      capabilities_json TEXT,
-      enabled INTEGER,
-      series_name TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    )
-  `);
-  db.run(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS model_overrides_ws_provider_model_uq
-    ON model_overrides(workspace_id, provider_id, model_name)
-  `);
-  db.run(sql`
-    CREATE INDEX IF NOT EXISTS model_overrides_workspace_provider_idx
-    ON model_overrides(workspace_id, provider_id)
-  `);
-
-  db.run(sql`
-    CREATE TABLE IF NOT EXISTS custom_models (
-      id TEXT PRIMARY KEY NOT NULL,
-      workspace_id TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      context_window INTEGER NOT NULL DEFAULT 8192,
-      max_output INTEGER NOT NULL DEFAULT 4096,
-      input_price REAL NOT NULL DEFAULT 0,
-      output_price REAL NOT NULL DEFAULT 0,
-      capabilities_json TEXT NOT NULL DEFAULT '[]',
-      enabled INTEGER NOT NULL DEFAULT 1,
-      series_name TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-    )
-  `);
-  db.run(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS custom_models_ws_provider_model_uq
-    ON custom_models(workspace_id, provider_id, name)
-  `);
-  db.run(sql`
-    CREATE INDEX IF NOT EXISTS custom_models_workspace_provider_idx
-    ON custom_models(workspace_id, provider_id)
-  `);
-
-  runtimeOverlayTablesEnsured = true;
-}
 
 function normalizeProviderStatus(raw: string | null | undefined): string {
   const status = (raw ?? "").trim().toLowerCase();
@@ -166,9 +60,6 @@ function normalizeProviderType(raw: string | null | undefined): string {
   return (raw ?? "").trim().toLowerCase();
 }
 
-function inferLegacyProviderId(providerId: string): string {
-  return providerId;
-}
 
 function parseCapabilities(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -339,7 +230,7 @@ function mergeProviderModels(params: {
 }
 
 export function listRuntimeProvidersDetailed(workspaceId: string): RuntimeProviderView[] {
-  ensureRuntimeOverlayTables();
+
   const overrides = db
     .select()
     .from(providerOverrides)
@@ -426,7 +317,7 @@ export function listRuntimeProvidersDetailed(workspaceId: string): RuntimeProvid
 }
 
 export function listRuntimeProviderModels(workspaceId: string, providerId: string): RuntimeModelView[] {
-  ensureRuntimeOverlayTables();
+
   const provider = listRuntimeProvidersDetailed(workspaceId).find((item) => item.id === providerId);
   if (!provider) {
     return [];
@@ -441,7 +332,7 @@ export function listRuntimeProviderCatalog(providerId: string): RuntimeModelView
 }
 
 export function listRuntimeProviders(workspaceId: string) {
-  ensureRuntimeOverlayTables();
+
   return listRuntimeProvidersDetailed(workspaceId).map((provider) => ({
     id: provider.id,
     workspaceId: provider.workspaceId,
@@ -460,7 +351,7 @@ export function createRuntimeProvider(data: {
   apiKey?: string;
   baseUrl?: string;
 }) {
-  ensureRuntimeOverlayTables();
+
   const id = uuidv4();
   db.insert(customProviders).values({
     id,
@@ -482,7 +373,7 @@ export function updateRuntimeProvider(
   providerId: string,
   data: { name?: string; apiKey?: string; baseUrl?: string; status?: string },
 ) {
-  ensureRuntimeOverlayTables();
+
   const provider = listRuntimeProvidersDetailed(workspaceId).find((item) => item.id === providerId);
   if (!provider) {
     throw Object.assign(new Error("Provider not found"), { code: "NOT_FOUND" });
@@ -537,7 +428,7 @@ export function updateRuntimeProvider(
 }
 
 export function deleteRuntimeProvider(workspaceId: string, providerId: string) {
-  ensureRuntimeOverlayTables();
+
   const provider = listRuntimeProvidersDetailed(workspaceId).find((item) => item.id === providerId);
   if (!provider) {
     throw Object.assign(new Error("Provider not found"), { code: "NOT_FOUND" });
@@ -614,7 +505,7 @@ function buildTestModel(providerType: string, modelName: string, customBaseUrl: 
 }
 
 export async function testRuntimeProvider(workspaceId: string, providerId: string): Promise<{ success: boolean; message: string }> {
-  ensureRuntimeOverlayTables();
+
   const provider = listRuntimeProvidersDetailed(workspaceId).find((item) => item.id === providerId);
   if (!provider) {
     throw Object.assign(new Error("Provider not found"), { code: "NOT_FOUND" });
@@ -657,7 +548,7 @@ export function upsertRuntimeModel(
     seriesName?: string;
   },
 ): RuntimeModelView {
-  ensureRuntimeOverlayTables();
+
   const staticProviderSet = staticProviderIds();
   const isStaticProvider = staticProviderSet.has(providerId);
   const catalogProvider = getProviderCatalog(providerId);
@@ -800,7 +691,7 @@ export function updateRuntimeModel(
     isDefault?: boolean;
   },
 ): RuntimeModelView {
-  ensureRuntimeOverlayTables();
+
   const parsedStatic = parseStaticModelRuntimeId(runtimeModelId);
   if (parsedStatic) {
     const targetName = (input.name ?? "").trim() || parsedStatic.modelName;
@@ -831,7 +722,7 @@ export function updateRuntimeModel(
 }
 
 export function deleteRuntimeModel(workspaceId: string, runtimeModelId: string) {
-  ensureRuntimeOverlayTables();
+
   const parsedStatic = parseStaticModelRuntimeId(runtimeModelId);
   if (parsedStatic) {
     upsertRuntimeModel(workspaceId, parsedStatic.providerId, {
@@ -854,7 +745,7 @@ export function deleteRuntimeModel(workspaceId: string, runtimeModelId: string) 
 }
 
 export function clearRuntimeModelOverride(workspaceId: string, providerId: string, modelName: string) {
-  ensureRuntimeOverlayTables();
+
   db.delete(modelOverrides)
     .where(and(
       eq(modelOverrides.workspaceId, workspaceId),
@@ -868,7 +759,7 @@ export function runtimeModelSeries(
   workspaceId: string,
   providerId: string,
 ): Array<{ id: string; name: string; models: RuntimeModelView[] }> {
-  ensureRuntimeOverlayTables();
+
   const models = listRuntimeProviderModels(workspaceId, providerId);
   const grouped = new Map<string, RuntimeModelView[]>();
 
@@ -921,7 +812,7 @@ export function runtimeFlatModels(workspaceId: string): Array<{
   inputPrice: number;
   outputPrice: number;
 }> {
-  ensureRuntimeOverlayTables();
+
   const providers = listRuntimeProvidersDetailed(workspaceId)
     .filter((provider) => normalizeProviderStatus(provider.status) !== "disabled");
 
@@ -973,7 +864,7 @@ function syncRuntimeToLegacyTables(workspaceId: string, providers: RuntimeProvid
   const existingById = new Map(existingProviders.map((row) => [row.id, row]));
 
   for (const provider of providers) {
-    const providerId = inferLegacyProviderId(provider.id);
+    const providerId = provider.id;
     const existing = existingById.get(providerId);
     if (!existing) {
       db.insert(aiProviders).values({
@@ -999,7 +890,7 @@ function syncRuntimeToLegacyTables(workspaceId: string, providers: RuntimeProvid
   }
 
   for (const provider of providers) {
-    const providerId = inferLegacyProviderId(provider.id);
+    const providerId = provider.id;
     const existingModels = db
       .select()
       .from(aiModels)

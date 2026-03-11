@@ -9,9 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
-	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
 	chatpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/chat"
-	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 )
 
 type PluginHandler struct {
@@ -22,10 +20,6 @@ func NewPluginHandler(clients *grpcclient.Clients) *PluginHandler {
 	return &PluginHandler{clients: clients}
 }
 
-func (h *PluginHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 func normalizePluginJSONObject(raw json.RawMessage, fieldName string) (string, error) {
 	if len(raw) == 0 {
@@ -200,7 +194,7 @@ func (h *PluginHandler) ListMarketplace(w http.ResponseWriter, r *http.Request) 
 		Sort:         r.URL.Query().Get("sort"),
 		Page:         page,
 		PageSize:     pageSize,
-		UserContext:  h.userCtx(r),
+		UserContext:  userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -224,7 +218,7 @@ func (h *PluginHandler) ListMarketplace(w http.ResponseWriter, r *http.Request) 
 func (h *PluginHandler) GetMarketplacePlugin(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.GetMarketplacePlugin(r.Context(), &chatpb.GetMarketplacePluginRequest{
 		PluginId:    chi.URLParam(r, "pluginId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -236,7 +230,7 @@ func (h *PluginHandler) GetMarketplacePlugin(w http.ResponseWriter, r *http.Requ
 func (h *PluginHandler) ListPluginReviews(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.ListPluginReviews(r.Context(), &chatpb.ListPluginReviewsRequest{
 		PluginId:    chi.URLParam(r, "pluginId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -261,7 +255,7 @@ func (h *PluginHandler) SetPluginFavorite(w http.ResponseWriter, r *http.Request
 	resp, err := h.clients.Chat.SetPluginFavorite(r.Context(), &chatpb.SetPluginFavoriteRequest{
 		PluginId:    chi.URLParam(r, "pluginId"),
 		Favorited:   body.Favorited,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -285,7 +279,7 @@ func (h *PluginHandler) UpsertPluginReview(w http.ResponseWriter, r *http.Reques
 		PluginId:    chi.URLParam(r, "pluginId"),
 		Rating:      body.Rating,
 		Content:     strings.TrimSpace(body.Content),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -298,7 +292,7 @@ func (h *PluginHandler) UpsertPluginReview(w http.ResponseWriter, r *http.Reques
 func (h *PluginHandler) ListWorkspacePlugins(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Chat.ListWorkspacePlugins(r.Context(), &chatpb.ListWorkspacePluginsRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -363,7 +357,7 @@ func (h *PluginHandler) InstallWorkspacePlugin(w http.ResponseWriter, r *http.Re
 		SourceSpec:      sourceSpec,
 		SourceIntegrity: sourceIntegrity,
 		SourcePin:       sourcePin,
-		UserContext:     h.userCtx(r),
+		UserContext:     userCtxFromRequest(r),
 	})
 	if grpcErr != nil {
 		writeGRPCError(w, grpcErr)
@@ -377,7 +371,7 @@ func (h *PluginHandler) UninstallWorkspacePlugin(w http.ResponseWriter, r *http.
 	_, err := h.clients.Chat.UninstallWorkspacePlugin(r.Context(), &chatpb.UninstallWorkspacePluginRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		PluginId:    chi.URLParam(r, "pluginId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -399,7 +393,7 @@ func (h *PluginHandler) UpdateWorkspacePlugin(w http.ResponseWriter, r *http.Req
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		PluginId:    chi.URLParam(r, "pluginId"),
 		Status:      strings.TrimSpace(body.Status),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -428,7 +422,7 @@ func (h *PluginHandler) UpdateWorkspacePluginConfig(w http.ResponseWriter, r *ht
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		PluginId:    chi.URLParam(r, "pluginId"),
 		ConfigJson:  configJSON,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if grpcErr != nil {
 		writeGRPCError(w, grpcErr)

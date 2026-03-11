@@ -15,8 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
-	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
-	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 	toolspb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/tools"
 )
 
@@ -28,16 +26,12 @@ func NewToolsHandler(clients *grpcclient.Clients) *ToolsHandler {
 	return &ToolsHandler{clients: clients}
 }
 
-func (h *ToolsHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 func (h *ToolsHandler) ListTools(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Tools.ListTools(r.Context(), &toolspb.ListToolsRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		Category:    r.URL.Query().Get("category"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -49,7 +43,7 @@ func (h *ToolsHandler) ListTools(w http.ResponseWriter, r *http.Request) {
 func (h *ToolsHandler) ListToolAuthorizations(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Tools.ListToolAuthorizations(r.Context(), &toolspb.WorkspaceRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -65,7 +59,7 @@ func (h *ToolsHandler) UpsertToolAuthorization(w http.ResponseWriter, r *http.Re
 		return
 	}
 	body.WorkspaceId = chi.URLParam(r, "wsId")
-	body.UserContext = h.userCtx(r)
+	body.UserContext = userCtxFromRequest(r)
 	resp, err := h.clients.Tools.UpsertToolAuthorization(r.Context(), &body)
 	if err != nil {
 		writeGRPCError(w, err)
@@ -77,7 +71,7 @@ func (h *ToolsHandler) UpsertToolAuthorization(w http.ResponseWriter, r *http.Re
 func (h *ToolsHandler) ListKnowledgeBases(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Tools.ListKnowledgeBases(r.Context(), &toolspb.WorkspaceRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -117,7 +111,7 @@ func (h *ToolsHandler) CreateKnowledgeBase(w http.ResponseWriter, r *http.Reques
 		DocumentProcessing:      body.DocumentProcessing,
 		RerankerModel:           body.RerankerModel,
 		MatchingThreshold:       -1,
-		UserContext:             h.userCtx(r),
+		UserContext:             userCtxFromRequest(r),
 	}
 	if body.MatchingThreshold != nil {
 		req.MatchingThreshold = *body.MatchingThreshold
@@ -154,7 +148,7 @@ func (h *ToolsHandler) UpdateKnowledgeBase(w http.ResponseWriter, r *http.Reques
 		ChunkSize:         -1,
 		ChunkOverlap:      -1,
 		MatchingThreshold: -1,
-		UserContext:       h.userCtx(r),
+		UserContext:       userCtxFromRequest(r),
 	}
 	if body.Name != nil {
 		req.Name = *body.Name
@@ -192,7 +186,7 @@ func (h *ToolsHandler) UpdateKnowledgeBase(w http.ResponseWriter, r *http.Reques
 func (h *ToolsHandler) DeleteKnowledgeBase(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Tools.DeleteKnowledgeBase(r.Context(), &toolspb.DeleteKnowledgeBaseRequest{
 		Id:          chi.URLParam(r, "kbId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -204,7 +198,7 @@ func (h *ToolsHandler) DeleteKnowledgeBase(w http.ResponseWriter, r *http.Reques
 func (h *ToolsHandler) ListKnowledgeBaseDocuments(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Tools.ListKnowledgeBaseDocuments(r.Context(), &toolspb.GetKnowledgeBaseRequest{
 		Id:          chi.URLParam(r, "kbId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -252,7 +246,7 @@ func (h *ToolsHandler) CreateKnowledgeBaseDocument(w http.ResponseWriter, r *htt
 		Type:            fileType,
 		Size:            size,
 		FilePath:        filePath,
-		UserContext:     h.userCtx(r),
+		UserContext:     userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -306,7 +300,7 @@ func (h *ToolsHandler) DeleteKnowledgeBaseDocument(w http.ResponseWriter, r *htt
 	_, err := h.clients.Tools.DeleteKnowledgeBaseDocument(r.Context(), &toolspb.DeleteKnowledgeBaseDocumentRequest{
 		KnowledgeBaseId: chi.URLParam(r, "kbId"),
 		DocumentId:      chi.URLParam(r, "docId"),
-		UserContext:     h.userCtx(r),
+		UserContext:     userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -332,7 +326,7 @@ func (h *ToolsHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reques
 		KnowledgeBaseId: chi.URLParam(r, "kbId"),
 		Query:           body.Query,
 		TopK:            body.TopK,
-		UserContext:     h.userCtx(r),
+		UserContext:     userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)

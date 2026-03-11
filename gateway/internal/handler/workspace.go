@@ -7,8 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
-	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
-	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 	workspacepb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/workspace"
 )
 
@@ -20,10 +18,6 @@ func NewWorkspaceHandler(clients *grpcclient.Clients) *WorkspaceHandler {
 	return &WorkspaceHandler{clients: clients}
 }
 
-func (h *WorkspaceHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 func mapWorkspacePayload(item *workspacepb.Workspace) map[string]any {
 	if item == nil {
@@ -47,7 +41,7 @@ func mapWorkspacePayload(item *workspacepb.Workspace) map[string]any {
 
 func (h *WorkspaceHandler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Workspace.GetWorkspace(r.Context(), &workspacepb.GetWorkspaceRequest{
-		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
 	writeData(w, http.StatusOK, mapWorkspacePayload(resp))
@@ -58,7 +52,7 @@ func (h *WorkspaceHandler) CreateWorkspace(w http.ResponseWriter, r *http.Reques
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body"); return
 	}
-	body.UserContext = h.userCtx(r)
+	body.UserContext = userCtxFromRequest(r)
 	resp, err := h.clients.Workspace.CreateWorkspace(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
 	writeData(w, http.StatusCreated, mapWorkspacePayload(resp))
@@ -70,7 +64,7 @@ func (h *WorkspaceHandler) UpdateWorkspace(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid request body"); return
 	}
 	body.WorkspaceId = chi.URLParam(r, "wsId")
-	body.UserContext = h.userCtx(r)
+	body.UserContext = userCtxFromRequest(r)
 	resp, err := h.clients.Workspace.UpdateWorkspace(r.Context(), &body)
 	if err != nil { writeGRPCError(w, err); return }
 	writeData(w, http.StatusOK, mapWorkspacePayload(resp))
@@ -78,7 +72,7 @@ func (h *WorkspaceHandler) UpdateWorkspace(w http.ResponseWriter, r *http.Reques
 
 func (h *WorkspaceHandler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Workspace.DeleteWorkspace(r.Context(), &workspacepb.DeleteWorkspaceRequest{
-		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil { writeGRPCError(w, err); return }
 	w.WriteHeader(http.StatusNoContent)

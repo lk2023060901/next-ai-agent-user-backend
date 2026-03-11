@@ -7,8 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
-	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
-	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 	settingspb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/settings"
 )
 
@@ -316,15 +314,11 @@ func mapAllModelsToFlat(models []*settingspb.Model, providers map[string]*settin
 	return out
 }
 
-func (h *SettingsHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 func (h *SettingsHandler) wsReq(r *http.Request) *settingspb.WorkspaceRequest {
 	return &settingspb.WorkspaceRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 }
 
@@ -508,7 +502,7 @@ func (h *SettingsHandler) UpdateWorkspaceSettings(w http.ResponseWriter, r *http
 
 	req := &settingspb.UpdateWorkspaceSettingsRequest{
 		WorkspaceId: chi.URLParam(r, "wsId"),
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 
 	if value, ok := readStringField(body, "name"); ok {
@@ -591,7 +585,7 @@ func (h *SettingsHandler) ListProviders(w http.ResponseWriter, r *http.Request) 
 		}
 		modelCount := int32(0)
 		modelsResp, listErr := h.clients.Settings.ListModels(r.Context(), &settingspb.ListModelsRequest{
-			ProviderId: p.GetId(), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+			ProviderId: p.GetId(), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 		})
 		if listErr == nil {
 			modelCount = int32(len(modelsResp.GetModels()))
@@ -619,7 +613,7 @@ func (h *SettingsHandler) CreateProvider(w http.ResponseWriter, r *http.Request)
 		Type:        body.Type,
 		ApiKey:      body.ApiKey,
 		BaseUrl:     body.BaseUrl,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -664,7 +658,7 @@ func (h *SettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Request)
 		ApiKey:      body.ApiKey,
 		BaseUrl:     body.BaseUrl,
 		Status:      status,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -672,7 +666,7 @@ func (h *SettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Request)
 	}
 	modelCount := int32(0)
 	modelsResp, listErr := h.clients.Settings.ListModels(r.Context(), &settingspb.ListModelsRequest{
-		ProviderId: resp.GetId(), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		ProviderId: resp.GetId(), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if listErr == nil {
 		modelCount = int32(len(modelsResp.GetModels()))
@@ -682,7 +676,7 @@ func (h *SettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Request)
 
 func (h *SettingsHandler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Settings.DeleteProvider(r.Context(), &settingspb.ResourceRequest{
-		Id: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		Id: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -695,7 +689,7 @@ func (h *SettingsHandler) DeleteProvider(w http.ResponseWriter, r *http.Request)
 
 func (h *SettingsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Settings.ListModelSeries(r.Context(), &settingspb.ListModelsRequest{
-		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -706,7 +700,7 @@ func (h *SettingsHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 func (h *SettingsHandler) ListModelCatalog(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Settings.ListModelCatalog(r.Context(), &settingspb.ListModelsRequest{
-		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		ProviderId: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -755,7 +749,7 @@ func (h *SettingsHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 		ContextWindow:    body.ContextWindow,
 		CostPer_1KTokens: body.CostPer1kTokens,
 		IsDefault:        body.IsDefault,
-		UserContext:      h.userCtx(r),
+		UserContext:      userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -782,7 +776,7 @@ func (h *SettingsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 		ContextWindow:    body.ContextWindow,
 		CostPer_1KTokens: body.CostPer1kTokens,
 		IsDefault:        body.IsDefault,
-		UserContext:      h.userCtx(r),
+		UserContext:      userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -793,7 +787,7 @@ func (h *SettingsHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 
 func (h *SettingsHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Settings.DeleteModel(r.Context(), &settingspb.ResourceRequest{
-		Id: chi.URLParam(r, "modelId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		Id: chi.URLParam(r, "modelId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -826,7 +820,7 @@ func (h *SettingsHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		WorkspaceId: chi.URLParam(r, "wsId"),
 		Name:        body.Name,
 		ExpiresAt:   body.ExpiresAt,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -845,7 +839,7 @@ func (h *SettingsHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 
 func (h *SettingsHandler) DeleteApiKey(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Settings.DeleteApiKey(r.Context(), &settingspb.ResourceRequest{
-		Id: chi.URLParam(r, "keyId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		Id: chi.URLParam(r, "keyId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -858,7 +852,7 @@ func (h *SettingsHandler) DeleteApiKey(w http.ResponseWriter, r *http.Request) {
 
 func (h *SettingsHandler) TestProvider(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Settings.TestProvider(r.Context(), &settingspb.TestProviderRequest{
-		Id: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		Id: chi.URLParam(r, "providerId"), WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)

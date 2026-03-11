@@ -8,9 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/grpcclient"
-	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
 	channelspb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/channels"
-	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 )
 
 type ChannelsHandler struct {
@@ -45,14 +43,10 @@ func NewChannelsHandler(clients *grpcclient.Clients, runtimeSecret string) *Chan
 	return &ChannelsHandler{clients: clients, runtimeSecret: runtimeSecret}
 }
 
-func (h *ChannelsHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 func (h *ChannelsHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Channels.ListChannels(r.Context(), &channelspb.WorkspaceRequest{
-		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: h.userCtx(r),
+		WorkspaceId: chi.URLParam(r, "wsId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -91,7 +85,7 @@ func (h *ChannelsHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 		Name:        strings.TrimSpace(body.Name),
 		Type:        strings.TrimSpace(body.Type),
 		ConfigJson:  configJSON,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 	resp, err := h.clients.Channels.CreateChannel(r.Context(), req)
 	if err != nil {
@@ -103,7 +97,7 @@ func (h *ChannelsHandler) CreateChannel(w http.ResponseWriter, r *http.Request) 
 
 func (h *ChannelsHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Channels.GetChannel(r.Context(), &channelspb.ChannelRequest{
-		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
+		ChannelId: chi.URLParam(r, "channelId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -134,7 +128,7 @@ func (h *ChannelsHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 		Name:        strings.TrimSpace(body.Name),
 		Status:      strings.TrimSpace(body.Status),
 		ConfigJson:  configJSON,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 	resp, err := h.clients.Channels.UpdateChannel(r.Context(), req)
 	if err != nil {
@@ -146,7 +140,7 @@ func (h *ChannelsHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) 
 
 func (h *ChannelsHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Channels.DeleteChannel(r.Context(), &channelspb.ChannelRequest{
-		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
+		ChannelId: chi.URLParam(r, "channelId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -157,7 +151,7 @@ func (h *ChannelsHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) 
 
 func (h *ChannelsHandler) ListRoutingRules(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Channels.ListRoutingRules(r.Context(), &channelspb.ChannelRequest{
-		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
+		ChannelId: chi.URLParam(r, "channelId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -173,7 +167,7 @@ func (h *ChannelsHandler) CreateRoutingRule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	body.ChannelId = chi.URLParam(r, "channelId")
-	body.UserContext = h.userCtx(r)
+	body.UserContext = userCtxFromRequest(r)
 	resp, err := h.clients.Channels.CreateRoutingRule(r.Context(), &body)
 	if err != nil {
 		writeGRPCError(w, err)
@@ -189,7 +183,7 @@ func (h *ChannelsHandler) UpdateRoutingRule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	body.RuleId = chi.URLParam(r, "ruleId")
-	body.UserContext = h.userCtx(r)
+	body.UserContext = userCtxFromRequest(r)
 	resp, err := h.clients.Channels.UpdateRoutingRule(r.Context(), &body)
 	if err != nil {
 		writeGRPCError(w, err)
@@ -200,7 +194,7 @@ func (h *ChannelsHandler) UpdateRoutingRule(w http.ResponseWriter, r *http.Reque
 
 func (h *ChannelsHandler) DeleteRoutingRule(w http.ResponseWriter, r *http.Request) {
 	_, err := h.clients.Channels.DeleteRoutingRule(r.Context(), &channelspb.RuleRequest{
-		RuleId: chi.URLParam(r, "ruleId"), ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
+		RuleId: chi.URLParam(r, "ruleId"), ChannelId: chi.URLParam(r, "channelId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -254,7 +248,7 @@ func (h *ChannelsHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) 
 
 func (h *ChannelsHandler) ListChannelMessages(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.clients.Channels.ListChannelMessages(r.Context(), &channelspb.ListChannelMessagesRequest{
-		ChannelId: chi.URLParam(r, "channelId"), UserContext: h.userCtx(r),
+		ChannelId: chi.URLParam(r, "channelId"), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -274,7 +268,7 @@ func (h *ChannelsHandler) TestConnection(w http.ResponseWriter, r *http.Request)
 	}
 	configBytes, _ := json.Marshal(body.Config)
 	resp, err := h.clients.Channels.TestConnection(r.Context(), &channelspb.TestConnectionRequest{
-		Type: body.Type, ConfigJson: string(configBytes), UserContext: h.userCtx(r),
+		Type: body.Type, ConfigJson: string(configBytes), UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -306,7 +300,7 @@ func (h *ChannelsHandler) SendChannelMessage(w http.ResponseWriter, r *http.Requ
 		ChatId:      req.ChatId,
 		Text:        req.Text,
 		ThreadId:    req.ThreadId,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	}
 	_, err := h.clients.Channels.SendChannelMessage(r.Context(), &body)
 	if err != nil {

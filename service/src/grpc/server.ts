@@ -114,6 +114,8 @@ function mapErrorCode(code?: string): grpc.status {
     case "NOT_FOUND": return grpc.status.NOT_FOUND;
     case "UNIMPLEMENTED": return grpc.status.UNIMPLEMENTED;
     case "INVALID_ARGUMENT": return grpc.status.INVALID_ARGUMENT;
+    case "FAILED_PRECONDITION": return grpc.status.FAILED_PRECONDITION;
+    case "RESOURCE_EXHAUSTED": return grpc.status.RESOURCE_EXHAUSTED;
     default: return grpc.status.INTERNAL;
   }
 }

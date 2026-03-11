@@ -28,10 +28,6 @@ func NewOrgHandler(clients *grpcclient.Clients) *OrgHandler {
 	return &OrgHandler{clients: clients}
 }
 
-func (h *OrgHandler) userCtx(r *http.Request) *commonpb.UserContext {
-	u, _ := middleware.GetUser(r)
-	return &commonpb.UserContext{UserId: u.UserID, Email: u.Email, Name: u.Name}
-}
 
 func buildRecentDateKeys(days int) []string {
 	safeDays := days
@@ -487,7 +483,7 @@ func (h *OrgHandler) ListOrgs(w http.ResponseWriter, r *http.Request) {
 func (h *OrgHandler) GetOrg(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	resp, err := h.clients.Org.GetOrg(r.Context(), &orgpb.GetOrgRequest{
-		OrgId: orgID, UserContext: h.userCtx(r),
+		OrgId: orgID, UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -504,7 +500,7 @@ func (h *OrgHandler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.OrgId = orgID
-	body.UserContext = h.userCtx(r)
+	body.UserContext = userCtxFromRequest(r)
 	resp, err := h.clients.Org.UpdateOrg(r.Context(), &body)
 	if err != nil {
 		writeGRPCError(w, err)
@@ -516,7 +512,7 @@ func (h *OrgHandler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 func (h *OrgHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	resp, err := h.clients.Org.ListMembers(r.Context(), &orgpb.ListMembersRequest{
-		OrgId: orgID, UserContext: h.userCtx(r),
+		OrgId: orgID, UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -528,7 +524,7 @@ func (h *OrgHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 func (h *OrgHandler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	resp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
-		OrgId: orgID, UserContext: h.userCtx(r),
+		OrgId: orgID, UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -544,7 +540,7 @@ func (h *OrgHandler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 func (h *OrgHandler) GetDashboardStats(w http.ResponseWriter, r *http.Request) {
 	orgID := strings.TrimSpace(chi.URLParam(r, "orgId"))
 	resp, err := h.clients.Org.GetDashboardStats(r.Context(), &orgpb.GetDashboardStatsRequest{
-		OrgId: orgID, UserContext: h.userCtx(r),
+		OrgId: orgID, UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -573,7 +569,7 @@ func (h *OrgHandler) GetDashboardTokenStats(w http.ResponseWriter, r *http.Reque
 
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
 		OrgId:       orgID,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -666,7 +662,7 @@ func (h *OrgHandler) GetDashboardTokenStats(w http.ResponseWriter, r *http.Reque
 		runtimeResp, runtimeErr := h.clients.Chat.GetRuntimeMetrics(r.Context(), &chatpb.GetRuntimeMetricsRequest{
 			WorkspaceId: workspaceID,
 			Days:        7,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 		if runtimeErr != nil || runtimeResp == nil {
 			continue
@@ -686,15 +682,15 @@ func (h *OrgHandler) GetDashboardTokenStats(w http.ResponseWriter, r *http.Reque
 
 		agentsResp, _ := h.clients.Chat.ListAgents(r.Context(), &chatpb.ListAgentsRequest{
 			WorkspaceId: workspaceID,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 		providersResp, _ := h.clients.Settings.ListProviders(r.Context(), &settingspb.WorkspaceRequest{
 			WorkspaceId: workspaceID,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 		modelsResp, _ := h.clients.Settings.ListAllModels(r.Context(), &settingspb.WorkspaceRequest{
 			WorkspaceId: workspaceID,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 
 		providerByID := map[string]*settingspb.Provider{}
@@ -888,7 +884,7 @@ func (h *OrgHandler) GetDashboardWorkload(w http.ResponseWriter, r *http.Request
 
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
 		OrgId:       orgID,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -912,7 +908,7 @@ func (h *OrgHandler) GetDashboardWorkload(w http.ResponseWriter, r *http.Request
 		runtimeResp, runtimeErr := h.clients.Chat.GetRuntimeMetrics(r.Context(), &chatpb.GetRuntimeMetricsRequest{
 			WorkspaceId: workspaceID,
 			Days:        7,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 		if runtimeErr != nil || runtimeResp == nil {
 			continue
@@ -977,7 +973,7 @@ func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Reque
 
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
 		OrgId:       orgID,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		writeGRPCError(w, err)
@@ -1007,7 +1003,7 @@ func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Reque
 
 	memberResp, memberErr := h.clients.Org.ListMembers(r.Context(), &orgpb.ListMembersRequest{
 		OrgId:       orgID,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if memberErr == nil && memberResp != nil {
 		for _, m := range memberResp.Members {
@@ -1050,7 +1046,7 @@ func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Reque
 
 		sessionsResp, sessionsErr := h.clients.Chat.ListSessions(r.Context(), &chatpb.ListSessionsRequest{
 			WorkspaceId: workspaceID,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 		if sessionsErr == nil && sessionsResp != nil {
 			for _, s := range sessionsResp.Sessions {
@@ -1082,7 +1078,7 @@ func (h *OrgHandler) GetDashboardActivities(w http.ResponseWriter, r *http.Reque
 			WorkspaceId: workspaceID,
 			Limit:       80,
 			Offset:      0,
-			UserContext: h.userCtx(r),
+			UserContext: userCtxFromRequest(r),
 		})
 		if usageErr != nil || usageResp == nil {
 			continue
@@ -1165,7 +1161,7 @@ func (h *OrgHandler) listOrgUsageViews(
 ) ([]orgUsageView, bool, error) {
 	workspaceResp, err := h.clients.Org.ListWorkspaces(r.Context(), &orgpb.ListWorkspacesRequest{
 		OrgId:       orgID,
-		UserContext: h.userCtx(r),
+		UserContext: userCtxFromRequest(r),
 	})
 	if err != nil {
 		return nil, false, err
@@ -1189,7 +1185,7 @@ func (h *OrgHandler) listOrgUsageViews(
 		workspaceIDs = []string{params.workspaceID}
 	}
 
-	userCtx := h.userCtx(r)
+	userCtx := userCtxFromRequest(r)
 	rawRecords := make([]*chatpb.UsageRecord, 0, 256)
 	for _, workspaceID := range workspaceIDs {
 		var offset int32
