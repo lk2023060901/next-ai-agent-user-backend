@@ -1,5 +1,6 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyRequest, type FastifyReply } from "fastify";
 import cors from "@fastify/cors";
+import { timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
 import { grpcClient } from "./grpc/client.js";
 import { formatSseData, type SseEvent } from "./sse/emitter.js";
@@ -22,6 +23,28 @@ import {
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true });
+
+// ─── Runtime secret auth middleware ───────────────────────────────────────────
+// Used as a preHandler on all gateway→runtime internal endpoints.
+// Uses timingSafeEqual to prevent timing-based secret extraction.
+
+function runtimeSecretAuth(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  done: () => void,
+): void {
+  const header = request.headers["x-runtime-secret"];
+  const provided = Array.isArray(header) ? (header[0] ?? "") : (header ?? "");
+  const expected = config.runtimeSecret;
+  if (
+    provided.length !== expected.length ||
+    !timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
+  ) {
+    reply.status(401).send({ error: "invalid runtime secret" });
+    return;
+  }
+  done();
+}
 
 interface ChannelRunBody {
   sessionId: string;
@@ -184,15 +207,10 @@ const orchestrator = new DefaultOrchestrator({
 // Returns immediately (202); actual agent run continues in background and pushes
 // the final reply back to Gateway /channels/:channelId/send.
 
-app.post<{ Body: ChannelRunBody }>("/channel-run", async (request, reply) => {
-  const runtimeSecretHeader = request.headers["x-runtime-secret"];
-  const providedSecret = Array.isArray(runtimeSecretHeader)
-    ? (runtimeSecretHeader[0] ?? "")
-    : (runtimeSecretHeader ?? "");
-  if (providedSecret !== config.runtimeSecret) {
-    return reply.status(401).send({ error: "invalid runtime secret" });
-  }
-
+app.post<{ Body: ChannelRunBody }>(
+  "/channel-run",
+  { preHandler: runtimeSecretAuth },
+  async (request, reply) => {
   const body = request.body;
 
   if (
@@ -253,15 +271,10 @@ interface ScheduledRunBody {
   executionId: string;
 }
 
-app.post<{ Body: ScheduledRunBody }>("/runtime/scheduled-run", async (request, reply) => {
-  const runtimeSecretHeader = request.headers["x-runtime-secret"];
-  const providedSecret = Array.isArray(runtimeSecretHeader)
-    ? (runtimeSecretHeader[0] ?? "")
-    : (runtimeSecretHeader ?? "");
-  if (providedSecret !== config.runtimeSecret) {
-    return reply.status(401).send({ error: "invalid runtime secret" });
-  }
-
+app.post<{ Body: ScheduledRunBody }>(
+  "/runtime/scheduled-run",
+  { preHandler: runtimeSecretAuth },
+  async (request, reply) => {
   const body = request.body;
   if (!body?.workspaceId || !body?.sessionId || !body?.agentId || !body?.instruction || !body?.executionId) {
     return reply.status(400).send({
@@ -290,15 +303,10 @@ app.post<{ Body: ScheduledRunBody }>("/runtime/scheduled-run", async (request, r
 });
 
 // ─── Runtime plugin sync (hot load/reload/unload) ────────────────────────────
-app.post<{ Body: RuntimePluginSyncBody }>("/runtime/plugins/sync", async (request, reply) => {
-  const runtimeSecretHeader = request.headers["x-runtime-secret"];
-  const providedSecret = Array.isArray(runtimeSecretHeader)
-    ? (runtimeSecretHeader[0] ?? "")
-    : (runtimeSecretHeader ?? "");
-  if (providedSecret !== config.runtimeSecret) {
-    return reply.status(401).send({ error: "invalid runtime secret" });
-  }
-
+app.post<{ Body: RuntimePluginSyncBody }>(
+  "/runtime/plugins/sync",
+  { preHandler: runtimeSecretAuth },
+  async (request, reply) => {
   const body = request.body;
   if (!body?.installedPluginId || !body?.workspaceId || !body?.pluginId || !body?.installPath) {
     return reply
@@ -353,15 +361,8 @@ interface KbSyncBody {
 
 app.post<{ Params: { wsId: string }; Body: KbSyncBody }>(
   "/runtime/ws/:wsId/kb/sync",
+  { preHandler: runtimeSecretAuth },
   async (request, reply) => {
-    const runtimeSecretHeader = request.headers["x-runtime-secret"];
-    const providedSecret = Array.isArray(runtimeSecretHeader)
-      ? (runtimeSecretHeader[0] ?? "")
-      : (runtimeSecretHeader ?? "");
-    if (providedSecret !== config.runtimeSecret) {
-      return reply.status(401).send({ error: "invalid runtime secret" });
-    }
-
     const { wsId } = request.params;
     const body = request.body;
 
