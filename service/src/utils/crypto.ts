@@ -6,8 +6,12 @@ const TAG_LENGTH = 16;
 const SALT_LENGTH = 16;
 const KEY_LENGTH = 32;
 
+const VERSION_PREFIX = "v1:";
+
 function deriveKey(secret: string, salt: Buffer): Buffer {
-  return scryptSync(secret, salt, KEY_LENGTH);
+  // N=16384: ~17ms vs N=32768 ~35ms. Acceptable for stored-secret KDF
+  // (rare writes, not a login rate-limited path).
+  return scryptSync(secret, salt, KEY_LENGTH, { N: 16384 });
 }
 
 export function encryptSecret(plaintext: string, masterSecret: string): string {
@@ -17,11 +21,16 @@ export function encryptSecret(plaintext: string, masterSecret: string): string {
   const cipher = createCipheriv(ALGORITHM, key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
-  return Buffer.concat([salt, iv, authTag, encrypted]).toString("base64");
+  return VERSION_PREFIX + Buffer.concat([salt, iv, authTag, encrypted]).toString("base64");
 }
 
 export function decryptSecret(ciphertext: string, masterSecret: string): string {
-  const combined = Buffer.from(ciphertext, "base64");
+  const raw = ciphertext.startsWith(VERSION_PREFIX) ? ciphertext.slice(VERSION_PREFIX.length) : ciphertext;
+  const combined = Buffer.from(raw, "base64");
+  const MIN_SIZE = SALT_LENGTH + IV_LENGTH + TAG_LENGTH;
+  if (combined.length < MIN_SIZE) {
+    throw new Error("Invalid ciphertext: too short");
+  }
   const salt = combined.subarray(0, SALT_LENGTH);
   const iv = combined.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
   const authTag = combined.subarray(SALT_LENGTH + IV_LENGTH, SALT_LENGTH + IV_LENGTH + TAG_LENGTH);
@@ -33,16 +42,11 @@ export function decryptSecret(ciphertext: string, masterSecret: string): string 
 }
 
 /**
- * Detect legacy base64-only "encryption". AES-256-GCM ciphertext is always
- * at least salt(16) + iv(16) + tag(16) + 1 byte of data = 49 bytes.
+ * Detect legacy base64-only "encryption". New AES-256-GCM ciphertexts are
+ * prefixed with "v1:". Anything without that prefix is treated as legacy.
  */
 export function isLegacyEncrypted(ciphertext: string): boolean {
-  try {
-    const buf = Buffer.from(ciphertext, "base64");
-    return buf.length < SALT_LENGTH + IV_LENGTH + TAG_LENGTH + 1;
-  } catch {
-    return true;
-  }
+  return !ciphertext.startsWith(VERSION_PREFIX);
 }
 
 /**
