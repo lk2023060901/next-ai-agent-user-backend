@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ProviderAdapter } from "../../providers/adapter.js";
+import type { EmbeddingService } from "../../embedding/embedding-types.js";
 import type {
   MemoryEntry,
   MemorySearchQuery,
@@ -9,7 +10,7 @@ import {
   getHalfLifeDays,
   REFLECTION_IMPORTANCE_THRESHOLD,
 } from "../memory-types.js";
-import type { MemoryStore } from "../store/interfaces.js";
+import type { FullTextIndex, MemoryStore, VectorIndex } from "../store/interfaces.js";
 import { HybridSearch } from "../retrieval/hybrid-search.js";
 
 /**
@@ -29,15 +30,24 @@ export class ReflectionEngine {
   private readonly store: MemoryStore;
   private readonly provider: ProviderAdapter;
   private readonly search: HybridSearch;
+  private readonly ftsIndex: FullTextIndex | undefined;
+  private readonly vectorIndex: VectorIndex | undefined;
+  private readonly embeddingService: EmbeddingService | undefined;
 
   constructor(
     store: MemoryStore,
     provider: ProviderAdapter,
     search: HybridSearch,
+    ftsIndex?: FullTextIndex,
+    vectorIndex?: VectorIndex,
+    embeddingService?: EmbeddingService,
   ) {
     this.store = store;
     this.provider = provider;
     this.search = search;
+    this.ftsIndex = ftsIndex;
+    this.vectorIndex = vectorIndex;
+    this.embeddingService = embeddingService;
   }
 
   async shouldTrigger(agentId: string, workspaceId: string): Promise<boolean> {
@@ -88,6 +98,24 @@ export class ReflectionEngine {
       if (reflection) {
         reflections.push(reflection);
         await this.store.insert(reflection);
+
+        // Index the reflection for FTS and vector search so it can be
+        // retrieved in future injection/search queries.
+        if (this.ftsIndex) {
+          try {
+            await this.ftsIndex.upsert(reflection.id, reflection.content);
+          } catch (err) {
+            console.warn("[reflection] FTS indexing failed:", err instanceof Error ? err.message : err);
+          }
+        }
+        if (this.vectorIndex && this.embeddingService) {
+          try {
+            const embedding = await this.embeddingService.embedOne(reflection.content);
+            await this.vectorIndex.upsert(reflection.id, embedding);
+          } catch (err) {
+            console.warn("[reflection] vector indexing failed:", err instanceof Error ? err.message : err);
+          }
+        }
       }
     }
 

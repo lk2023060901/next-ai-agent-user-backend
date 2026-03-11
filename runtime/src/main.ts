@@ -149,15 +149,29 @@ const orchestrator = new DefaultOrchestrator({
       } satisfies RunResult;
     }
 
-    // Interactive/other lanes — bridge through RunStore for SSE streaming
+    // Interactive/other lanes — bridge through RunStore for SSE streaming.
+    // Intercept usage + text-delta events so RunResult carries real telemetry.
+    let interactiveFullText = "";
+    const interactiveUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+
     await runStore.startRun(request.runId, async ({ runId, params, emit }) => {
-      await startRun({ runId, ...params, abortSignal: context.abortSignal }, emit);
+      const instrumentedEmit = (event: SseEvent) => {
+        if (event.type === "text-delta") {
+          interactiveFullText += event.text;
+        } else if (event.type === "usage") {
+          interactiveUsage.inputTokens += event.inputTokens;
+          interactiveUsage.outputTokens += event.outputTokens;
+          interactiveUsage.totalTokens += event.totalTokens;
+        }
+        emit(event);
+      };
+      await startRun({ runId, ...params, abortSignal: context.abortSignal }, instrumentedEmit);
     });
     return {
       runId: request.runId,
       status: "completed",
-      fullText: "",
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      fullText: interactiveFullText,
+      usage: interactiveUsage,
       turnsUsed: 0,
     } satisfies RunResult;
   },

@@ -58,7 +58,18 @@ export class InMemorySessionLock implements SessionLock {
       throw new SessionLockTimeoutError(sessionId, timeoutMs);
     }
 
-    return releaseFn;
+    // Wrap releaseFn to clean up the chain entry when the lock is released.
+    // This prevents the chains Map from growing unboundedly for long-lived
+    // processes with many distinct session IDs.
+    const release: LockRelease = () => {
+      releaseFn();
+      // Only delete if this chain is still the current one for the session.
+      // A new acquire() for the same session may have already replaced it.
+      if (this.chains.get(sessionId) === next) {
+        this.chains.delete(sessionId);
+      }
+    };
+    return release;
   }
 
   /** Number of sessions with active lock chains. */

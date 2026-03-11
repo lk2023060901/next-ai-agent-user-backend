@@ -117,6 +117,7 @@ function initializeServices(): RuntimeServices {
     ftsIndex: db.ftsIndex,
     graphStore: db.graphStore,
     provider: lazyProvider,
+    embeddingService: embedding ?? undefined,
   });
 
   return {

@@ -596,6 +596,22 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     });
   }
 
+  // ─── Post-run: memory consolidation + decay update ────────────────────────
+  // Consolidation merges near-duplicate memories; decay update applies the
+  // Ebbinghaus forgetting curve to stale entries. Both are best-effort.
+  if (params.memoryManager) {
+    try {
+      await params.memoryManager.consolidate(params.coordinatorAgentId, params.workspaceId);
+    } catch (err) {
+      console.warn("[coordinator] consolidation failed:", err);
+    }
+    try {
+      await params.memoryManager.batchDecayUpdate();
+    } catch (err) {
+      console.warn("[coordinator] decay update failed:", err);
+    }
+  }
+
   // ─── Post-run: session history compaction ─────────────────────────────────
   // If history grew too large, compact old messages into a summary.
   // Requires a real LLM provider (successModel) for summarization.

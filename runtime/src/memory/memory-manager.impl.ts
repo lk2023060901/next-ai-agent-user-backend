@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ProviderAdapter } from "../providers/adapter.js";
+import type { EmbeddingService } from "../embedding/embedding-types.js";
 import { estimateTokens } from "../utils/token-estimator.js";
 import type {
   AccessType,
@@ -50,6 +51,11 @@ export interface DefaultMemoryManagerOptions {
   graphStore: GraphStore;
   provider: ProviderAdapter;
 
+  // ─── Optional embedding service ───────────────────────────────────────
+  // When provided, getRelevantInjections() computes a query embedding and
+  // passes it to the hybrid search for vector-based retrieval.
+  embeddingService?: EmbeddingService;
+
   // ─── Optional overrides (plugin injection points) ─────────────────────
   // Pass your own implementation to replace any sub-component.
   // Omit to use our defaults.
@@ -81,6 +87,7 @@ export class DefaultMemoryManager implements MemoryManager {
   private readonly vectorIndex: VectorIndex;
   private readonly ftsIndex: FullTextIndex;
   private readonly graphStore: GraphStore;
+  private readonly embeddingService: EmbeddingService | undefined;
 
   private readonly hybridSearch: HybridSearch;
   private readonly decayEngine: DecayEngine;
@@ -96,6 +103,7 @@ export class DefaultMemoryManager implements MemoryManager {
     this.vectorIndex = options.vectorIndex;
     this.ftsIndex = options.ftsIndex;
     this.graphStore = options.graphStore;
+    this.embeddingService = options.embeddingService;
 
     // Each sub-component: use plugin override if provided, otherwise our default
     this.hybridSearch = options.hybridSearch ?? new HybridSearch(
@@ -106,6 +114,7 @@ export class DefaultMemoryManager implements MemoryManager {
     this.consolidator = options.consolidator ?? new Consolidator(this.store, options.provider);
     this.reflectionEngine = options.reflectionEngine ?? new ReflectionEngine(
       this.store, options.provider, this.hybridSearch,
+      this.ftsIndex, this.vectorIndex, this.embeddingService,
     );
     this.memoryExtractor = options.memoryExtractor ?? new MemoryExtractor(options.provider);
     this.entityExtractor = options.entityExtractor ?? new EntityExtractor(options.provider);
@@ -232,13 +241,23 @@ export class DefaultMemoryManager implements MemoryManager {
   // ─── Injection ──────────────────────────────────────────────────────────
 
   async getRelevantInjections(context: InjectionContext): Promise<InjectedMemory[]> {
+    // Compute embedding for vector-based retrieval if embedding service is available
+    let queryEmbedding: Float32Array | undefined;
+    if (this.embeddingService && context.currentMessage) {
+      try {
+        queryEmbedding = await this.embeddingService.embedOne(context.currentMessage);
+      } catch (err) {
+        console.warn("[memory] embedding for injection search failed:", err instanceof Error ? err.message : err);
+      }
+    }
+
     // Search for relevant memories
     const searchResults = await this.search({
       query: context.currentMessage,
       agentId: context.agentId,
       workspaceId: context.workspaceId,
       limit: 20,
-      embedding: undefined, // Would need embedding service to compute this
+      embedding: queryEmbedding,
     });
 
     // Score and filter for injection
