@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -67,7 +68,7 @@ func NewRuntimeToolsHandler(options RuntimeToolsHandlerOptions) *RuntimeToolsHan
 }
 
 func (h *RuntimeToolsHandler) WebSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Runtime-Secret") != h.runtimeSecret {
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Runtime-Secret")), []byte(h.runtimeSecret)) != 1 {
 		writeError(w, http.StatusUnauthorized, "invalid runtime secret")
 		return
 	}

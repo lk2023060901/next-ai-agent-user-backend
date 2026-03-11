@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -12,6 +15,13 @@ import (
 	"github.com/liukai/next-ai-agent-user-backend/gateway/internal/middleware"
 	commonpb "github.com/liukai/next-ai-agent-user-backend/gateway/internal/pb/common"
 )
+
+const defaultGRPCTimeout = 15 * time.Second
+
+// grpcCtx returns a context with a deadline for gRPC calls.
+func grpcCtx(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), defaultGRPCTimeout)
+}
 
 var pj = protojson.MarshalOptions{
 	UseProtoNames:   false, // camelCase
@@ -51,7 +61,8 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 func writeGRPCError(w http.ResponseWriter, err error) {
 	st, ok := status.FromError(err)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		log.Printf("Internal error: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	httpCode := grpcCodeToHTTP(st.Code())

@@ -8,6 +8,19 @@ const app = Fastify({ logger: true });
 async function main() {
   await app.register(cors, { origin: true });
 
+  // Reject insecure default secrets in production
+  if (process.env.NODE_ENV === "production") {
+    const insecure = [
+      config.jwtSecret === "dev-secret-change-in-production" && "JWT_SECRET",
+      config.runtimeSecret === "dev-runtime-secret" && "RUNTIME_SECRET",
+      config.encryptionSecret === "dev-secret-change-in-production" && "ENCRYPTION_SECRET",
+    ].filter(Boolean) as string[];
+    if (insecure.length > 0) {
+      console.error(`FATAL: Insecure default secrets detected for: ${insecure.join(", ")}. Cannot start in production.`);
+      process.exit(1);
+    }
+  }
+
   // Warn if ENCRYPTION_SECRET is not set (falling back to JWT_SECRET or hardcoded default)
   if (!process.env.ENCRYPTION_SECRET) {
     if (process.env.JWT_SECRET) {

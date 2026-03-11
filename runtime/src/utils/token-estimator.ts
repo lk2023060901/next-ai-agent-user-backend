@@ -4,5 +4,7 @@ export function estimateTokens(text: string): number {
   if (!text) return 0;
   const cjkChars = text.match(CJK_REGEX)?.length ?? 0;
   const nonCjkChars = text.length - cjkChars;
-  return Math.ceil(cjkChars * 1.5 + nonCjkChars / 4);
+  // CJK characters average ~2 tokens each in Claude/GPT tokenizers.
+  // Use 2.0x to avoid underestimating and exceeding context budget.
+  return Math.ceil(cjkChars * 2 + nonCjkChars / 4);
 }

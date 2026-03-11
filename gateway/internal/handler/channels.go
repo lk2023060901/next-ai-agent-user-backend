@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -282,7 +283,7 @@ func (h *ChannelsHandler) TestConnection(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *ChannelsHandler) SendChannelMessage(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Runtime-Secret") != h.runtimeSecret {
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Runtime-Secret")), []byte(h.runtimeSecret)) != 1 {
 		writeError(w, http.StatusUnauthorized, "invalid runtime secret")
 		return
 	}

@@ -74,7 +74,9 @@ export const workspaces = sqliteTable("workspaces", {
     .references(() => organizations.id, { onDelete: "cascade" }),
   description: text("description"),
   ...timestamps,
-});
+}, (t) => ({
+  uqOrgSlug: uniqueIndex("workspaces_org_slug_uq").on(t.orgId, t.slug),
+}));
 
 // ─── Agents ──────────────────────────────────────────────────────────────────
 
@@ -106,8 +108,12 @@ export const agentKnowledgeBases = sqliteTable("agent_knowledge_bases", {
   agentId: text("agent_id")
     .notNull()
     .references(() => agents.id, { onDelete: "cascade" }),
-  knowledgeBaseId: text("knowledge_base_id").notNull(),
-});
+  knowledgeBaseId: text("knowledge_base_id")
+    .notNull()
+    .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+}, (t) => ({
+  uqAgentKb: uniqueIndex("agent_kb_uq").on(t.agentId, t.knowledgeBaseId),
+}));
 
 // ─── Topology ────────────────────────────────────────────────────────────────
 
@@ -306,7 +312,9 @@ export const knowledgeBases = sqliteTable("knowledge_bases", {
   matchingThreshold: real("matching_threshold"),
   documentCount: integer("document_count").notNull().default(0),
   ...timestamps,
-});
+}, (t) => ({
+  idxWorkspace: index("kb_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const kbDocuments = sqliteTable("kb_documents", {
   id: text("id").primaryKey(),
@@ -617,7 +625,9 @@ export const aiProviders = sqliteTable("ai_providers", {
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),
-});
+}, (t) => ({
+  idxWorkspace: index("ai_providers_workspace_id_idx").on(t.workspaceId),
+}));
 
 export const aiModels = sqliteTable("ai_models", {
   id: text("id").primaryKey(),

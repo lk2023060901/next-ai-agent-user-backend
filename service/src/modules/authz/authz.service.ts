@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm"
 import { db } from "../../db/index.js"
-import { orgMembers, workspaces, channels, knowledgeBases, routingRules } from "../../db/schema.js"
+import { orgMembers, workspaces, channels, knowledgeBases, routingRules, chatSessions, scheduledTasks } from "../../db/schema.js"
 
 /**
  * Verify userId is a member of orgId. Throws gRPC-compatible error if not.
@@ -71,6 +71,42 @@ export function assertRoutingRuleMember(ruleId: string, userId: string | undefin
     throw Object.assign(new Error("Routing rule not found"), { code: "NOT_FOUND" })
   }
   assertChannelMember(rule.channelId, userId)
+}
+
+/**
+ * Verify userId has access to a chat session (via the session's workspace → org membership).
+ */
+export function assertSessionMember(sessionId: string, userId: string | undefined): void {
+  if (!userId) {
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHENTICATED" })
+  }
+  const session = db
+    .select({ workspaceId: chatSessions.workspaceId })
+    .from(chatSessions)
+    .where(eq(chatSessions.id, sessionId))
+    .get()
+  if (!session) {
+    throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" })
+  }
+  assertWorkspaceMember(session.workspaceId, userId)
+}
+
+/**
+ * Verify userId has access to a scheduler task (via the task's workspace → org membership).
+ */
+export function assertSchedulerTaskMember(taskId: string, userId: string | undefined): void {
+  if (!userId) {
+    throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHENTICATED" })
+  }
+  const task = db
+    .select({ workspaceId: scheduledTasks.workspaceId })
+    .from(scheduledTasks)
+    .where(eq(scheduledTasks.id, taskId))
+    .get()
+  if (!task) {
+    throw Object.assign(new Error("Task not found"), { code: "NOT_FOUND" })
+  }
+  assertWorkspaceMember(task.workspaceId, userId)
 }
 
 /**

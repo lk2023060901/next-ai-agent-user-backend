@@ -82,7 +82,7 @@ import {
   type PluginReviewItem,
   type RuntimePluginLoadCandidate,
 } from "../modules/plugins/plugin.service.js";
-import { assertOrgMember, assertWorkspaceMember, assertChannelMember, assertRoutingRuleMember, assertKnowledgeBaseMember } from "../modules/authz/authz.service.js";
+import { assertOrgMember, assertWorkspaceMember, assertChannelMember, assertRoutingRuleMember, assertKnowledgeBaseMember, assertSessionMember, assertSchedulerTaskMember } from "../modules/authz/authz.service.js";
 
 const PROTO_DIR = path.join(__dirname, "../../../proto");
 
@@ -880,6 +880,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateTask(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertSchedulerTaskMember(call.request.taskId, call.request.userContext?.userId);
         callback(null, updateTask(call.request.taskId, {
           name: call.request.name,
           instruction: call.request.instruction,
@@ -893,7 +894,11 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteTask(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteTask(call.request.taskId); callback(null, {}); }
+      try {
+        assertSchedulerTaskMember(call.request.taskId, call.request.userContext?.userId);
+        deleteTask(call.request.taskId);
+        callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
     async runTask(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
@@ -1105,6 +1110,7 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     updateSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertSessionMember(call.request.sessionId, call.request.userContext?.userId);
         callback(null, updateSession({
           sessionId: call.request.sessionId,
           title: call.request.title,
@@ -1115,11 +1121,16 @@ export function startGrpcServer(port: number): grpc.Server {
       } catch (err) { handleError(callback, err); }
     },
     deleteSession(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { deleteSession(call.request.sessionId); callback(null, {}); }
+      try {
+        assertSessionMember(call.request.sessionId, call.request.userContext?.userId);
+        deleteSession(call.request.sessionId);
+        callback(null, {});
+      }
       catch (err) { handleError(callback, err); }
     },
     listMessages(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertSessionMember(call.request.sessionId, call.request.userContext?.userId);
         const page = listMessages(call.request.sessionId, {
           limit: call.request.limit,
           beforeMessageId: call.request.beforeMessageId,
@@ -1133,11 +1144,15 @@ export function startGrpcServer(port: number): grpc.Server {
       catch (err) { handleError(callback, err); }
     },
     saveUserMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
-      try { callback(null, saveUserMessage(call.request.sessionId, call.request.content)); }
+      try {
+        assertSessionMember(call.request.sessionId, call.request.userContext?.userId);
+        callback(null, saveUserMessage(call.request.sessionId, call.request.content));
+      }
       catch (err) { handleError(callback, err); }
     },
     updateUserMessage(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
+        assertSessionMember(call.request.sessionId, call.request.userContext?.userId);
         const result = updateUserMessage(
           call.request.sessionId,
           call.request.messageId,

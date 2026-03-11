@@ -20,6 +20,12 @@ import {
   deleteKbEntireKnowledgeBase,
 } from "./kb/kb-sync.js";
 
+// Reject insecure default secrets in production
+if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
+  console.error("FATAL: RUNTIME_SECRET must be set in production. Cannot start with default secret.");
+  process.exit(1);
+}
+
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: true });
@@ -908,15 +914,26 @@ try {
     app.log.error({ err }, "Runtime plugin bootstrap failed");
   }
 
-  await app.listen({ port: config.port, host: "0.0.0.0" });
-  app.log.info(`Runtime listening on :${config.port}`);
+  const host = process.env.RUNTIME_HOST ?? "127.0.0.1";
+  await app.listen({ port: config.port, host });
+  app.log.info(`Runtime listening on ${host}:${config.port}`);
 
   // M4: Graceful shutdown on SIGTERM/SIGINT — wait for in-flight runs, then flush DB
+  const SHUTDOWN_TIMEOUT_MS = 30_000;
   const gracefulShutdown = async (signal: string) => {
     app.log.info(`Received ${signal}, shutting down gracefully...`);
     isShuttingDown = true;
     try {
-      await orchestrator.shutdown();
+      await Promise.race([
+        orchestrator.shutdown(),
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            app.log.warn(`Orchestrator shutdown timed out after ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit`);
+            resolve();
+          }, SHUTDOWN_TIMEOUT_MS);
+          timer.unref();
+        }),
+      ]);
       closeRuntimeServices();
       runStore.close();
       await app.close();

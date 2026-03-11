@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -18,9 +20,16 @@ import (
 func main() {
 	cfg := config.Load()
 
-	// M3: Warn when default/insecure secrets are in use
-	for _, warning := range cfg.Validate() {
-		log.Printf("WARNING: %s", warning)
+	// M3: Warn (or fatally reject) when default/insecure secrets are in use
+	warnings := cfg.Validate()
+	if os.Getenv("GO_ENV") == "production" && len(warnings) > 0 {
+		for _, w := range warnings {
+			log.Printf("FATAL: %s", w)
+		}
+		log.Fatalf("Cannot start with insecure default secrets in production. Set GO_ENV to something other than 'production' for development.")
+	}
+	for _, w := range warnings {
+		log.Printf("WARNING: %s", w)
 	}
 
 	clients, err := grpcclient.New(cfg.GRPCAddr)
@@ -35,6 +44,13 @@ func main() {
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
+	// Global request body size limit (10MB). File upload endpoints override with ParseMultipartForm.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+			next.ServeHTTP(w, r)
+		})
+	})
 	r.Use(cors.New(cors.Options{
 		AllowedOrigins:   cfg.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -79,6 +95,7 @@ func main() {
 	// ── Protected ─────────────────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(cfg.JWTSecret))
+		r.Use(chimiddleware.Timeout(30 * time.Second))
 
 		// Auth
 		r.Post("/auth/logout", authHandler.Logout)

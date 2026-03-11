@@ -55,6 +55,7 @@ export function isLegacyEncrypted(ciphertext: string): boolean {
  */
 export function decryptSecretCompat(ciphertext: string, masterSecret: string): string {
   if (isLegacyEncrypted(ciphertext)) {
+    console.warn("[crypto] Legacy Base64 decryption used — consider migrating to AES-256-GCM");
     return Buffer.from(ciphertext, "base64").toString("utf-8").trim();
   }
   return decryptSecret(ciphertext, masterSecret);

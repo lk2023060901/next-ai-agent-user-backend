@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  gateway:
+    name: Gateway (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: gateway/go.sum
+      - run: go vet ./...
+        working-directory: gateway
+      - run: go build -o /dev/null ./cmd/gateway
+        working-directory: gateway
+      - run: go test ./...
+        working-directory: gateway
+
+  service:
+    name: Service (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: service/package-lock.json
+      - run: npm ci
+        working-directory: service
+      - run: npm run build
+        working-directory: service
+      - run: npm test --if-present
+        working-directory: service
+
+  runtime:
+    name: Runtime (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - run: npm ci
+        working-directory: runtime
+      - run: npm run build
+        working-directory: runtime
+      - run: npm test --if-present
+        working-directory: runtime

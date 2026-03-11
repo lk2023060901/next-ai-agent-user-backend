@@ -10,14 +10,16 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "proto": "bash ../scripts/gen-proto.sh",
-    "smoke:plugin-security": "tsx src/scripts/plugin-install-security-smoke.ts"
+    "smoke:plugin-security": "tsx src/scripts/plugin-install-security-smoke.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
-    "@mariozechner/pi-ai": "^0.57.0",
     "@grpc/grpc-js": "^1.12.0",
     "@grpc/proto-loader": "^0.7.13",
     "@larksuiteoapi/node-sdk": "^1.59.0",
+    "@mariozechner/pi-ai": "^0.57.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.0.0",
     "cron": "^4.4.0",
@@ -36,6 +38,7 @@
     "@types/uuid": "^10.0.0",
     "drizzle-kit": "^0.29.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
   }
 }

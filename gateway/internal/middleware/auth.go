@@ -2,12 +2,19 @@ package middleware
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+
+// secureCompare performs a constant-time comparison of two strings
+// to prevent timing attacks on secret values.
+func secureCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
 
 type contextKey string
 
@@ -86,7 +93,7 @@ func AuthOrRuntimeSecret(jwtSecret, runtimeSecret string) func(http.Handler) htt
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Try X-Runtime-Secret first (fast path for internal calls)
 			if secret := r.Header.Get("X-Runtime-Secret"); secret != "" {
-				if secret == runtimeSecret {
+				if secureCompare(secret, runtimeSecret) {
 					next.ServeHTTP(w, r)
 					return
 				}

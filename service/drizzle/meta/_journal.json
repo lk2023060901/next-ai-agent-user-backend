@@ -169,6 +169,13 @@
       "when": 1773194700000,
       "tag": "0023_runtime_provider_overlays",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1773400000000,
+      "tag": "0024_production_audit_fixes",
+      "breakpoints": true
     }
   ]
 }
