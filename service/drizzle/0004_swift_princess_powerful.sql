@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX `channel_sessions_channel_sender_chat_uniq` ON `channel_sessions` (`channel_id`,`sender_id`,`chat_id`);

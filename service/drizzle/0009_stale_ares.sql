@@ -1,1 +1,0 @@
-DROP INDEX IF EXISTS `usage_records_run_scope_uniq`;
