@@ -12,13 +12,18 @@ function loadProto(file) {
         includeDirs: [config.protoDir],
     });
 }
-function createClient(pkg, ServiceClass) {
-    return new ServiceClass(config.grpcAddr, grpc.credentials.createInsecure());
+function createClient(pkg, serviceName) {
+    const ServiceCtor = pkg[serviceName];
+    return new ServiceCtor(config.grpcAddr, grpc.credentials.createInsecure());
 }
 function promisify(client, method, request) {
     return new Promise((resolve, reject) => {
         const deadline = new Date(Date.now() + config.grpcCallTimeoutMs);
-        client[method](request, { deadline }, (err, response) => {
+        const fn = client[method];
+        if (typeof fn !== "function") {
+            return reject(new Error(`gRPC method "${method}" not found on client`));
+        }
+        fn.call(client, request, { deadline }, (err, response) => {
             if (err)
                 reject(err);
             else
@@ -28,10 +33,12 @@ function promisify(client, method, request) {
 }
 // ─── AgentRunService client ───────────────────────────────────────────────────
 const agentRunPkg = grpc.loadPackageDefinition(loadProto("agent_run.proto"));
-const agentRunClient = createClient(agentRunPkg, agentRunPkg.agent_run.AgentRunService);
+const agentRunNs = agentRunPkg["agent_run"];
+const agentRunClient = createClient(agentRunNs, "AgentRunService");
 // ─── ToolsService client ────────────────────────────────────────────────────
 const toolsPkg = grpc.loadPackageDefinition(loadProto("tools.proto"));
-const toolsClient = createClient(toolsPkg, toolsPkg.tools.ToolsService);
+const toolsNs = toolsPkg["tools"];
+const toolsClient = createClient(toolsNs, "ToolsService");
 export const grpcClient = {
     getAgentConfig(agentId, modelIdOverride) {
         return promisify(agentRunClient, "getAgentConfig", {

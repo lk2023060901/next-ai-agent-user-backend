@@ -1,4 +1,5 @@
 import { completeSimple } from "@mariozechner/pi-ai";
+import { estimateTokens } from "../utils/token-estimator.js";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import { makeDelegateTool } from "../tools/delegate.js";
@@ -13,6 +14,7 @@ import { runStreamLoop } from "./stream-loop.js";
 import { PiAiAdapter } from "../providers/pi-ai-adapter.js";
 import { MemoryExtractor } from "../memory/extraction/memory-extractor.js";
 import { DefaultContextEngine } from "../context/context-engine.impl.js";
+import { DefaultTokenBudgetAllocator } from "../context/token-budget.js";
 import { PersistentMessageHistory } from "./persistent-message-history.js";
 import { internalToPiAi, piAiToInternal } from "./message-converter.js";
 const WEB_SEARCH_PLAN_SCHEMA = z.object({
@@ -95,6 +97,13 @@ function formatWebSearchContext(result) {
     }
     return sections.join("\n");
 }
+function resolveCoordinatorContextWindow(model, apiKey) {
+    const caps = new PiAiAdapter({ model, apiKey }).capabilities();
+    const maxContextWindow = caps.maxContextWindow > 0 ? caps.maxContextWindow : 200_000;
+    const maxOutputTokens = caps.maxOutputTokens > 0 ? caps.maxOutputTokens : 8_192;
+    const tokenBudget = Math.max(8_192, Math.min(maxContextWindow, maxContextWindow - Math.min(maxOutputTokens, Math.floor(maxContextWindow * 0.2))));
+    return { maxContextWindow, tokenBudget, maxOutputTokens };
+}
 export async function runCoordinator(params) {
     const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId, params.modelIdOverride);
     const llmCandidates = getLlmCandidates(agentCfg);
@@ -142,6 +151,7 @@ export async function runCoordinator(params) {
     catch {
         planningModel = buildModelForAgent(agentCfg);
     }
+    const contextWindow = resolveCoordinatorContextWindow(planningModel, planningApiKey);
     const searchPlan = webSearchAllowed
         ? await decideWebSearch(planningModel, planningApiKey, params.userMessage, agentCfg.systemPrompt || "")
         : null;
@@ -159,6 +169,8 @@ export async function runCoordinator(params) {
             toolCallId,
             toolName: "web_search",
             args: searchArgs,
+            category: "api",
+            riskLevel: "low",
         });
         try {
             const webSearchTool = makeWebSearchTool();
@@ -240,20 +252,45 @@ export async function runCoordinator(params) {
         try {
             coreMemorySnapshot = await params.memoryManager.getCoreMemory(params.coordinatorAgentId, params.workspaceId);
         }
-        catch {
-            // Non-fatal — core memory retrieval failure
+        catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.warn("[coordinator] Core memory retrieval failed:", errMsg);
         }
         try {
+            const preAllocator = new DefaultTokenBudgetAllocator();
+            const preAllocation = preAllocator.allocate(contextWindow.tokenBudget, {
+                systemPromptTokens: 0,
+                hasCoreMemory: !!coreMemorySnapshot,
+                hasInjectedMemories: true,
+                maxOutputTokens: contextWindow.maxOutputTokens,
+            });
+            const injectionBudget = preAllocation.injectedMemories;
             injectedMemories = await params.memoryManager.getRelevantInjections({
                 currentMessage: params.userMessage,
                 recentMessages: [],
                 agentId: params.coordinatorAgentId,
                 workspaceId: params.workspaceId,
-                tokenBudget: 2000,
+                tokenBudget: injectionBudget,
             });
+            // Emit memory-injection event for frontend transparency
+            if (injectedMemories && injectedMemories.length > 0) {
+                params.emit({
+                    type: "memory-injection",
+                    runId: params.runId,
+                    memories: injectedMemories.map((m) => ({
+                        memoryId: m.memoryId,
+                        source: m.source,
+                        score: m.score,
+                        contentPreview: m.content.slice(0, 120),
+                    })),
+                    count: injectedMemories.length,
+                });
+            }
         }
-        catch {
-            // Non-fatal — memory injection failure
+        catch (err) {
+            // H6: Non-fatal but emit warning so the user knows memory retrieval failed
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.warn("[coordinator] Memory injection retrieval failed:", errMsg);
         }
     }
     // ─── ContextEngine: system prompt + dynamic token budget + history trimming ──
@@ -264,19 +301,29 @@ export async function runCoordinator(params) {
         model: agentCfg.model,
         maxTurns: agentCfg.maxTurns || 10,
         temperature: agentCfg.temperature || undefined,
-        maxTokens: agentCfg.maxTokens || undefined,
+        maxTokens: Math.min(agentCfg.maxTokens || contextWindow.maxOutputTokens, contextWindow.maxOutputTokens),
     };
     const contextEngine = new DefaultContextEngine({
-        maxContextWindow: 200_000,
+        maxContextWindow: contextWindow.maxContextWindow,
     });
+    // H2: Build web search additional context for inclusion in token budget
+    const webSearchAdditionalContext = webSearchContext
+        ? [
+            "Web search context is already available for this answer.",
+            "Use it as the primary evidence for time-sensitive claims.",
+            "If sources conflict, mention uncertainty briefly.",
+            `\n[WEB_SEARCH_CONTEXT]\n${webSearchContext}`,
+        ].join("\n")
+        : undefined;
     const allHistory = messageHistory ? messageHistory.getAll() : [];
     const assembled = await contextEngine.assemble({
         agent: agentSessionCfg,
         tools: [], // pi-ai handles tool definitions natively
         messageHistory: allHistory,
-        tokenBudget: 200_000,
+        tokenBudget: contextWindow.tokenBudget,
         coreMemorySnapshot,
         injectedMemories,
+        additionalSystemContext: webSearchAdditionalContext,
     });
     // Extract system prompt and trimmed history from assembled context
     let systemPrompt = "";
@@ -289,15 +336,8 @@ export async function runCoordinator(params) {
     else {
         trimmedInternalHistory = assembled.messages;
     }
-    // Append web search context (not handled by PromptBuilder)
-    if (webSearchContext) {
-        systemPrompt += "\n\n" + [
-            "Web search context is already available for this answer.",
-            "Use it as the primary evidence for time-sensitive claims.",
-            "If sources conflict, mention uncertainty briefly.",
-            `\n[WEB_SEARCH_CONTEXT]\n${webSearchContext}`,
-        ].join("\n");
-    }
+    // H2: Web search context is now included via additionalSystemContext
+    // in ContextEngine.assemble(), counted in the token budget.
     // Convert trimmed history to pi-ai format for stream-loop
     const priorHistory = [];
     for (const msg of trimmedInternalHistory) {
@@ -333,6 +373,7 @@ export async function runCoordinator(params) {
                     runId: params.runId,
                     messageId,
                     priorHistory,
+                    abortSignal: params.abortSignal,
                 });
                 fullText = result.fullText;
                 totalUsage = result.usage;
@@ -438,10 +479,11 @@ export async function runCoordinator(params) {
         }
     }
     // ─── Persist new messages to session history ──────────────────────────────
+    // H7: Use appendAsync() to await persistence, preventing data loss on crash.
     if (messageHistory && runNewMessages.length > 0) {
         try {
             for (const piMsg of runNewMessages) {
-                messageHistory.append(piAiToInternal(piMsg));
+                await messageHistory.appendAsync(piAiToInternal(piMsg));
             }
         }
         catch {
@@ -467,6 +509,23 @@ export async function runCoordinator(params) {
             setMemoryProvider: params.setMemoryProvider,
         });
     }
+    // ─── Post-run: memory consolidation + decay update ────────────────────────
+    // Consolidation merges near-duplicate memories; decay update applies the
+    // Ebbinghaus forgetting curve to stale entries. Both are best-effort.
+    if (params.memoryManager) {
+        try {
+            await params.memoryManager.consolidate(params.coordinatorAgentId, params.workspaceId);
+        }
+        catch (err) {
+            console.warn("[coordinator] consolidation failed:", err);
+        }
+        try {
+            await params.memoryManager.batchDecayUpdate();
+        }
+        catch (err) {
+            console.warn("[coordinator] decay update failed:", err);
+        }
+    }
     // ─── Post-run: session history compaction ─────────────────────────────────
     // If history grew too large, compact old messages into a summary.
     // Requires a real LLM provider (successModel) for summarization.
@@ -483,7 +542,7 @@ export async function runCoordinator(params) {
                 });
                 const compactionEngine = new DefaultContextEngine({
                     providerAdapter: adapter,
-                    maxContextWindow: 200_000,
+                    maxContextWindow: contextWindow.maxContextWindow,
                 });
                 const { summary, result } = await compactionEngine.compactMessages(historyMessages);
                 if (result.removedMessages > 0 && summary) {
@@ -494,7 +553,8 @@ export async function runCoordinator(params) {
                         role: "system",
                         content: [{ type: "text", text: `[Conversation Summary]\n${summary}` }],
                     };
-                    messageHistory.replaceAll([summaryMessage, ...recentMessages]);
+                    // H7: Await persistence for crash safety
+                    await messageHistory.replaceAllAsync([summaryMessage, ...recentMessages]);
                 }
             }
         }
@@ -514,8 +574,8 @@ async function postRunMemoryExtraction(params) {
             try {
                 embedding = await embeddingService.embedOne(conversationText.slice(0, 4000));
             }
-            catch {
-                // Non-fatal
+            catch (err) {
+                console.warn("[post-run] Embedding for episodic memory failed:", err instanceof Error ? err.message : err);
             }
         }
         await memoryManager.ingest({
@@ -527,8 +587,12 @@ async function postRunMemoryExtraction(params) {
             embedding,
         });
     }
-    catch {
-        // Non-fatal
+    catch (err) {
+        console.warn("[post-run] Episodic memory ingestion failed:", {
+            runId: params.runId,
+            agentId,
+            error: err instanceof Error ? err.message : String(err),
+        });
     }
     // 2. LLM-based semantic extraction (requires a successful model)
     if (!params.model)
@@ -562,15 +626,19 @@ async function postRunMemoryExtraction(params) {
                 try {
                     embedding = await embeddingService.embedOne(entry.content);
                 }
-                catch {
-                    // Non-fatal
+                catch (err) {
+                    console.warn("[post-run] Embedding for extracted memory failed:", err instanceof Error ? err.message : err);
                 }
             }
             await memoryManager.ingest({ ...entry, embedding });
         }
     }
-    catch {
-        // Non-fatal — semantic extraction failure
+    catch (err) {
+        console.warn("[post-run] Semantic extraction failed:", {
+            runId: params.runId,
+            agentId,
+            error: err instanceof Error ? err.message : String(err),
+        });
     }
     // 3. Entity extraction (uses LazyProvider — now backed by the real adapter)
     try {
@@ -579,8 +647,12 @@ async function postRunMemoryExtraction(params) {
             runId: params.runId,
         });
     }
-    catch {
-        // Non-fatal — entity extraction failure
+    catch (err) {
+        console.warn("[post-run] Entity extraction failed:", {
+            runId: params.runId,
+            agentId,
+            error: err instanceof Error ? err.message : String(err),
+        });
     }
     // 4. Reflection trigger check — if enough new memories accumulated, run reflection
     try {
@@ -589,22 +661,26 @@ async function postRunMemoryExtraction(params) {
             await memoryManager.executeReflection(agentId, workspaceId);
         }
     }
-    catch {
-        // Non-fatal — reflection failure
+    catch (err) {
+        console.warn("[post-run] Reflection failed:", {
+            runId: params.runId,
+            agentId,
+            error: err instanceof Error ? err.message : String(err),
+        });
     }
 }
 // ─── Token Estimation ────────────────────────────────────────────────────────
 function estimateTokensForCompaction(messages) {
-    let chars = 0;
+    let total = 0;
     for (const msg of messages) {
         for (const block of msg.content) {
             if ("text" in block) {
-                chars += block.text.length;
+                total += estimateTokens(block.text);
             }
             else if (block.type === "tool-call") {
-                chars += block.toolName.length + block.args.length;
+                total += estimateTokens(block.toolName) + estimateTokens(block.args);
             }
         }
     }
-    return Math.ceil(chars / 4);
+    return total;
 }

@@ -140,6 +140,21 @@ function formatWebSearchContext(result: unknown): string {
   return sections.join("\n");
 }
 
+function resolveCoordinatorContextWindow(
+  model: Model<Api>,
+  apiKey: string,
+): { maxContextWindow: number; tokenBudget: number; maxOutputTokens: number } {
+  const caps = new PiAiAdapter({ model, apiKey }).capabilities();
+  const maxContextWindow = caps.maxContextWindow > 0 ? caps.maxContextWindow : 200_000;
+  const maxOutputTokens = caps.maxOutputTokens > 0 ? caps.maxOutputTokens : 8_192;
+  const tokenBudget = Math.max(
+    8_192,
+    Math.min(maxContextWindow, maxContextWindow - Math.min(maxOutputTokens, Math.floor(maxContextWindow * 0.2))),
+  );
+
+  return { maxContextWindow, tokenBudget, maxOutputTokens };
+}
+
 export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   const agentCfg = await params.grpc.getAgentConfig(params.coordinatorAgentId, params.modelIdOverride);
   const llmCandidates = getLlmCandidates(agentCfg);
@@ -191,6 +206,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   } catch {
     planningModel = buildModelForAgent(agentCfg);
   }
+  const contextWindow = resolveCoordinatorContextWindow(planningModel, planningApiKey);
 
   const searchPlan = webSearchAllowed
     ? await decideWebSearch(planningModel, planningApiKey, params.userMessage, agentCfg.systemPrompt || "")
@@ -301,27 +317,17 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
         params.workspaceId,
       );
     } catch (err) {
-      // H6: Non-fatal but emit warning so the user knows memory is unavailable
       const errMsg = err instanceof Error ? err.message : String(err);
       console.warn("[coordinator] Core memory retrieval failed:", errMsg);
-      params.emit({
-        type: "tool-result",
-        runId: params.runId,
-        messageId,
-        toolName: "_memory_warning",
-        toolCallId: `mem-warn-core-${Date.now()}`,
-        result: { warning: "记忆系统暂时不可用：核心记忆加载失败", detail: errMsg },
-        status: "error",
-      });
     }
 
     try {
-      // M3: Derive injection token budget from the allocator instead of hardcoding
       const preAllocator = new DefaultTokenBudgetAllocator();
-      const preAllocation = preAllocator.allocate(200_000, {
+      const preAllocation = preAllocator.allocate(contextWindow.tokenBudget, {
         systemPromptTokens: 0,
         hasCoreMemory: !!coreMemorySnapshot,
         hasInjectedMemories: true,
+        maxOutputTokens: contextWindow.maxOutputTokens,
       });
       const injectionBudget = preAllocation.injectedMemories;
 
@@ -351,15 +357,6 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
       // H6: Non-fatal but emit warning so the user knows memory retrieval failed
       const errMsg = err instanceof Error ? err.message : String(err);
       console.warn("[coordinator] Memory injection retrieval failed:", errMsg);
-      params.emit({
-        type: "tool-result",
-        runId: params.runId,
-        messageId,
-        toolName: "_memory_warning",
-        toolCallId: `mem-warn-inject-${Date.now()}`,
-        result: { warning: "记忆系统暂时不可用：相关记忆检索失败", detail: errMsg },
-        status: "error",
-      });
     }
   }
 
@@ -371,11 +368,14 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     model: agentCfg.model,
     maxTurns: agentCfg.maxTurns || 10,
     temperature: agentCfg.temperature || undefined,
-    maxTokens: agentCfg.maxTokens || undefined,
+    maxTokens: Math.min(
+      agentCfg.maxTokens || contextWindow.maxOutputTokens,
+      contextWindow.maxOutputTokens,
+    ),
   };
 
   const contextEngine = new DefaultContextEngine({
-    maxContextWindow: 200_000,
+    maxContextWindow: contextWindow.maxContextWindow,
   });
 
   // H2: Build web search additional context for inclusion in token budget
@@ -393,7 +393,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
     agent: agentSessionCfg,
     tools: [], // pi-ai handles tool definitions natively
     messageHistory: allHistory,
-    tokenBudget: 200_000,
+    tokenBudget: contextWindow.tokenBudget,
     coreMemorySnapshot,
     injectedMemories,
     additionalSystemContext: webSearchAdditionalContext,
@@ -630,7 +630,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
 
         const compactionEngine = new DefaultContextEngine({
           providerAdapter: adapter,
-          maxContextWindow: 200_000,
+          maxContextWindow: contextWindow.maxContextWindow,
         });
 
         const { summary, result } = await compactionEngine.compactMessages(historyMessages);

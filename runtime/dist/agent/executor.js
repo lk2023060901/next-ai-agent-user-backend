@@ -39,9 +39,26 @@ export async function runExecutor(params) {
             try {
                 const model = buildModelForAgent(agentCfg, candidate);
                 const apiKey = resolveApiKey(agentCfg, candidate ?? undefined);
+                // Build system prompt with optional context slice from parent
+                let systemPrompt = agentCfg.systemPrompt || "";
+                if (params.contextSlice) {
+                    const sliceParts = [];
+                    if (params.contextSlice.summary) {
+                        sliceParts.push(`## Parent Context\n${params.contextSlice.summary}`);
+                    }
+                    if (params.contextSlice.relevantFacts?.length) {
+                        sliceParts.push(`## Relevant Facts\n${params.contextSlice.relevantFacts.map((f) => `- ${f}`).join("\n")}`);
+                    }
+                    if (params.contextSlice.constraints) {
+                        sliceParts.push(`## Constraints\n${params.contextSlice.constraints}`);
+                    }
+                    if (sliceParts.length > 0) {
+                        systemPrompt = `${systemPrompt}\n\n${sliceParts.join("\n\n")}`;
+                    }
+                }
                 const result = await runStreamLoop({
                     model,
-                    systemPrompt: agentCfg.systemPrompt || "",
+                    systemPrompt,
                     userMessage: params.instruction,
                     tools,
                     maxSteps: params.sandbox.maxTurns,

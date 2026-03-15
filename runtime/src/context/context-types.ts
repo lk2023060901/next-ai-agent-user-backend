@@ -129,6 +129,7 @@ export interface AllocationParams {
   systemPromptTokens: number;
   hasCoreMemory: boolean;
   hasInjectedMemories: boolean;
+  maxOutputTokens?: number;
 }
 
 export interface TokenAllocation {

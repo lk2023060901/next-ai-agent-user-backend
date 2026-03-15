@@ -1,6 +1,7 @@
 import { grpcClient } from "../grpc/client.js";
 import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
 import { runCoordinator } from "./coordinator.js";
+import { resolveTerminalRunStatus } from "./run-status.js";
 /**
  * Execute a channel run through the orchestrator with "channel" lane.
  * Falls back to direct execution if orchestrator is not provided.
@@ -52,8 +53,9 @@ export async function runChannelRequest(input, deps) {
         await grpcClient.updateRunStatus(runId, "completed");
     }
     catch (err) {
+        const nextStatus = resolveTerminalRunStatus(err);
         try {
-            await grpcClient.updateRunStatus(runId, "failed");
+            await grpcClient.updateRunStatus(runId, nextStatus);
         }
         catch {
             // best effort

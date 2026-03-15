@@ -1,15 +1,15 @@
 import type { LockRelease, SessionLock } from "./orchestrator-types.js";
 
 /**
- * Error thrown when a session lock acquisition times out.
+ * Error thrown when a session lock acquisition exceeds its wait limit.
  *
- * The error message contains "timeout" so the retry policy in
- * retry-policy.ts classifies it as retryable automatically.
+ * This is a lock-layer rejection, not a signal to continue with later
+ * business nodes. Callers should terminate the current run attempt.
  */
 export class SessionLockTimeoutError extends Error {
   constructor(sessionId: string, timeoutMs: number) {
     super(
-      `Session lock acquisition timed out for session ${sessionId} after ${timeoutMs}ms — ` +
+      `Session lock acquisition wait limit exceeded for session ${sessionId} after ${timeoutMs}ms — ` +
       `previous holder has not released. Run rejected to prevent concurrent access.`,
     );
     this.name = "SessionLockTimeoutError";

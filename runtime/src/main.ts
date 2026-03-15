@@ -15,6 +15,17 @@ import { DefaultOrchestrator } from "./orchestrator/orchestrator.impl.js";
 import { DefaultEventBus } from "./events/event-bus.js";
 import type { RunResult } from "./agent/agent-types.js";
 import {
+  buildContinueRequest,
+  decideApprovalResponse,
+  decideCancelFinalizeResponse,
+  decideCancelResponse,
+  decideChannelReplyRetry,
+  decideCreateRunSuccessResponse,
+  decideEnqueueFailureResponse,
+  extractRunIdFromLocalMessageId,
+  firstHeaderValue,
+} from "./http/runtime-route-helpers.js";
+import {
   syncKbDocument,
   deleteKbDocument,
   deleteKbEntireKnowledgeBase,
@@ -243,21 +254,6 @@ app.post<{ Body: ChannelRunBody }>(
         },
         "Channel run failed"
       );
-
-      // M1: Try to send an error message back to the channel so the user
-      // is informed instead of silently dropping the failure.
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      sendReplyToChannel({
-        channelId: body.channelId,
-        chatId: body.chatId,
-        text: `[Agent Error] Failed to process message: ${errorMsg}`,
-        threadId: body.threadId,
-      }).catch((sendErr) => {
-        app.log.error(
-          { err: sendErr, channelId: body.channelId },
-          "Failed to send error reply to channel"
-        );
-      });
     });
   });
 
@@ -508,27 +504,6 @@ app.get("/runtime/status", async (_request, reply) => {
 // Returns: { runId }
 // The run starts asynchronously; subscribe to /runtime/runs/:runId/stream for events.
 
-function firstHeaderValue(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
-}
-
-function buildContinueRequest(userRequest: string, assistantContent: string): string {
-  return [
-    "请继续你上一条中断的回答。",
-    "要求：不要重复已经输出的内容，直接从中断处续写并完成回答。",
-    `用户原始问题：${userRequest}`,
-    "你已经输出的部分（用于对齐上下文）：",
-    assistantContent.trim().length > 0 ? assistantContent : "(空)",
-  ].join("\n\n");
-}
-
-function extractRunIdFromLocalMessageId(messageId: string): string | null {
-  const normalized = messageId.trim();
-  const matched = /^run-([0-9a-fA-F-]{36})-\d+$/.exec(normalized);
-  return matched?.[1] ?? null;
-}
-
 app.post<{
   Params: { wsId: string };
   Body: CreateRuntimeRunBody;
@@ -652,40 +627,64 @@ app.post<{
       workspaceId: wsId,
     });
 
-    // H5: If enqueue fails, emit an error event so the SSE client is notified
-    // instead of silently logging and leaving the client hanging.
-    setImmediate(() => {
-      orchestrator
-        .enqueue({
-          runId: createResult.runId,
-          sessionKey: effectiveSessionId,
-          workspaceId: wsId,
-          coordinatorAgentId: effectiveCoordinatorAgentId,
-          userRequest: effectiveUserRequest,
-          lane: "interactive",
-          modelOverride: modelIdOverride,
-        })
-        .then((enqueueResult) => {
-          if (enqueueResult.status === "rejected") {
-            const errorMsg = "Run rejected by orchestrator (lane full or shutting down)";
-            app.log.error({ runId: createResult.runId }, errorMsg);
-            runStore.emitError(createResult.runId, errorMsg);
-          }
-        })
-        .catch((err) => {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          app.log.error({ err, runId: createResult.runId }, "Agent run enqueue failed");
-          runStore.emitError(createResult.runId, `Enqueue failed: ${errorMsg}`);
-        });
-    });
+    let enqueueResult;
+    try {
+      enqueueResult = await orchestrator.enqueue({
+        runId: createResult.runId,
+        sessionKey: effectiveSessionId,
+        workspaceId: wsId,
+        coordinatorAgentId: effectiveCoordinatorAgentId,
+        userRequest: effectiveUserRequest,
+        lane: "interactive",
+        modelOverride: modelIdOverride,
+      });
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      app.log.error({ err, runId: createResult.runId }, "Agent run enqueue failed");
+      runStore.emitError(createResult.runId, `Enqueue failed: ${errorMsg}`);
+      try {
+        await grpcClient.updateRunStatus(createResult.runId, "failed");
+      } catch (statusErr) {
+        app.log.error(
+          { err: statusErr, runId: createResult.runId },
+          "Failed to persist enqueue failure status",
+        );
+      }
+      const decision = decideEnqueueFailureResponse({
+        runId: createResult.runId,
+        reason: "error",
+        detail: errorMsg,
+      });
+      return reply.status(decision.status).send(decision.body);
+    }
 
-    return reply.send({
+    if (enqueueResult.status === "rejected") {
+      const errorMsg = "Run rejected by orchestrator (lane full or shutting down)";
+      app.log.error({ runId: createResult.runId }, errorMsg);
+      runStore.emitError(createResult.runId, errorMsg);
+      try {
+        await grpcClient.updateRunStatus(createResult.runId, "failed");
+      } catch (err) {
+        app.log.error({ err, runId: createResult.runId }, "Failed to persist rejected run status");
+      }
+      const decision = decideEnqueueFailureResponse({
+        runId: createResult.runId,
+        reason: "rejected",
+      });
+      return reply.status(decision.status).send(decision.body);
+    }
+
+    const decision = decideCreateRunSuccessResponse({
       runId: createResult.runId,
       deduplicated: createResult.deduplicated,
     });
+    return reply.status(decision.status).send(decision.body);
   } catch (err) {
     if (err instanceof IdempotencyConflictError) {
       return reply.status(409).send({ error: err.message, code: err.code });
+    }
+    if (typeof effectiveSessionId === "string" && effectiveSessionId.length > 0) {
+      app.log.error({ err, workspaceId: wsId, sessionId: effectiveSessionId }, "Runtime run creation failed");
     }
     throw err;
   }
@@ -764,10 +763,19 @@ app.get<{ Params: { runId: string }; Querystring: { cursor?: string } }>(
 
 app.post<{ Params: { runId: string } }>("/runtime/runs/:runId/cancel", async (request, reply) => {
   const { runId } = request.params;
-  await grpcClient.updateRunStatus(runId, "cancelled");
+  const decision = decideCancelResponse(runStore.getSnapshot(runId));
+  if (decision.kind === "error") {
+    return reply.status(decision.status).send({ error: decision.error });
+  }
+
   await orchestrator.cancel(runId);
-  runStore.cancel(runId, "Run cancelled by user");
-  return reply.send({ ok: true });
+  const cancelled = runStore.cancel(runId, "Run cancelled by user");
+  const finalizeDecision = decideCancelFinalizeResponse(cancelled);
+  if (finalizeDecision.status !== 200) {
+    return reply.status(finalizeDecision.status).send(finalizeDecision.body);
+  }
+  await grpcClient.updateRunStatus(runId, "cancelled");
+  return reply.status(finalizeDecision.status).send(finalizeDecision.body);
 });
 
 // ─── Tool approval ──────────────────────────────────────────────────────────
@@ -777,22 +785,16 @@ app.post<{ Params: { runId: string } }>("/runtime/runs/:runId/cancel", async (re
 app.post<{ Params: { approvalId: string } }>(
   "/runtime/approvals/:approvalId/approve",
   async (request, reply) => {
-    const found = approvalGate.approve(request.params.approvalId);
-    if (!found) {
-      return reply.status(404).send({ error: "approval not found or expired" });
-    }
-    return reply.send({ ok: true });
+    const decision = decideApprovalResponse(approvalGate.approve(request.params.approvalId));
+    return reply.status(decision.status).send(decision.body);
   },
 );
 
 app.post<{ Params: { approvalId: string } }>(
   "/runtime/approvals/:approvalId/reject",
   async (request, reply) => {
-    const found = approvalGate.reject(request.params.approvalId);
-    if (!found) {
-      return reply.status(404).send({ error: "approval not found or expired" });
-    }
-    return reply.send({ ok: true });
+    const decision = decideApprovalResponse(approvalGate.reject(request.params.approvalId));
+    return reply.status(decision.status).send(decision.body);
   },
 );
 
@@ -864,25 +866,29 @@ async function sendReplyToChannel(params: {
         // ignore body parse failures
       }
 
-      // Don't retry on 4xx (client errors) — only on 5xx / network issues
-      if (response.status >= 400 && response.status < 500) {
-        throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
-      }
-
-      if (attempt >= maxRetries) {
+      const decision = decideChannelReplyRetry({
+        attempt,
+        maxRetries,
+        responseStatus: response.status,
+      });
+      if (decision.kind === "throw") {
+        if (response.status >= 400 && response.status < 500) {
+          throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
+        }
         throw new Error(`Gateway send failed after ${maxRetries} attempts (${response.status}): ${detail || response.statusText}`);
       }
+      await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
+      continue;
     } catch (err) {
-      if (attempt >= maxRetries) throw err;
-
-      // Don't retry non-retryable errors
-      const isAbort = err instanceof Error && err.name === "AbortError";
-      if (isAbort) throw err;
+      const decision = decideChannelReplyRetry({
+        attempt,
+        maxRetries,
+        error: err,
+      });
+      if (decision.kind === "throw") throw err;
+      await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
+      continue;
     }
-
-    // Exponential backoff: 500ms, 1000ms, 2000ms
-    const delayMs = 500 * Math.pow(2, attempt - 1);
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 }
 

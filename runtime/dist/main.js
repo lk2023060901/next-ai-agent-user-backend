@@ -1,20 +1,50 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
 import { grpcClient } from "./grpc/client.js";
 import { formatSseData } from "./sse/emitter.js";
 import { IdempotencyConflictError, RunStore } from "./sse/run-store.js";
 import { startRun } from "./agent/runner.js";
 import { runChannelRequest } from "./agent/channel-runner.js";
+import { runScheduledTask } from "./agent/scheduled-runner.js";
 import { initializeRuntimePlugins, syncRuntimePlugin } from "./plugins/runtime-loader.js";
 import { getRuntimeServices, closeRuntimeServices } from "./bootstrap.js";
 import { approvalGate } from "./tools/approval-gate.js";
 import { DefaultOrchestrator } from "./orchestrator/orchestrator.impl.js";
 import { DefaultEventBus } from "./events/event-bus.js";
+import { buildContinueRequest, decideApprovalResponse, decideCancelFinalizeResponse, decideCancelResponse, decideChannelReplyRetry, decideCreateRunSuccessResponse, decideEnqueueFailureResponse, extractRunIdFromLocalMessageId, firstHeaderValue, } from "./http/runtime-route-helpers.js";
+import { syncKbDocument, deleteKbDocument, deleteKbEntireKnowledgeBase, } from "./kb/kb-sync.js";
+// Reject insecure default secrets in production
+if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
+    console.error("FATAL: RUNTIME_SECRET must be set in production. Cannot start with default secret.");
+    process.exit(1);
+}
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
+// ─── Runtime secret auth middleware ───────────────────────────────────────────
+// Used as a preHandler on all gateway→runtime internal endpoints.
+// Uses timingSafeEqual to prevent timing-based secret extraction.
+function runtimeSecretAuth(request, reply, done) {
+    const header = request.headers["x-runtime-secret"];
+    const provided = Array.isArray(header) ? (header[0] ?? "") : (header ?? "");
+    const expected = config.runtimeSecret;
+    if (provided.length !== expected.length ||
+        !timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
+        reply.status(401).send({ error: "invalid runtime secret" });
+        return;
+    }
+    done();
+}
 // ─── Health ───────────────────────────────────────────────────────────────────
-app.get("/health", async () => ({ status: "ok" }));
+// L3: Track shutdown state so the health endpoint can report 503
+let isShuttingDown = false;
+app.get("/health", async (_request, reply) => {
+    if (isShuttingDown) {
+        return reply.status(503).send({ status: "shutting_down" });
+    }
+    return reply.send({ status: "ok" });
+});
 const runStore = new RunStore({
     maxEventsPerRun: config.runEventBufferSize,
     runRetentionMs: config.runRetentionMs,
@@ -24,7 +54,7 @@ const runStore = new RunStore({
 // ─── Orchestrator (lane-based concurrency + session locking + retry) ──────
 const eventBus = new DefaultEventBus();
 const orchestrator = new DefaultOrchestrator({
-    runHandler: async (request) => {
+    runHandler: async (request, context) => {
         if (request.lane === "channel") {
             // Channel lane — run directly without RunStore/SSE.
             // Collect text via a lightweight emit, return fullText in RunResult.
@@ -41,6 +71,7 @@ const orchestrator = new DefaultOrchestrator({
                 userRequest: request.userRequest,
                 coordinatorAgentId: request.coordinatorAgentId,
                 modelIdOverride: request.modelOverride,
+                abortSignal: context.abortSignal,
             }, collectEmit);
             return {
                 runId: request.runId,
@@ -50,15 +81,54 @@ const orchestrator = new DefaultOrchestrator({
                 turnsUsed: 0,
             };
         }
-        // Interactive/other lanes — bridge through RunStore for SSE streaming
+        // Scheduled lane — run without RunStore/SSE, collect text for result.
+        if (request.lane === "scheduled") {
+            let fullText = "";
+            const collectEmit = (event) => {
+                if (event.type === "text-delta") {
+                    fullText += event.text;
+                }
+            };
+            await startRun({
+                runId: request.runId,
+                sessionId: request.sessionKey,
+                workspaceId: request.workspaceId,
+                userRequest: request.userRequest,
+                coordinatorAgentId: request.coordinatorAgentId,
+                modelIdOverride: request.modelOverride,
+                abortSignal: context.abortSignal,
+            }, collectEmit);
+            return {
+                runId: request.runId,
+                status: "completed",
+                fullText,
+                usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+                turnsUsed: 0,
+            };
+        }
+        // Interactive/other lanes — bridge through RunStore for SSE streaming.
+        // Intercept usage + text-delta events so RunResult carries real telemetry.
+        let interactiveFullText = "";
+        const interactiveUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
         await runStore.startRun(request.runId, async ({ runId, params, emit }) => {
-            await startRun({ runId, ...params }, emit);
+            const instrumentedEmit = (event) => {
+                if (event.type === "text-delta") {
+                    interactiveFullText += event.text;
+                }
+                else if (event.type === "usage") {
+                    interactiveUsage.inputTokens += event.inputTokens;
+                    interactiveUsage.outputTokens += event.outputTokens;
+                    interactiveUsage.totalTokens += event.totalTokens;
+                }
+                emit(event);
+            };
+            await startRun({ runId, ...params, abortSignal: context.abortSignal }, instrumentedEmit);
         });
         return {
             runId: request.runId,
             status: "completed",
-            fullText: "",
-            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            fullText: interactiveFullText,
+            usage: interactiveUsage,
             turnsUsed: 0,
         };
     },
@@ -69,14 +139,7 @@ const orchestrator = new DefaultOrchestrator({
 // Body: { sessionId, channelId, agentId, workspaceId, message, chatId, threadId? }
 // Returns immediately (202); actual agent run continues in background and pushes
 // the final reply back to Gateway /channels/:channelId/send.
-app.post("/channel-run", async (request, reply) => {
-    const runtimeSecretHeader = request.headers["x-runtime-secret"];
-    const providedSecret = Array.isArray(runtimeSecretHeader)
-        ? (runtimeSecretHeader[0] ?? "")
-        : (runtimeSecretHeader ?? "");
-    if (providedSecret !== config.runtimeSecret) {
-        return reply.status(401).send({ error: "invalid runtime secret" });
-    }
+app.post("/channel-run", { preHandler: runtimeSecretAuth }, async (request, reply) => {
     const body = request.body;
     if (!body?.sessionId ||
         !body?.channelId ||
@@ -100,15 +163,31 @@ app.post("/channel-run", async (request, reply) => {
     });
     return reply.status(202).send({ accepted: true });
 });
-// ─── Runtime plugin sync (hot load/reload/unload) ────────────────────────────
-app.post("/runtime/plugins/sync", async (request, reply) => {
-    const runtimeSecretHeader = request.headers["x-runtime-secret"];
-    const providedSecret = Array.isArray(runtimeSecretHeader)
-        ? (runtimeSecretHeader[0] ?? "")
-        : (runtimeSecretHeader ?? "");
-    if (providedSecret !== config.runtimeSecret) {
-        return reply.status(401).send({ error: "invalid runtime secret" });
+app.post("/runtime/scheduled-run", { preHandler: runtimeSecretAuth }, async (request, reply) => {
+    const body = request.body;
+    if (!body?.workspaceId || !body?.sessionId || !body?.agentId || !body?.instruction || !body?.executionId) {
+        return reply.status(400).send({
+            error: "workspaceId, sessionId, agentId, instruction, executionId required",
+        });
     }
+    try {
+        const result = await runScheduledTask({
+            workspaceId: body.workspaceId,
+            sessionId: body.sessionId,
+            agentId: body.agentId,
+            instruction: body.instruction,
+            executionId: body.executionId,
+        }, { orchestrator, eventBus });
+        return reply.send({ data: result });
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        app.log.error({ err, executionId: body.executionId }, "Scheduled run failed");
+        return reply.status(500).send({ error: message });
+    }
+});
+// ─── Runtime plugin sync (hot load/reload/unload) ────────────────────────────
+app.post("/runtime/plugins/sync", { preHandler: runtimeSecretAuth }, async (request, reply) => {
     const body = request.body;
     if (!body?.installedPluginId || !body?.workspaceId || !body?.pluginId || !body?.installPath) {
         return reply
@@ -139,30 +218,123 @@ app.post("/runtime/plugins/sync", async (request, reply) => {
     }
     return reply.send(result);
 });
+app.post("/runtime/ws/:wsId/kb/sync", { preHandler: runtimeSecretAuth }, async (request, reply) => {
+    const { wsId } = request.params;
+    const body = request.body;
+    if (!body?.action || !body?.knowledgeBaseId) {
+        return reply.status(400).send({ error: "action and knowledgeBaseId required" });
+    }
+    try {
+        switch (body.action) {
+            case "sync-document": {
+                if (!body.documentId || !body.chunks || body.chunks.length === 0) {
+                    return reply.status(400).send({ error: "documentId and non-empty chunks required for sync-document" });
+                }
+                const result = await syncKbDocument({
+                    workspaceId: wsId,
+                    knowledgeBaseId: body.knowledgeBaseId,
+                    documentId: body.documentId,
+                    documentName: body.documentName ?? "",
+                    chunks: body.chunks,
+                });
+                return reply.send({ data: result });
+            }
+            case "delete-document": {
+                if (!body.documentId) {
+                    return reply.status(400).send({ error: "documentId required for delete-document" });
+                }
+                const result = await deleteKbDocument({ documentId: body.documentId });
+                return reply.send({ data: result });
+            }
+            case "delete-kb": {
+                if (!body.documentIds || body.documentIds.length === 0) {
+                    return reply.status(400).send({ error: "documentIds required for delete-kb" });
+                }
+                const result = await deleteKbEntireKnowledgeBase({
+                    knowledgeBaseId: body.knowledgeBaseId,
+                    documentIds: body.documentIds,
+                });
+                return reply.send({ data: result });
+            }
+            default:
+                return reply.status(400).send({ error: `Unknown action: ${body.action}` });
+        }
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        app.log.error({ err, wsId, action: body.action }, "KB sync failed");
+        return reply.status(500).send({ error: message });
+    }
+});
+// ─── Memory query (L1: memory visualization) ────────────────────────────────
+// GET /runtime/ws/:wsId/agents/:agentId/memory?type=episodic&limit=50
+// Returns: { data: MemoryEntry[] }
+app.get("/runtime/ws/:wsId/agents/:agentId/memory", async (request, reply) => {
+    const { wsId, agentId } = request.params;
+    const services = getRuntimeServices();
+    if (!services.memoryManager) {
+        return reply.status(503).send({ error: "Memory system not available" });
+    }
+    const typeParam = (request.query.type ?? "").trim();
+    const validTypes = ["episodic", "semantic", "reflection", "meta_reflection", "knowledge"];
+    const types = typeParam
+        ? typeParam.split(",").filter((t) => validTypes.includes(t))
+        : undefined;
+    const limit = Math.min(Math.max(1, Number.parseInt(request.query.limit ?? "50", 10) || 50), 200);
+    const queryText = (request.query.query ?? "").trim();
+    if (queryText) {
+        const results = await services.memoryManager.search({
+            query: queryText,
+            agentId,
+            workspaceId: wsId,
+            types: types,
+            limit,
+        });
+        return reply.send({
+            data: results.map((r) => ({
+                ...r.entry,
+                embedding: undefined,
+                score: r.score,
+                breakdown: r.breakdown,
+                source: r.source,
+            })),
+        });
+    }
+    // Without query — list recent memories by type
+    const results = await services.memoryManager.search({
+        query: "",
+        agentId,
+        workspaceId: wsId,
+        types: types,
+        limit,
+        includeDecayed: true,
+    });
+    return reply.send({
+        data: results.map((r) => ({
+            ...r.entry,
+            embedding: undefined,
+            score: r.score,
+            breakdown: r.breakdown,
+            source: r.source,
+        })),
+    });
+});
+// ─── Runtime status (L3: agent status panel real data) ─────────────────────
+// GET /runtime/status
+// Returns: { lanes, activeRuns, queueDepth }
+app.get("/runtime/status", async (_request, reply) => {
+    const status = orchestrator.getStatus?.() ?? {
+        lanes: {},
+        activeRuns: 0,
+        queueDepth: 0,
+    };
+    return reply.send({ data: status });
+});
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs
 // Body: { sessionId, userRequest, coordinatorAgentId }
 // Returns: { runId }
 // The run starts asynchronously; subscribe to /runtime/runs/:runId/stream for events.
-function firstHeaderValue(value) {
-    if (Array.isArray(value))
-        return value[0] ?? "";
-    return value ?? "";
-}
-function buildContinueRequest(userRequest, assistantContent) {
-    return [
-        "请继续你上一条中断的回答。",
-        "要求：不要重复已经输出的内容，直接从中断处续写并完成回答。",
-        `用户原始问题：${userRequest}`,
-        "你已经输出的部分（用于对齐上下文）：",
-        assistantContent.trim().length > 0 ? assistantContent : "(空)",
-    ].join("\n\n");
-}
-function extractRunIdFromLocalMessageId(messageId) {
-    const normalized = messageId.trim();
-    const matched = /^run-([0-9a-fA-F-]{36})-\d+$/.exec(normalized);
-    return matched?.[1] ?? null;
-}
 app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
     const { wsId } = request.params;
     const { sessionId, userRequest, coordinatorAgentId } = request.body;
@@ -271,9 +443,9 @@ app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
             coordinatorAgentId: effectiveCoordinatorAgentId,
             workspaceId: wsId,
         });
-        setImmediate(() => {
-            orchestrator
-                .enqueue({
+        let enqueueResult;
+        try {
+            enqueueResult = await orchestrator.enqueue({
                 runId: createResult.runId,
                 sessionKey: effectiveSessionId,
                 workspaceId: wsId,
@@ -281,19 +453,53 @@ app.post("/runtime/ws/:wsId/runs", async (request, reply) => {
                 userRequest: effectiveUserRequest,
                 lane: "interactive",
                 modelOverride: modelIdOverride,
-            })
-                .catch((err) => {
-                app.log.error({ err, runId: createResult.runId }, "Agent run enqueue failed");
             });
-        });
-        return reply.send({
+        }
+        catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            app.log.error({ err, runId: createResult.runId }, "Agent run enqueue failed");
+            runStore.emitError(createResult.runId, `Enqueue failed: ${errorMsg}`);
+            try {
+                await grpcClient.updateRunStatus(createResult.runId, "failed");
+            }
+            catch (statusErr) {
+                app.log.error({ err: statusErr, runId: createResult.runId }, "Failed to persist enqueue failure status");
+            }
+            const decision = decideEnqueueFailureResponse({
+                runId: createResult.runId,
+                reason: "error",
+                detail: errorMsg,
+            });
+            return reply.status(decision.status).send(decision.body);
+        }
+        if (enqueueResult.status === "rejected") {
+            const errorMsg = "Run rejected by orchestrator (lane full or shutting down)";
+            app.log.error({ runId: createResult.runId }, errorMsg);
+            runStore.emitError(createResult.runId, errorMsg);
+            try {
+                await grpcClient.updateRunStatus(createResult.runId, "failed");
+            }
+            catch (err) {
+                app.log.error({ err, runId: createResult.runId }, "Failed to persist rejected run status");
+            }
+            const decision = decideEnqueueFailureResponse({
+                runId: createResult.runId,
+                reason: "rejected",
+            });
+            return reply.status(decision.status).send(decision.body);
+        }
+        const decision = decideCreateRunSuccessResponse({
             runId: createResult.runId,
             deduplicated: createResult.deduplicated,
         });
+        return reply.status(decision.status).send(decision.body);
     }
     catch (err) {
         if (err instanceof IdempotencyConflictError) {
             return reply.status(409).send({ error: err.message, code: err.code });
+        }
+        if (typeof effectiveSessionId === "string" && effectiveSessionId.length > 0) {
+            app.log.error({ err, workspaceId: wsId, sessionId: effectiveSessionId }, "Runtime run creation failed");
         }
         throw err;
     }
@@ -357,27 +563,29 @@ app.get("/runtime/runs/:runId/stream", async (request, reply) => {
 // POST /runtime/runs/:runId/cancel
 app.post("/runtime/runs/:runId/cancel", async (request, reply) => {
     const { runId } = request.params;
-    await grpcClient.updateRunStatus(runId, "cancelled");
+    const decision = decideCancelResponse(runStore.getSnapshot(runId));
+    if (decision.kind === "error") {
+        return reply.status(decision.status).send({ error: decision.error });
+    }
     await orchestrator.cancel(runId);
-    runStore.cancel(runId, "Run cancelled by user");
-    return reply.send({ ok: true });
+    const cancelled = runStore.cancel(runId, "Run cancelled by user");
+    const finalizeDecision = decideCancelFinalizeResponse(cancelled);
+    if (finalizeDecision.status !== 200) {
+        return reply.status(finalizeDecision.status).send(finalizeDecision.body);
+    }
+    await grpcClient.updateRunStatus(runId, "cancelled");
+    return reply.status(finalizeDecision.status).send(finalizeDecision.body);
 });
 // ─── Tool approval ──────────────────────────────────────────────────────────
 // POST /runtime/approvals/:approvalId/approve
 // POST /runtime/approvals/:approvalId/reject
 app.post("/runtime/approvals/:approvalId/approve", async (request, reply) => {
-    const found = approvalGate.approve(request.params.approvalId);
-    if (!found) {
-        return reply.status(404).send({ error: "approval not found or expired" });
-    }
-    return reply.send({ ok: true });
+    const decision = decideApprovalResponse(approvalGate.approve(request.params.approvalId));
+    return reply.status(decision.status).send(decision.body);
 });
 app.post("/runtime/approvals/:approvalId/reject", async (request, reply) => {
-    const found = approvalGate.reject(request.params.approvalId);
-    if (!found) {
-        return reply.status(404).send({ error: "approval not found or expired" });
-    }
-    return reply.send({ ok: true });
+    const decision = decideApprovalResponse(approvalGate.reject(request.params.approvalId));
+    return reply.status(decision.status).send(decision.body);
 });
 async function processChannelRun(body) {
     const { runId, replyText } = await runChannelRequest({
@@ -406,24 +614,54 @@ async function sendReplyToChannel(params) {
     if (params.threadId) {
         payload.threadId = params.threadId;
     }
-    const response = await fetch(`${config.gatewayAddr}/channels/${encodeURIComponent(params.channelId)}/send`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-Runtime-Secret": config.runtimeSecret,
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(config.channelSendTimeoutMs),
-    });
-    if (!response.ok) {
-        let detail = "";
+    const url = `${config.gatewayAddr}/channels/${encodeURIComponent(params.channelId)}/send`;
+    const maxRetries = config.channelReplyMaxRetries;
+    // M5: Retry with exponential backoff (base 500ms, max 3 attempts)
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            detail = (await response.text()).trim();
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Runtime-Secret": config.runtimeSecret,
+                },
+                body: JSON.stringify(payload),
+                signal: AbortSignal.timeout(config.channelSendTimeoutMs),
+            });
+            if (response.ok)
+                return;
+            let detail = "";
+            try {
+                detail = (await response.text()).trim();
+            }
+            catch {
+                // ignore body parse failures
+            }
+            const decision = decideChannelReplyRetry({
+                attempt,
+                maxRetries,
+                responseStatus: response.status,
+            });
+            if (decision.kind === "throw") {
+                if (response.status >= 400 && response.status < 500) {
+                    throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
+                }
+                throw new Error(`Gateway send failed after ${maxRetries} attempts (${response.status}): ${detail || response.statusText}`);
+            }
+            await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
+            continue;
         }
-        catch {
-            // ignore body parse failures
+        catch (err) {
+            const decision = decideChannelReplyRetry({
+                attempt,
+                maxRetries,
+                error: err,
+            });
+            if (decision.kind === "throw")
+                throw err;
+            await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
+            continue;
         }
-        throw new Error(`Gateway send failed (${response.status}): ${detail || response.statusText}`);
     }
 }
 // ─── Start ────────────────────────────────────────────────────────────────────
@@ -451,8 +689,36 @@ try {
     catch (err) {
         app.log.error({ err }, "Runtime plugin bootstrap failed");
     }
-    await app.listen({ port: config.port, host: "0.0.0.0" });
-    app.log.info(`Runtime listening on :${config.port}`);
+    const host = process.env.RUNTIME_HOST ?? "127.0.0.1";
+    await app.listen({ port: config.port, host });
+    app.log.info(`Runtime listening on ${host}:${config.port}`);
+    // M4: Graceful shutdown on SIGTERM/SIGINT — wait for in-flight runs, then flush DB
+    const SHUTDOWN_TIMEOUT_MS = 30_000;
+    const gracefulShutdown = async (signal) => {
+        app.log.info(`Received ${signal}, shutting down gracefully...`);
+        isShuttingDown = true;
+        try {
+            await Promise.race([
+                orchestrator.shutdown(),
+                new Promise((resolve) => {
+                    const timer = setTimeout(() => {
+                        app.log.warn(`Orchestrator shutdown timed out after ${SHUTDOWN_TIMEOUT_MS}ms, forcing exit`);
+                        resolve();
+                    }, SHUTDOWN_TIMEOUT_MS);
+                    timer.unref();
+                }),
+            ]);
+            closeRuntimeServices();
+            runStore.close();
+            await app.close();
+        }
+        catch (err) {
+            app.log.error({ err }, "Error during graceful shutdown");
+        }
+        process.exit(0);
+    };
+    process.on("SIGTERM", () => { gracefulShutdown("SIGTERM"); });
+    process.on("SIGINT", () => { gracefulShutdown("SIGINT"); });
 }
 catch (err) {
     await orchestrator.shutdown();

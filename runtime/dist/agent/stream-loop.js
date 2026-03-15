@@ -25,9 +25,13 @@ export async function runStreamLoop(params) {
     const totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     for (let step = 0; step < params.maxSteps; step++) {
         const pendingToolCalls = [];
+        const stepTimeout = AbortSignal.timeout(120_000);
+        const signal = params.abortSignal
+            ? AbortSignal.any([stepTimeout, params.abortSignal])
+            : stepTimeout;
         const eventStream = stream(params.model, context, {
             apiKey: params.apiKey,
-            signal: AbortSignal.timeout(120_000),
+            signal,
         });
         for await (const event of eventStream) {
             switch (event.type) {
@@ -38,7 +42,6 @@ export async function runStreamLoop(params) {
                         runId: params.runId,
                         messageId: params.messageId,
                         text: event.delta,
-                        delta: event.delta,
                     });
                     break;
                 case "thinking_delta":
@@ -47,7 +50,6 @@ export async function runStreamLoop(params) {
                         runId: params.runId,
                         messageId: params.messageId,
                         text: event.delta,
-                        delta: event.delta,
                     });
                     break;
                 case "thinking_end":
@@ -58,12 +60,13 @@ export async function runStreamLoop(params) {
                         text: event.content,
                     });
                     break;
-                case "toolcall_end":
+                case "toolcall_end": {
                     pendingToolCalls.push({
                         id: event.toolCall.id,
                         name: event.toolCall.name,
                         args: event.toolCall.arguments,
                     });
+                    const calledTool = params.tools[event.toolCall.name];
                     params.emit({
                         type: "tool-call",
                         runId: params.runId,
@@ -71,8 +74,11 @@ export async function runStreamLoop(params) {
                         toolCallId: event.toolCall.id,
                         toolName: event.toolCall.name,
                         args: event.toolCall.arguments,
+                        category: calledTool?.category ?? "system",
+                        riskLevel: calledTool?.riskLevel ?? "low",
                     });
                     break;
+                }
                 case "done": {
                     const usage = event.message.usage;
                     totalUsage.inputTokens += usage.input;
@@ -113,6 +119,7 @@ export async function runStreamLoop(params) {
                         toolName: tc.name,
                         args: tc.args,
                         emit: params.emit,
+                        abortSignal: params.abortSignal,
                     });
                     if (decision !== "approved") {
                         const rejectMsg = decision === "rejected"

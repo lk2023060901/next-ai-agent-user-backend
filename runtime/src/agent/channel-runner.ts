@@ -6,6 +6,7 @@ import type { Orchestrator } from "../orchestrator/orchestrator-types.js";
 import type { EventBus } from "../events/event-types.js";
 import { runCoordinator } from "./coordinator.js";
 import { startRun } from "./runner.js";
+import { resolveTerminalRunStatus } from "./run-status.js";
 
 export interface ChannelRunInput {
   sessionId: string;
@@ -80,8 +81,9 @@ export async function runChannelRequest(
 
     await grpcClient.updateRunStatus(runId, "completed");
   } catch (err) {
+    const nextStatus = resolveTerminalRunStatus(err);
     try {
-      await grpcClient.updateRunStatus(runId, "failed");
+      await grpcClient.updateRunStatus(runId, nextStatus);
     } catch {
       // best effort
     }

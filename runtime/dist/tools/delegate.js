@@ -3,13 +3,20 @@ import { narrowForSubagent } from "../policy/tool-policy.js";
 const DelegateToolParams = Type.Object({
     agentId: Type.String({ description: "Target agent ID to delegate to" }),
     instruction: Type.String({ description: "Detailed task instruction for the sub-agent" }),
+    contextSlice: Type.Optional(Type.Object({
+        summary: Type.Optional(Type.String({ description: "A concise summary of relevant prior context the sub-agent should know" })),
+        relevantFacts: Type.Optional(Type.Array(Type.String(), { description: "Key facts or data points relevant to the sub-task" })),
+        constraints: Type.Optional(Type.String({ description: "Specific constraints or requirements for this sub-task" })),
+    }, { description: "Optional context slice to provide the sub-agent with focused, relevant context from the current conversation" })),
 });
 export function makeDelegateTool(params) {
     return {
         name: "delegate_to_agent",
         description: "Delegate a subtask to a specialized sub-agent and return its result",
         parameters: DelegateToolParams,
-        execute: async ({ agentId, instruction }) => {
+        category: "agent",
+        riskLevel: "medium",
+        execute: async ({ agentId, instruction, contextSlice }) => {
             if (params.depth >= params.sandbox.maxSpawnDepth) {
                 return {
                     error: `Max spawn depth (${params.sandbox.maxSpawnDepth}) reached — cannot delegate further`,
@@ -40,6 +47,7 @@ export function makeDelegateTool(params) {
                 sandbox: narrowedSandbox,
                 emit: params.emit,
                 grpc: params.grpc,
+                contextSlice: contextSlice ?? undefined,
             });
             return result;
         },

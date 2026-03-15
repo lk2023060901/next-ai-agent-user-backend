@@ -11,14 +11,31 @@ export function makeCodeWriteTool(fsPolicy) {
         name: "code_write",
         description: "Write content to a file at the given path",
         parameters: CodeWriteParams,
+        category: "file",
+        riskLevel: "medium",
         execute: async ({ path: filePath, content }) => {
             if (!isFsPathAllowed(filePath, fsPolicy)) {
                 return { error: `Access denied: ${filePath} is outside allowed paths` };
             }
             try {
-                fs.mkdirSync(path.dirname(filePath), { recursive: true });
-                fs.writeFileSync(filePath, content, "utf-8");
-                return { success: true, path: filePath };
+                // M10: Resolve symlinks in the parent directory to prevent sandbox escape.
+                // The target file may not exist yet, so resolve the nearest existing ancestor.
+                const dir = path.dirname(filePath);
+                let resolvedDir;
+                try {
+                    resolvedDir = fs.realpathSync(dir);
+                }
+                catch {
+                    // Directory doesn't exist yet — resolve its parent
+                    fs.mkdirSync(dir, { recursive: true });
+                    resolvedDir = fs.realpathSync(dir);
+                }
+                const resolvedPath = path.join(resolvedDir, path.basename(filePath));
+                if (!isFsPathAllowed(resolvedPath, fsPolicy)) {
+                    return { error: `Access denied: resolved path ${resolvedPath} is outside allowed paths` };
+                }
+                fs.writeFileSync(resolvedPath, content, "utf-8");
+                return { success: true, path: resolvedPath };
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);

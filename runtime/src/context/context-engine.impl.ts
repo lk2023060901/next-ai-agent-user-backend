@@ -105,6 +105,7 @@ export class DefaultContextEngine implements ContextEngine {
       systemPromptTokens,
       hasCoreMemory: includeCoreMemory && !!coreMemorySnapshot,
       hasInjectedMemories: includeInjectedMemories && (preInjected ?? []).length > 0,
+      maxOutputTokens: agent.maxTokens,
     });
 
     // 3. Trim message history to fit budget

@@ -14,7 +14,8 @@ export function isFsPathAllowed(filePath, policy) {
     }
     return policy.allowedPaths.some((allowed) => {
         const normalizedAllowed = path.normalize(allowed);
-        return normalized.startsWith(normalizedAllowed);
+        return (normalized === normalizedAllowed ||
+            normalized.startsWith(normalizedAllowed + path.sep));
     });
 }
 export function parseFsPolicyFromAgent(fsAllowedPathsJson) {

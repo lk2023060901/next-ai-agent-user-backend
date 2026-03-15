@@ -69,6 +69,8 @@ export function buildRuntimePluginToolset(params) {
             name: toolName,
             description: plugin.tool.description,
             parameters,
+            category: "plugin",
+            riskLevel: "medium",
             execute: async (args, toolContext) => {
                 const startedAtMs = Date.now();
                 try {

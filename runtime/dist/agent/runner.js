@@ -2,6 +2,7 @@ import { grpcClient } from "../grpc/client.js";
 import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
 import { runCoordinator } from "./coordinator.js";
 import { getRuntimeServices } from "../bootstrap.js";
+import { resolveTerminalRunStatus } from "./run-status.js";
 /**
  * Entry point — called after runId has been created via gRPC.
  * Runs the coordinator loop in the background; runtime run-store is responsible
@@ -28,20 +29,21 @@ export async function startRun(req, emit) {
             setMemoryProvider: services.setMemoryProvider,
             sessionId: req.sessionId,
             sessionStore: services.sessionStore ?? undefined,
+            abortSignal: req.abortSignal,
         });
         await grpcClient.updateRunStatus(req.runId, "completed");
         emit({ type: "done", runId: req.runId });
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        const nextStatus = resolveTerminalRunStatus(err, { abortSignal: req.abortSignal });
         try {
-            await grpcClient.updateRunStatus(req.runId, "failed");
+            await grpcClient.updateRunStatus(req.runId, nextStatus);
         }
         catch {
             // best effort
         }
         emit({ type: "error", runId: req.runId, message: msg });
         emit({ type: "done", runId: req.runId });
-        throw err;
     }
 }

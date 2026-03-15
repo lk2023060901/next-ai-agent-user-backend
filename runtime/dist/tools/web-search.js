@@ -79,6 +79,8 @@ export function makeWebSearchTool() {
         name: "web_search",
         description: "Search the public web for up-to-date information. Prefer concise, source-linked results.",
         parameters: WebSearchParams,
+        category: "api",
+        riskLevel: "low",
         execute: async (args) => {
             const safeQuery = (args.query ?? "").trim();
             const limit = clampResults(args.count ?? args.maxResults);

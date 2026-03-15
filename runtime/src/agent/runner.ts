@@ -3,6 +3,7 @@ import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
 import type { SseEmitter } from "../sse/emitter.js";
 import { runCoordinator } from "./coordinator.js";
 import { getRuntimeServices } from "../bootstrap.js";
+import { resolveTerminalRunStatus } from "./run-status.js";
 
 export interface RunRequest {
   runId: string;
@@ -50,8 +51,9 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
     emit({ type: "done", runId: req.runId });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const nextStatus = resolveTerminalRunStatus(err, { abortSignal: req.abortSignal });
     try {
-      await grpcClient.updateRunStatus(req.runId, "failed");
+      await grpcClient.updateRunStatus(req.runId, nextStatus);
     } catch {
       // best effort
     }

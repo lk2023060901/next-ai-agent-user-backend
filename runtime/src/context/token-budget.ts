@@ -20,8 +20,13 @@ import type {
  */
 export class DefaultTokenBudgetAllocator implements TokenBudgetAllocator {
   allocate(totalBudget: number, params: AllocationParams): TokenAllocation {
-    const outputReserved = Math.max(4096, Math.floor(totalBudget * 0.15));
-    const available = totalBudget - outputReserved;
+    const safeTotalBudget = Math.max(0, Math.floor(totalBudget));
+    const requestedOutputReserve = Math.max(4096, Math.floor(safeTotalBudget * 0.15));
+    const outputReserved = Math.min(
+      safeTotalBudget,
+      params.maxOutputTokens ? Math.min(requestedOutputReserve, params.maxOutputTokens) : requestedOutputReserve,
+    );
+    const available = Math.max(0, safeTotalBudget - outputReserved);
 
     const systemPrompt = Math.min(params.systemPromptTokens, available);
     const afterSystem = available - systemPrompt;

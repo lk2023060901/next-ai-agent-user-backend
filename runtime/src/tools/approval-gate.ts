@@ -14,14 +14,17 @@ import { config } from "../config.js";
 // Pending approvals are keyed by approvalId and automatically expire.
 
 export type ApprovalDecision = "approved" | "rejected" | "expired";
+export type ApprovalResolveStatus = "resolved" | "expired" | "missing";
 
 interface PendingApproval {
   resolve: (decision: ApprovalDecision) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
-class ApprovalGateImpl {
+export class ApprovalGateImpl {
   private readonly pending = new Map<string, PendingApproval>();
+  private readonly expired = new Map<string, number>();
+  private readonly expiredTtlMs = 5 * 60_000;
 
   /**
    * Request approval for a tool execution.
@@ -57,6 +60,7 @@ class ApprovalGateImpl {
     return new Promise<ApprovalDecision>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(approvalId);
+        this.markExpired(approvalId);
         resolve("expired");
       }, timeoutMs);
 
@@ -73,6 +77,7 @@ class ApprovalGateImpl {
           if (this.pending.has(approvalId)) {
             clearTimeout(timer);
             this.pending.delete(approvalId);
+            this.markExpired(approvalId);
             resolve("expired");
           }
         };
@@ -88,24 +93,42 @@ class ApprovalGateImpl {
   /**
    * Approve a pending request. Called by the API handler.
    */
-  approve(approvalId: string): boolean {
+  approve(approvalId: string): ApprovalResolveStatus {
     return this.resolve(approvalId, "approved");
   }
 
   /**
    * Reject a pending request. Called by the API handler.
    */
-  reject(approvalId: string): boolean {
+  reject(approvalId: string): ApprovalResolveStatus {
     return this.resolve(approvalId, "rejected");
   }
 
-  private resolve(approvalId: string, decision: ApprovalDecision): boolean {
+  private resolve(approvalId: string, decision: ApprovalDecision): ApprovalResolveStatus {
     const entry = this.pending.get(approvalId);
-    if (!entry) return false;
+    if (!entry) {
+      this.cleanupExpired();
+      return this.expired.has(approvalId) ? "expired" : "missing";
+    }
     clearTimeout(entry.timer);
     this.pending.delete(approvalId);
     entry.resolve(decision);
-    return true;
+    this.expired.delete(approvalId);
+    return "resolved";
+  }
+
+  private markExpired(approvalId: string): void {
+    this.cleanupExpired();
+    this.expired.set(approvalId, Date.now());
+  }
+
+  private cleanupExpired(): void {
+    const cutoff = Date.now() - this.expiredTtlMs;
+    for (const [approvalId, expiredAt] of this.expired) {
+      if (expiredAt < cutoff) {
+        this.expired.delete(approvalId);
+      }
+    }
   }
 
   /** Number of pending approvals (for diagnostics). */
