@@ -44,6 +44,7 @@ export async function startRun(req: RunRequest, emit: SseEmitter): Promise<void>
       setMemoryProvider: services.setMemoryProvider,
       sessionId: req.sessionId,
       sessionStore: services.sessionStore ?? undefined,
+      observabilityStore: services.db?.observabilityStore,
       abortSignal: req.abortSignal,
     });
 

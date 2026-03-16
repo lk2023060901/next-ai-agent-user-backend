@@ -940,7 +940,7 @@ try {
           timer.unref();
         }),
       ]);
-      closeRuntimeServices();
+      await closeRuntimeServices();
       runStore.close();
       await app.close();
     } catch (err) {
@@ -952,7 +952,7 @@ try {
   process.on("SIGINT", () => { gracefulShutdown("SIGINT"); });
 } catch (err) {
   await orchestrator.shutdown();
-  closeRuntimeServices();
+  await closeRuntimeServices();
   runStore.close();
   app.log.error(err);
   process.exit(1);

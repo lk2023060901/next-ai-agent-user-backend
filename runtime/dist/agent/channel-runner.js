@@ -1,5 +1,6 @@
 import { grpcClient } from "../grpc/client.js";
 import { buildSandboxFromAgentConfig } from "../policy/sandbox.js";
+import { getRuntimeServices } from "../bootstrap.js";
 import { runCoordinator } from "./coordinator.js";
 import { resolveTerminalRunStatus } from "./run-status.js";
 /**
@@ -41,6 +42,7 @@ export async function runChannelRequest(input, deps) {
     try {
         const agentCfg = await grpcClient.getAgentConfig(input.agentId);
         const sandbox = buildSandboxFromAgentConfig(agentCfg);
+        const services = getRuntimeServices();
         await runCoordinator({
             runId,
             workspaceId: input.workspaceId,
@@ -49,6 +51,12 @@ export async function runChannelRequest(input, deps) {
             sandbox,
             emit,
             grpc: grpcClient,
+            memoryManager: services.memoryManager ?? undefined,
+            embeddingService: services.embedding ?? undefined,
+            setMemoryProvider: services.setMemoryProvider,
+            sessionId: input.sessionId,
+            sessionStore: services.sessionStore ?? undefined,
+            observabilityStore: services.db?.observabilityStore,
         });
         await grpcClient.updateRunStatus(runId, "completed");
     }

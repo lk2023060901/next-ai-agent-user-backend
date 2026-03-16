@@ -708,7 +708,7 @@ try {
                     timer.unref();
                 }),
             ]);
-            closeRuntimeServices();
+            await closeRuntimeServices();
             runStore.close();
             await app.close();
         }
@@ -722,7 +722,7 @@ try {
 }
 catch (err) {
     await orchestrator.shutdown();
-    closeRuntimeServices();
+    await closeRuntimeServices();
     runStore.close();
     app.log.error(err);
     process.exit(1);

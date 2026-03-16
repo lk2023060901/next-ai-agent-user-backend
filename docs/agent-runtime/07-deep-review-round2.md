@@ -62,7 +62,7 @@
 - **位置**: `gateway/cmd/gateway/main.go:224`
 - **问题**: approval/status 端点需要 JWT，但 scheduled/channel 等后台工作流只有 X-Runtime-Secret
 - **修复**: 提取 /runtime/approvals 和 /runtime/status 到 public 组，用 X-Runtime-Secret 鉴权
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16) — `/runtime/*` 当前走 `AuthOrRuntimeSecret`
 
 ### H4. Orchestrator rejected runs 永不回收
 - **位置**: `runtime/src/orchestrator/orchestrator.impl.ts:98-102`
@@ -78,14 +78,14 @@
 ### H6. Memory 检索失败静默跳过
 - **位置**: `runtime/src/agent/coordinator.ts:291-327`
 - **问题**: getCoreMemory()/getRelevantInjections() 异常被 catch 但不报告给用户
-- **修复**: catch 后 emit warning 事件到 SSE，前端显示 "记忆系统暂时不可用"
-- **状态**: [ ] 未修复
+- **修复**: catch 后记录 runtime 日志；按当前前端契约，不新增公开 SSE warning 事件
+- **状态**: [x] 已按日志方案完成 (2026-03-15)
 
 ### H7. Fire-and-forget 消息持久化丢数据
 - **位置**: `runtime/src/agent/persistent-message-history.ts:36-40`
 - **问题**: append() 返回前持久化是异步 fire-and-forget，crash 丢数据
 - **修复**: 关键路径改为 await 持久化；或用 WAL + checkpoint 保证 crash recovery
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16) — AgentLoop/Coordinator 关键路径 await 持久化，shutdown 前 flush pending writes
 
 ### H8. 前端 MSW mock 不匹配真实端点
 - **位置**: `frontend: mocks/handlers/sessions.ts`
@@ -127,7 +127,7 @@
 ### M4. closeRuntimeServices() 不等待 pending writes
 - **位置**: `runtime/src/bootstrap.ts:51-56`
 - **修复**: 增加 graceful shutdown，flush 所有 pending 写入后再关闭 DB
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16)
 
 ### M5. Channel reply 无重试
 - **位置**: `runtime/src/main.ts:683-719`
@@ -137,7 +137,7 @@
 ### M6. Post-run extraction/reflection 失败全部静默
 - **位置**: `runtime/src/agent/coordinator.ts:612-703`
 - **修复**: 失败记录到 observability store + 日志
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16) — 失败已记录到 observability `tool_metrics`，使用 `post_run:*` 前缀
 
 ### M7. 前端 tool-result 先于 tool-call 到达产生重复卡片
 - **位置**: `frontend: use-streaming-chat.ts:465-549`
@@ -147,7 +147,7 @@
 ### M8. 前端 KB 搜索结果 JSON 解析脆弱
 - **位置**: `frontend: tool-call-card.tsx:47-58`
 - **修复**: 增加 schema 校验，不匹配时 graceful fallback + 日志
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16)
 
 ### M9. code_read 工具无文件大小限制
 - **位置**: `runtime/src/tools/code-read.ts`
@@ -162,32 +162,24 @@
 ### M11. SSE event buffer 溢出静默丢弃
 - **位置**: `runtime/src/sse/run-store.ts:260-262`
 - **修复**: 溢出时 emit warning 事件，客户端知道有 gap
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16) — 通过 `RunSnapshot` gap 元数据 + runtime 日志记录，不新增 fake SSE 事件
 
 ### M12. 前端 reconnection 无 exponential backoff
 - **位置**: `frontend: use-streaming-chat.ts:808`
 - **修复**: 500ms → 1s → 2s → 4s with jitter
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16) — 已实现并补 hook 回归
 
 ### M13. tool-result status 类型不匹配
 - **位置**: `frontend: types/api.ts` (required) vs runtime emitter (optional)
 - **修复**: 前端类型标记为 optional
-- **状态**: [ ] 未修复
+- **状态**: [x] 已完成 (2026-03-16)
 
 ---
 
-## 推荐实施顺序
+## 复核结论
 
-```
-Phase 6A — Critical 修复 (2-3 天)
-  R1 (session lock) → R2 (delegate import) → R3 (KB sync 端点) → R4 (gRPC timeout)
+本轮 Round 2 清单中的条目已全部完成或按当前产品约束收敛：
 
-Phase 6B — 前端 Critical + High (1-2 天)
-  R5 (stream abort on switch) → H8 (MSW mocks) → H9 (approval 410) → H10 (message ID)
-
-Phase 6C — Runtime High (1-2 天)
-  H1 (token enforce) → H2 (web search budget) → H3 (gateway auth scope) → H4 (run GC) → H5 (enqueue error) → H6 (memory warning) → H7 (persist await)
-
-Phase 6D — Medium 批量修复 (2-3 天)
-  M1-M13 按模块分批
-```
+- 前端不再接受额外公开 `memory-warning` 事件，因此 `H6` 采用 runtime 日志方案闭环
+- `M11` 采用 `RunSnapshot` gap 元数据 + runtime 日志，而不是伪造新的 SSE 事件
+- 剩余工作不再是本清单中的“未修复项”，而是新需求或后续增强

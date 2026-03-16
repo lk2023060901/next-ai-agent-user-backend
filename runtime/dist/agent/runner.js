@@ -29,6 +29,7 @@ export async function startRun(req, emit) {
             setMemoryProvider: services.setMemoryProvider,
             sessionId: req.sessionId,
             sessionStore: services.sessionStore ?? undefined,
+            observabilityStore: services.db?.observabilityStore,
             abortSignal: req.abortSignal,
         });
         await grpcClient.updateRunStatus(req.runId, "completed");

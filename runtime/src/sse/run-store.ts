@@ -40,6 +40,9 @@ export interface RunSnapshot {
   state: RunState;
   terminal: boolean;
   lastSeq: number;
+  oldestBufferedSeq?: number;
+  gapFromSeq?: number;
+  gapToSeq?: number;
 }
 
 export interface SubscribeResult {
@@ -120,6 +123,7 @@ export class RunStore {
       state: run.state,
       terminal: run.terminal,
       lastSeq: run.nextSeq - 1,
+      ...(run.events.length > 0 ? { oldestBufferedSeq: run.events[0]!.seq } : {}),
     };
   }
 
@@ -218,25 +222,24 @@ export class RunStore {
 
     const afterSeq = parseNonNegativeInt(cursorSeq);
     let replayed = 0;
+    let gapFromSeq: number | undefined;
+    let gapToSeq: number | undefined;
 
-    // M11: Detect event gap — if client's cursor is behind the oldest buffered event,
-    // notify them that events were lost so the frontend can surface a warning.
+    // M11: Detect event gap — if client's cursor is behind the oldest buffered
+    // event, record the lost range in the snapshot. Do not emit a fake SSE
+    // event through another domain's channel.
     if (afterSeq > 0 && run.events.length > 0) {
       const oldestSeq = run.events[0]!.seq;
       if (afterSeq < oldestSeq) {
-        const gapEvent: SseEvent = {
-          type: "tool-result",
+        gapFromSeq = afterSeq + 1;
+        gapToSeq = oldestSeq - 1;
+        console.warn("[run-store] event buffer gap detected", {
           runId,
-          toolName: "_buffer_gap_warning",
-          toolCallId: `gap-${Date.now()}`,
-          result: {
-            warning: `事件缓冲区溢出：序列 ${afterSeq + 1} 到 ${oldestSeq - 1} 的事件已丢失`,
-            missedFrom: afterSeq + 1,
-            missedTo: oldestSeq - 1,
-          },
-          status: "error",
-        };
-        emit(gapEvent);
+          requestedAfterSeq: afterSeq,
+          oldestBufferedSeq: oldestSeq,
+          gapFromSeq,
+          gapToSeq,
+        });
       }
     }
 
@@ -255,6 +258,9 @@ export class RunStore {
         state: run.state,
         terminal: run.terminal,
         lastSeq: run.nextSeq - 1,
+        ...(run.events.length > 0 ? { oldestBufferedSeq: run.events[0]!.seq } : {}),
+        ...(gapFromSeq !== undefined ? { gapFromSeq } : {}),
+        ...(gapToSeq !== undefined ? { gapToSeq } : {}),
       },
       unsubscribe: () => {
         const current = this.runs.get(runId);

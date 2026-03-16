@@ -68,6 +68,7 @@ export async function runChannelRequest(
   try {
     const agentCfg = await grpcClient.getAgentConfig(input.agentId);
     const sandbox = buildSandboxFromAgentConfig(agentCfg);
+    const services = getRuntimeServices();
 
     await runCoordinator({
       runId,
@@ -77,6 +78,12 @@ export async function runChannelRequest(
       sandbox,
       emit,
       grpc: grpcClient,
+      memoryManager: services.memoryManager ?? undefined,
+      embeddingService: services.embedding ?? undefined,
+      setMemoryProvider: services.setMemoryProvider,
+      sessionId: input.sessionId,
+      sessionStore: services.sessionStore ?? undefined,
+      observabilityStore: services.db?.observabilityStore,
     });
 
     await grpcClient.updateRunStatus(runId, "completed");

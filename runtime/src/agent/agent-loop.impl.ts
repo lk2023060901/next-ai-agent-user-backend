@@ -76,7 +76,7 @@ export class DefaultAgentLoop implements AgentLoop {
 
     // Add user request to history if this is a fresh run
     if (shouldAppendUserRequest(messageHistory, run.userRequest)) {
-      messageHistory.append({
+      await appendToHistory(messageHistory, {
         role: "user",
         content: [{ type: "text", text: run.userRequest }],
       });
@@ -128,7 +128,7 @@ export class DefaultAgentLoop implements AgentLoop {
           });
         }
         if (assistantContent.length > 0) {
-          messageHistory.append({ role: "assistant", content: assistantContent });
+          await appendToHistory(messageHistory, { role: "assistant", content: assistantContent });
         }
 
         // 6. No tool calls → natural stop
@@ -155,7 +155,7 @@ export class DefaultAgentLoop implements AgentLoop {
               ? result.data
               : JSON.stringify(result.data);
 
-          messageHistory.append({
+          await appendToHistory(messageHistory, {
             role: "tool",
             content: [{ type: "text", text: resultText }],
             toolCallId: tc.toolCallId,
@@ -342,6 +342,14 @@ interface ToolCallInfo {
   toolCallId: string;
   toolName: string;
   args: string; // Raw JSON string from the LLM
+}
+
+async function appendToHistory(messageHistory: MessageHistory, message: Message): Promise<void> {
+  if (typeof messageHistory.appendAsync === "function") {
+    await messageHistory.appendAsync(message);
+    return;
+  }
+  messageHistory.append(message);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

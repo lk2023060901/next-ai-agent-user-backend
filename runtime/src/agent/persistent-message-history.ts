@@ -1,6 +1,22 @@
 import type { Message } from "../providers/adapter.js";
 import type { MessageHistory, SessionStore } from "./agent-types.js";
 
+const pendingWrites = new Set<Promise<void>>();
+
+function trackPendingWrite(write: Promise<void>): Promise<void> {
+  pendingWrites.add(write);
+  void write.finally(() => {
+    pendingWrites.delete(write);
+  });
+  return write;
+}
+
+export async function flushAllPersistentMessageHistoryWrites(): Promise<void> {
+  while (pendingWrites.size > 0) {
+    await Promise.allSettled([...pendingWrites]);
+  }
+}
+
 // ─── Persistent Message History ─────────────────────────────────────────────
 //
 // Write-through cache: keeps an in-memory array for fast reads, persists
@@ -36,7 +52,7 @@ export class PersistentMessageHistory implements MessageHistory {
    *  Kept for backward compat with MessageHistory interface. */
   append(message: Message): void {
     this.messages.push(message);
-    void this.store.appendMessage(this.sessionId, message);
+    trackPendingWrite(this.store.appendMessage(this.sessionId, message));
   }
 
   /** H7: Async append — awaits persistence to guarantee crash safety. */
@@ -58,7 +74,12 @@ export class PersistentMessageHistory implements MessageHistory {
 
   clear(): void {
     this.messages = [];
-    void this.store.clearMessages(this.sessionId);
+    trackPendingWrite(this.store.clearMessages(this.sessionId));
+  }
+
+  async clearAsync(): Promise<void> {
+    this.messages = [];
+    await this.store.clearMessages(this.sessionId);
   }
 
   /**
@@ -67,7 +88,7 @@ export class PersistentMessageHistory implements MessageHistory {
    */
   replaceAll(messages: Message[]): void {
     this.messages = [...messages];
-    void this.replaceAllAsync(messages);
+    trackPendingWrite(this.replaceAllAsync(messages));
   }
 
   /** H7: Async replaceAll — awaits full persistence for crash safety. */

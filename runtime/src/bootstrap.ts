@@ -1,6 +1,7 @@
 import { DefaultDatabaseManager } from "./db/database-manager.impl.js";
 import { DefaultEmbeddingService } from "./embedding/embedding-service.js";
 import { DefaultMemoryManager } from "./memory/memory-manager.impl.js";
+import { flushAllPersistentMessageHistoryWrites } from "./agent/persistent-message-history.js";
 import type { DatabaseManager } from "./db/database-types.js";
 import type { EmbeddingService } from "./embedding/embedding-types.js";
 import type { MemoryManager } from "./memory/memory-types.js";
@@ -53,7 +54,8 @@ export function getRuntimeServices(): RuntimeServices {
  * better-sqlite3 uses synchronous I/O, but WAL mode may have unflushed pages.
  * This forces a WAL checkpoint and then closes the connection.
  */
-export function closeRuntimeServices(): void {
+export async function closeRuntimeServices(): Promise<void> {
+  await flushAllPersistentMessageHistoryWrites();
   if (_services?.db) {
     try {
       // Force WAL checkpoint before closing to ensure all writes are flushed

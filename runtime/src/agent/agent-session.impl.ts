@@ -156,10 +156,16 @@ export class DefaultAgentSession implements AgentSession {
 
     // Persist running state
     if (this.sessionStore) {
-      void this.sessionStore.updateSession(this.id, {
-        status: "running",
-        lastActiveAt: this._lastActiveAt,
-      });
+      try {
+        await this.sessionStore.updateSession(this.id, {
+          status: "running",
+          lastActiveAt: this._lastActiveAt,
+        });
+      } catch (error) {
+        this._status = "idle";
+        this._currentRunId = null;
+        throw error;
+      }
     }
 
     const runContext: RunContext = {
@@ -201,7 +207,7 @@ export class DefaultAgentSession implements AgentSession {
 
       // Persist idle state after run completes
       if (this.sessionStore) {
-        void this.sessionStore.updateSession(this.id, {
+        await this.sessionStore.updateSession(this.id, {
           status: "idle",
           lastActiveAt: this._lastActiveAt,
         });

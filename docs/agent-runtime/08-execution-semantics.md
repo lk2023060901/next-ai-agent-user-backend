@@ -78,6 +78,12 @@
 - runtime `approval` 明确区分 `410 expired` 与 `404 missing`
 - runtime `startRun/channel-run` 将 abort 归类为 `cancelled`
 - channel run 失败后，不再继续发送补偿 error reply
+- `AgentLoop` / `Coordinator` 的关键消息历史写入优先等待持久化完成
+- `AgentSession` 在进入 `running` 前先完成 session 状态落库，失败即终止执行
+- runtime shutdown 前会 flush `PersistentMessageHistory` 的 pending writes
+- channel reply 只在当前 send 节点内做 exponential backoff retry
+- post-run extraction/reflection/consolidation/compaction 失败会记录日志与 observability
+- SSE buffer overflow 不再伪造业务事件，而是记录 runtime gap 元数据与日志
 
 ## Review Checklist
 

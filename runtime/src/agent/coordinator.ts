@@ -26,7 +26,9 @@ import { MemoryExtractor } from "../memory/extraction/memory-extractor.js";
 import { DefaultContextEngine } from "../context/context-engine.impl.js";
 import { DefaultTokenBudgetAllocator } from "../context/token-budget.js";
 import { PersistentMessageHistory } from "./persistent-message-history.js";
+import type { ObservabilityStore } from "../db/observability-types.js";
 import { internalToPiAi, piAiToInternal } from "./message-converter.js";
+import { recordPostRunFailure } from "./post-run-observability.js";
 
 export interface CoordinatorParams {
   runId: string;
@@ -50,6 +52,8 @@ export interface CoordinatorParams {
   sessionId?: string;
   /** Session store — if provided with sessionId, enables multi-turn history. */
   sessionStore?: SessionStore;
+  /** Observability store — if provided, records post-run failure metrics. */
+  observabilityStore?: ObservabilityStore;
   /** Run-level abort signal — propagated to stream-loop and approval gate. */
   abortSignal?: AbortSignal;
 }
@@ -600,15 +604,33 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   // Consolidation merges near-duplicate memories; decay update applies the
   // Ebbinghaus forgetting curve to stale entries. Both are best-effort.
   if (params.memoryManager) {
+    const consolidationStartedAt = Date.now();
     try {
       await params.memoryManager.consolidate(params.coordinatorAgentId, params.workspaceId);
     } catch (err) {
       console.warn("[coordinator] consolidation failed:", err);
+      await recordPostRunFailure({
+        observabilityStore: params.observabilityStore,
+        runId: params.runId,
+        workspaceId: params.workspaceId,
+        agentId: params.coordinatorAgentId,
+        stage: "post_run:consolidation",
+        startedAt: consolidationStartedAt,
+      });
     }
+    const decayStartedAt = Date.now();
     try {
       await params.memoryManager.batchDecayUpdate();
     } catch (err) {
       console.warn("[coordinator] decay update failed:", err);
+      await recordPostRunFailure({
+        observabilityStore: params.observabilityStore,
+        runId: params.runId,
+        workspaceId: params.workspaceId,
+        agentId: params.coordinatorAgentId,
+        stage: "post_run:decay_update",
+        startedAt: decayStartedAt,
+      });
     }
   }
 
@@ -616,6 +638,7 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
   // If history grew too large, compact old messages into a summary.
   // Requires a real LLM provider (successModel) for summarization.
   if (messageHistory && successModel && messageHistory.length > 0) {
+    const compactionStartedAt = Date.now();
     try {
       const historyMessages = messageHistory.getAll();
       const historyTokens = estimateTokensForCompaction(historyMessages);
@@ -648,6 +671,14 @@ export async function runCoordinator(params: CoordinatorParams): Promise<void> {
       }
     } catch {
       // Non-fatal — compaction failure doesn't affect the current run
+      await recordPostRunFailure({
+        observabilityStore: params.observabilityStore,
+        runId: params.runId,
+        workspaceId: params.workspaceId,
+        agentId: params.coordinatorAgentId,
+        stage: "post_run:history_compaction",
+        startedAt: compactionStartedAt,
+      });
     }
   }
 
@@ -667,6 +698,7 @@ interface PostRunExtractionParams {
   model: Model<Api> | null;
   apiKey: string;
   setMemoryProvider?: (provider: import("../providers/adapter.js").ProviderAdapter) => void;
+  observabilityStore?: ObservabilityStore;
 }
 
 async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise<void> {
@@ -674,6 +706,7 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
   const conversationText = `User: ${userMessage}\n\nAssistant: ${assistantText.slice(0, 2000)}`;
 
   // 1. Basic episodic memory (no LLM needed)
+  const episodicStartedAt = Date.now();
   try {
     let embedding: Float32Array | undefined;
     if (embeddingService) {
@@ -698,6 +731,14 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
       agentId,
       error: err instanceof Error ? err.message : String(err),
     });
+    await recordPostRunFailure({
+      observabilityStore: params.observabilityStore,
+      runId: params.runId,
+      workspaceId,
+      agentId,
+      stage: "post_run:episodic_ingest",
+      startedAt: episodicStartedAt,
+    });
   }
 
   // 2. LLM-based semantic extraction (requires a successful model)
@@ -715,6 +756,7 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
     params.setMemoryProvider(adapter);
   }
 
+  const semanticStartedAt = Date.now();
   try {
     const extractor = new MemoryExtractor(adapter);
     const conversationMessages = [
@@ -747,9 +789,18 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
       agentId,
       error: err instanceof Error ? err.message : String(err),
     });
+    await recordPostRunFailure({
+      observabilityStore: params.observabilityStore,
+      runId: params.runId,
+      workspaceId,
+      agentId,
+      stage: "post_run:semantic_extraction",
+      startedAt: semanticStartedAt,
+    });
   }
 
   // 3. Entity extraction (uses LazyProvider — now backed by the real adapter)
+  const entityStartedAt = Date.now();
   try {
     await memoryManager.extractEntities(conversationText, {
       type: "conversation",
@@ -761,9 +812,18 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
       agentId,
       error: err instanceof Error ? err.message : String(err),
     });
+    await recordPostRunFailure({
+      observabilityStore: params.observabilityStore,
+      runId: params.runId,
+      workspaceId,
+      agentId,
+      stage: "post_run:entity_extraction",
+      startedAt: entityStartedAt,
+    });
   }
 
   // 4. Reflection trigger check — if enough new memories accumulated, run reflection
+  const reflectionStartedAt = Date.now();
   try {
     const shouldReflect = await memoryManager.checkReflectionTrigger(agentId, workspaceId);
     if (shouldReflect) {
@@ -774,6 +834,14 @@ async function postRunMemoryExtraction(params: PostRunExtractionParams): Promise
       runId: params.runId,
       agentId,
       error: err instanceof Error ? err.message : String(err),
+    });
+    await recordPostRunFailure({
+      observabilityStore: params.observabilityStore,
+      runId: params.runId,
+      workspaceId,
+      agentId,
+      stage: "post_run:reflection",
+      startedAt: reflectionStartedAt,
     });
   }
 }

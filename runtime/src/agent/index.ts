@@ -53,6 +53,9 @@ export {
 
 export { DefaultMessageHistory } from "./message-history.js";
 
-export { PersistentMessageHistory } from "./persistent-message-history.js";
+export {
+  PersistentMessageHistory,
+  flushAllPersistentMessageHistoryWrites,
+} from "./persistent-message-history.js";
 
 export { SubAgentSpawner } from "./sub-agent-spawner.js";

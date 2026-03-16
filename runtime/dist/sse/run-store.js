@@ -46,6 +46,7 @@ export class RunStore {
             state: run.state,
             terminal: run.terminal,
             lastSeq: run.nextSeq - 1,
+            ...(run.events.length > 0 ? { oldestBufferedSeq: run.events[0].seq } : {}),
         };
     }
     async createRuntimeRun(input) {
@@ -134,24 +135,23 @@ export class RunStore {
         run.subscribers.set(subId, emit);
         const afterSeq = parseNonNegativeInt(cursorSeq);
         let replayed = 0;
-        // M11: Detect event gap — if client's cursor is behind the oldest buffered event,
-        // notify them that events were lost so the frontend can surface a warning.
+        let gapFromSeq;
+        let gapToSeq;
+        // M11: Detect event gap — if client's cursor is behind the oldest buffered
+        // event, record the lost range in the snapshot. Do not emit a fake SSE
+        // event through another domain's channel.
         if (afterSeq > 0 && run.events.length > 0) {
             const oldestSeq = run.events[0].seq;
             if (afterSeq < oldestSeq) {
-                const gapEvent = {
-                    type: "tool-result",
+                gapFromSeq = afterSeq + 1;
+                gapToSeq = oldestSeq - 1;
+                console.warn("[run-store] event buffer gap detected", {
                     runId,
-                    toolName: "_buffer_gap_warning",
-                    toolCallId: `gap-${Date.now()}`,
-                    result: {
-                        warning: `事件缓冲区溢出：序列 ${afterSeq + 1} 到 ${oldestSeq - 1} 的事件已丢失`,
-                        missedFrom: afterSeq + 1,
-                        missedTo: oldestSeq - 1,
-                    },
-                    status: "error",
-                };
-                emit(gapEvent);
+                    requestedAfterSeq: afterSeq,
+                    oldestBufferedSeq: oldestSeq,
+                    gapFromSeq,
+                    gapToSeq,
+                });
             }
         }
         for (const row of run.events) {
@@ -168,6 +168,9 @@ export class RunStore {
                 state: run.state,
                 terminal: run.terminal,
                 lastSeq: run.nextSeq - 1,
+                ...(run.events.length > 0 ? { oldestBufferedSeq: run.events[0].seq } : {}),
+                ...(gapFromSeq !== undefined ? { gapFromSeq } : {}),
+                ...(gapToSeq !== undefined ? { gapToSeq } : {}),
             },
             unsubscribe: () => {
                 const current = this.runs.get(runId);

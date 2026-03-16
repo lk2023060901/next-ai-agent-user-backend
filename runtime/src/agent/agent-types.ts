@@ -206,6 +206,12 @@ export interface MessageHistory {
   /** Add a message to the history. */
   append(message: Message): void;
 
+  /**
+   * Optional async append for persistence-backed histories.
+   * Critical execution paths should prefer this when available.
+   */
+  appendAsync?(message: Message): Promise<void>;
+
   /** Get all messages (defensive copy). */
   getAll(): Message[];
 
@@ -214,6 +220,9 @@ export interface MessageHistory {
 
   /** Remove all messages. */
   clear(): void;
+
+  /** Optional async clear for persistence-backed histories. */
+  clearAsync?(): Promise<void>;
 
   /** Current message count. */
   readonly length: number;
