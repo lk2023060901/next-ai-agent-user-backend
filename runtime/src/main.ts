@@ -30,6 +30,7 @@ import {
   deleteKbDocument,
   deleteKbEntireKnowledgeBase,
 } from "./kb/kb-sync.js";
+import { summarizePostRunFailures } from "./observability/post-run-summary.js";
 
 // Reject insecure default secrets in production
 if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
@@ -497,6 +498,35 @@ app.get("/runtime/status", async (_request, reply) => {
   };
   return reply.send({ data: status });
 });
+
+// GET /runtime/ws/:wsId/observability/post-run?days=7
+// Returns recent post-run failure metrics from runtime observability storage.
+app.get<{ Params: { wsId: string }; Querystring: { days?: string } }>(
+  "/runtime/ws/:wsId/observability/post-run",
+  async (request, reply) => {
+    const rawDays = Number(request.query.days ?? "7");
+    const days = Number.isFinite(rawDays)
+      ? Math.max(1, Math.min(90, Math.floor(rawDays || 7)))
+      : 7;
+
+    const services = getRuntimeServices();
+    if (!services.db) {
+      return reply.send(summarizePostRunFailures([], days));
+    }
+
+    const now = Date.now();
+    const metrics = await services.db.observabilityStore.listToolMetrics({
+      workspaceId: request.params.wsId,
+      toolNamePrefix: "post_run:",
+      status: "error",
+      from: now - days * 24 * 60 * 60 * 1000,
+      to: now,
+      limit: 5000,
+    });
+
+    return reply.send(summarizePostRunFailures(metrics, days, now));
+  },
+);
 
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs

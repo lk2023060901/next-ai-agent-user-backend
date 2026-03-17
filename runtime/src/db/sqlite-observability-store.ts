@@ -5,6 +5,7 @@ import type {
   RunAgentUsage,
   RunMetric,
   ToolMetric,
+  ToolMetricQueryParams,
   UsageByAgent,
   UsageByModel,
   UsageByProvider,
@@ -339,6 +340,25 @@ export class SqliteObservabilityStore implements ObservabilityStore {
     }));
   }
 
+  async listToolMetrics(params: ToolMetricQueryParams): Promise<ToolMetric[]> {
+    const { where, values } = buildToolMetricWhereClause(params);
+    const limit = params.limit ?? 1000;
+    const rows = this.db.prepare(`
+      SELECT * FROM tool_metrics ${where} ORDER BY created_at DESC LIMIT @queryLimit
+    `).all({ ...values, queryLimit: limit }) as ToolMetricRow[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      runId: r.run_id,
+      workspaceId: r.workspace_id,
+      agentId: r.agent_id,
+      toolName: r.tool_name,
+      status: r.status as "success" | "error",
+      durationMs: r.duration_ms,
+      createdAt: r.created_at,
+    }));
+  }
+
   // ─── Maintenance ──────────────────────────────────────────────────────
 
   async purge(olderThanMs: number): Promise<number> {
@@ -382,6 +402,39 @@ function buildWhereClause(
   }
   if (params.to) {
     conditions.push(`${table}.${timeCol} <= @toTs`);
+    values.toTs = params.to;
+  }
+
+  return {
+    where: `WHERE ${conditions.join(" AND ")}`,
+    values,
+  };
+}
+
+function buildToolMetricWhereClause(
+  params: ToolMetricQueryParams,
+): { where: string; values: Record<string, unknown> } {
+  const conditions: string[] = ["workspace_id = @workspaceId"];
+  const values: Record<string, unknown> = { workspaceId: params.workspaceId };
+
+  if (params.agentId) {
+    conditions.push("agent_id = @agentId");
+    values.agentId = params.agentId;
+  }
+  if (params.toolNamePrefix) {
+    conditions.push("tool_name LIKE @toolNamePrefix");
+    values.toolNamePrefix = `${params.toolNamePrefix}%`;
+  }
+  if (params.status) {
+    conditions.push("status = @status");
+    values.status = params.status;
+  }
+  if (params.from) {
+    conditions.push("created_at >= @fromTs");
+    values.fromTs = params.from;
+  }
+  if (params.to) {
+    conditions.push("created_at <= @toTs");
     values.toTs = params.to;
   }
 

@@ -78,6 +78,16 @@ export interface ToolMetric {
   createdAt: number;
 }
 
+export interface ToolMetricQueryParams {
+  workspaceId: string;
+  agentId?: string;
+  toolNamePrefix?: string;
+  status?: "success" | "error";
+  from?: number;
+  to?: number;
+  limit?: number;
+}
+
 // ─── Query Types ────────────────────────────────────────────────────────────
 
 export interface UsageQueryParams {
@@ -186,6 +196,9 @@ export interface ObservabilityStore {
 
   /** Get tool execution metrics for a run. */
   getToolMetrics(runId: string): Promise<ToolMetric[]>;
+
+  /** List tool metrics for a workspace with optional prefix/status filters. */
+  listToolMetrics(params: ToolMetricQueryParams): Promise<ToolMetric[]>;
 
   // ─── Maintenance ──────────────────────────────────────────────────────
   purge(olderThanMs: number): Promise<number>;
