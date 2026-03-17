@@ -191,6 +191,9 @@ export interface ObservabilityStore {
   /** Get run-level metrics (each run's aggregated totals). */
   getRunMetrics(params: UsageQueryParams): Promise<RunMetric[]>;
 
+  /** Get one run-level metric by run ID. */
+  getRunMetricById(runId: string): Promise<RunMetric | null>;
+
   /** Get per-agent breakdown for a specific run. */
   getRunAgentBreakdown(runId: string): Promise<RunAgentBreakdown>;
 

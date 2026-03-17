@@ -279,6 +279,14 @@ export class SqliteObservabilityStore implements ObservabilityStore {
     return rows.map(rowToRunMetric);
   }
 
+  async getRunMetricById(runId: string): Promise<RunMetric | null> {
+    const row = this.db.prepare(`
+      SELECT * FROM run_metrics WHERE run_id = @runId
+    `).get({ runId }) as RunMetricRow | undefined;
+
+    return row ? rowToRunMetric(row) : null;
+  }
+
   async getRunAgentBreakdown(runId: string): Promise<RunAgentBreakdown> {
     const rows = this.db.prepare(`
       SELECT

@@ -49,3 +49,38 @@ test("SqliteObservabilityStore.listToolMetrics filters by workspace, prefix, and
   assert.deepEqual(rows.map((row) => row.id), ["metric-1"]);
   db.close();
 });
+
+test("SqliteObservabilityStore.getRunMetricById returns the recorded session context", async () => {
+  const db = new Database(":memory:");
+  db.exec(SCHEMA_SQL);
+  const store = new SqliteObservabilityStore(db);
+
+  await store.recordRunMetric({
+    runId: "run-42",
+    sessionId: "session-42",
+    workspaceId: "ws-1",
+    agentId: "agent-1",
+    provider: "anthropic",
+    model: "claude-sonnet-4",
+    status: "failed",
+    turnsUsed: 2,
+    coordinatorInputTokens: 100,
+    coordinatorOutputTokens: 50,
+    subAgentInputTokens: 30,
+    subAgentOutputTokens: 20,
+    totalTokens: 200,
+    toolCallCount: 3,
+    subAgentCount: 1,
+    durationMs: 900,
+    startedAt: 100,
+    completedAt: 1000,
+  });
+
+  const metric = await store.getRunMetricById("run-42");
+
+  assert.equal(metric?.runId, "run-42");
+  assert.equal(metric?.sessionId, "session-42");
+  assert.equal(metric?.workspaceId, "ws-1");
+  assert.equal(metric?.status, "failed");
+  db.close();
+});

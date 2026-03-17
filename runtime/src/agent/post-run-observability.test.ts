@@ -19,6 +19,7 @@ test("recordPostRunFailure writes a post_run metric when store is available", as
       async getUsageByAgent() { throw new Error("unused"); },
       async getUsageByProvider() { throw new Error("unused"); },
       async getRunMetrics() { throw new Error("unused"); },
+      async getRunMetricById() { throw new Error("unused"); },
       async getRunAgentBreakdown() { throw new Error("unused"); },
       async getToolMetrics() { throw new Error("unused"); },
       async listToolMetrics() { throw new Error("unused"); },

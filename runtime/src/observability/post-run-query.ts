@@ -6,6 +6,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export interface PostRunFailureDetail {
   id: string;
   runId: string;
+  sessionId: string | null;
   agentId: string;
   stage: string;
   durationMs: number;
@@ -69,9 +70,21 @@ export async function loadPostRunFailureDetails(
     limit: safeLimit,
   });
 
+  const runIds = [...new Set(metrics.map((metric) => metric.runId))];
+  const runMetrics = await Promise.all(
+    runIds.map(async (runId) => [
+      runId,
+      await params.services.db!.observabilityStore.getRunMetricById(runId),
+    ] as const),
+  );
+  const sessionIdsByRunId = new Map(
+    runMetrics.map(([runId, metric]) => [runId, metric?.sessionId ?? null] as const),
+  );
+
   return metrics.map((metric) => ({
     id: metric.id,
     runId: metric.runId,
+    sessionId: sessionIdsByRunId.get(metric.runId) ?? null,
     agentId: metric.agentId,
     stage: metric.toolName.slice("post_run:".length),
     durationMs: metric.durationMs,

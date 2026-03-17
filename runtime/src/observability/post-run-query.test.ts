@@ -90,6 +90,29 @@ test("loadPostRunFailureDetails returns recent stage failures", async () => {
             },
           ];
         },
+        async getRunMetricById(runId: string) {
+          assert.equal(runId, "run-1");
+          return {
+            runId,
+            sessionId: "session-1",
+            workspaceId: "ws-1",
+            agentId: "agent-1",
+            provider: "anthropic",
+            model: "claude-sonnet-4",
+            status: "failed",
+            turnsUsed: 1,
+            coordinatorInputTokens: 0,
+            coordinatorOutputTokens: 0,
+            subAgentInputTokens: 0,
+            subAgentOutputTokens: 0,
+            totalTokens: 0,
+            toolCallCount: 0,
+            subAgentCount: 0,
+            durationMs: 210,
+            startedAt: Date.parse("2026-03-17T11:29:00.000Z"),
+            completedAt: Date.parse("2026-03-17T11:30:00.000Z"),
+          };
+        },
       },
     },
   } as unknown as RuntimeServices;
@@ -115,6 +138,7 @@ test("loadPostRunFailureDetails returns recent stage failures", async () => {
     {
       id: "metric-1",
       runId: "run-1",
+      sessionId: "session-1",
       agentId: "agent-1",
       stage: "reflection",
       durationMs: 210,
