@@ -15,7 +15,7 @@ import { DefaultOrchestrator } from "./orchestrator/orchestrator.impl.js";
 import { DefaultEventBus } from "./events/event-bus.js";
 import { buildContinueRequest, decideApprovalResponse, decideCancelFinalizeResponse, decideCancelResponse, decideChannelReplyRetry, decideCreateRunSuccessResponse, decideEnqueueFailureResponse, extractRunIdFromLocalMessageId, firstHeaderValue, } from "./http/runtime-route-helpers.js";
 import { syncKbDocument, deleteKbDocument, deleteKbEntireKnowledgeBase, } from "./kb/kb-sync.js";
-import { summarizePostRunFailures } from "./observability/post-run-summary.js";
+import { loadPostRunFailureDetails, loadPostRunFailureSummary, } from "./observability/post-run-query.js";
 // Reject insecure default secrets in production
 if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
     console.error("FATAL: RUNTIME_SECRET must be set in production. Cannot start with default secret.");
@@ -338,20 +338,36 @@ app.get("/runtime/ws/:wsId/observability/post-run", async (request, reply) => {
     const days = Number.isFinite(rawDays)
         ? Math.max(1, Math.min(90, Math.floor(rawDays || 7)))
         : 7;
-    const services = getRuntimeServices();
-    if (!services.db) {
-        return reply.send(summarizePostRunFailures([], days));
-    }
-    const now = Date.now();
-    const metrics = await services.db.observabilityStore.listToolMetrics({
+    return reply.send(await loadPostRunFailureSummary({
+        services: getRuntimeServices(),
         workspaceId: request.params.wsId,
-        toolNamePrefix: "post_run:",
-        status: "error",
-        from: now - days * 24 * 60 * 60 * 1000,
-        to: now,
-        limit: 5000,
+        days,
+    }));
+});
+// GET /runtime/ws/:wsId/observability/post-run/failures?stage=reflection&days=7&limit=20
+// Returns recent failure records for one post-run stage.
+app.get("/runtime/ws/:wsId/observability/post-run/failures", async (request, reply) => {
+    const stage = (request.query.stage ?? "").trim();
+    if (!stage) {
+        return reply.status(400).send({ error: "stage query required" });
+    }
+    const rawDays = Number(request.query.days ?? "7");
+    const days = Number.isFinite(rawDays)
+        ? Math.max(1, Math.min(90, Math.floor(rawDays || 7)))
+        : 7;
+    const rawLimit = Number(request.query.limit ?? "20");
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(100, Math.floor(rawLimit || 20)))
+        : 20;
+    return reply.send({
+        data: await loadPostRunFailureDetails({
+            services: getRuntimeServices(),
+            workspaceId: request.params.wsId,
+            stage,
+            days,
+            limit,
+        }),
     });
-    return reply.send(summarizePostRunFailures(metrics, days, now));
 });
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs

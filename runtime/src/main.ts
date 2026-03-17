@@ -30,7 +30,10 @@ import {
   deleteKbDocument,
   deleteKbEntireKnowledgeBase,
 } from "./kb/kb-sync.js";
-import { summarizePostRunFailures } from "./observability/post-run-summary.js";
+import {
+  loadPostRunFailureDetails,
+  loadPostRunFailureSummary,
+} from "./observability/post-run-query.js";
 
 // Reject insecure default secrets in production
 if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
@@ -509,24 +512,46 @@ app.get<{ Params: { wsId: string }; Querystring: { days?: string } }>(
       ? Math.max(1, Math.min(90, Math.floor(rawDays || 7)))
       : 7;
 
-    const services = getRuntimeServices();
-    if (!services.db) {
-      return reply.send(summarizePostRunFailures([], days));
-    }
-
-    const now = Date.now();
-    const metrics = await services.db.observabilityStore.listToolMetrics({
-      workspaceId: request.params.wsId,
-      toolNamePrefix: "post_run:",
-      status: "error",
-      from: now - days * 24 * 60 * 60 * 1000,
-      to: now,
-      limit: 5000,
-    });
-
-    return reply.send(summarizePostRunFailures(metrics, days, now));
+    return reply.send(
+      await loadPostRunFailureSummary({
+        services: getRuntimeServices(),
+        workspaceId: request.params.wsId,
+        days,
+      }),
+    );
   },
 );
+
+// GET /runtime/ws/:wsId/observability/post-run/failures?stage=reflection&days=7&limit=20
+// Returns recent failure records for one post-run stage.
+app.get<{
+  Params: { wsId: string };
+  Querystring: { stage?: string; days?: string; limit?: string };
+}>("/runtime/ws/:wsId/observability/post-run/failures", async (request, reply) => {
+  const stage = (request.query.stage ?? "").trim();
+  if (!stage) {
+    return reply.status(400).send({ error: "stage query required" });
+  }
+
+  const rawDays = Number(request.query.days ?? "7");
+  const days = Number.isFinite(rawDays)
+    ? Math.max(1, Math.min(90, Math.floor(rawDays || 7)))
+    : 7;
+  const rawLimit = Number(request.query.limit ?? "20");
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(100, Math.floor(rawLimit || 20)))
+    : 20;
+
+  return reply.send({
+    data: await loadPostRunFailureDetails({
+      services: getRuntimeServices(),
+      workspaceId: request.params.wsId,
+      stage,
+      days,
+      limit,
+    }),
+  });
+});
 
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs
