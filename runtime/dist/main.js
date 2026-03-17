@@ -16,6 +16,7 @@ import { DefaultEventBus } from "./events/event-bus.js";
 import { buildContinueRequest, decideApprovalResponse, decideCancelFinalizeResponse, decideCancelResponse, decideChannelReplyRetry, decideCreateRunSuccessResponse, decideEnqueueFailureResponse, extractRunIdFromLocalMessageId, firstHeaderValue, } from "./http/runtime-route-helpers.js";
 import { syncKbDocument, deleteKbDocument, deleteKbEntireKnowledgeBase, } from "./kb/kb-sync.js";
 import { loadPostRunFailureDetails, loadPostRunFailureSummary, } from "./observability/post-run-query.js";
+import { loadRuntimeRunDiagnostics } from "./observability/run-diagnostics-query.js";
 // Reject insecure default secrets in production
 if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
     console.error("FATAL: RUNTIME_SECRET must be set in production. Cannot start with default secret.");
@@ -368,6 +369,19 @@ app.get("/runtime/ws/:wsId/observability/post-run/failures", async (request, rep
             limit,
         }),
     });
+});
+// GET /runtime/ws/:wsId/observability/runs/:runId
+// Returns run-level diagnostics including breakdown and tool metrics.
+app.get("/runtime/ws/:wsId/observability/runs/:runId", async (request, reply) => {
+    const diagnostics = await loadRuntimeRunDiagnostics({
+        services: getRuntimeServices(),
+        workspaceId: request.params.wsId,
+        runId: request.params.runId,
+    });
+    if (!diagnostics) {
+        return reply.status(404).send({ error: "run diagnostics not found" });
+    }
+    return reply.send({ data: diagnostics });
 });
 // ─── Create run (async) ───────────────────────────────────────────────────────
 // POST /runtime/ws/:wsId/runs

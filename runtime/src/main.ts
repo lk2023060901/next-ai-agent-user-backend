@@ -34,6 +34,7 @@ import {
   loadPostRunFailureDetails,
   loadPostRunFailureSummary,
 } from "./observability/post-run-query.js";
+import { loadRuntimeRunDiagnostics } from "./observability/run-diagnostics-query.js";
 
 // Reject insecure default secrets in production
 if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
@@ -551,6 +552,24 @@ app.get<{
       limit,
     }),
   });
+});
+
+// GET /runtime/ws/:wsId/observability/runs/:runId
+// Returns run-level diagnostics including breakdown and tool metrics.
+app.get<{
+  Params: { wsId: string; runId: string };
+}>("/runtime/ws/:wsId/observability/runs/:runId", async (request, reply) => {
+  const diagnostics = await loadRuntimeRunDiagnostics({
+    services: getRuntimeServices(),
+    workspaceId: request.params.wsId,
+    runId: request.params.runId,
+  });
+
+  if (!diagnostics) {
+    return reply.status(404).send({ error: "run diagnostics not found" });
+  }
+
+  return reply.send({ data: diagnostics });
 });
 
 // ─── Create run (async) ───────────────────────────────────────────────────────
