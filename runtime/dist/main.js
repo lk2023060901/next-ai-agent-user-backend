@@ -16,6 +16,7 @@ import { DefaultEventBus } from "./events/event-bus.js";
 import { buildContinueRequest, decideApprovalResponse, decideCancelFinalizeResponse, decideCancelResponse, decideChannelReplyRetry, decideCreateRunSuccessResponse, decideEnqueueFailureResponse, extractRunIdFromLocalMessageId, firstHeaderValue, } from "./http/runtime-route-helpers.js";
 import { syncKbDocument, deleteKbDocument, deleteKbEntireKnowledgeBase, } from "./kb/kb-sync.js";
 import { loadPostRunFailureDetails, loadPostRunFailureSummary, } from "./observability/post-run-query.js";
+import { loadRecentRunMetrics } from "./observability/recent-runs-query.js";
 import { loadRuntimeRunDiagnostics } from "./observability/run-diagnostics-query.js";
 // Reject insecure default secrets in production
 if (process.env.NODE_ENV === "production" && config.runtimeSecret === "dev-runtime-secret") {
@@ -366,6 +367,27 @@ app.get("/runtime/ws/:wsId/observability/post-run/failures", async (request, rep
             workspaceId: request.params.wsId,
             stage,
             days,
+            limit,
+        }),
+    });
+});
+// GET /runtime/ws/:wsId/observability/runs?days=7&status=failed&limit=10
+// Returns recent run-level metrics for monitoring lists.
+app.get("/runtime/ws/:wsId/observability/runs", async (request, reply) => {
+    const rawDays = Number(request.query.days ?? "7");
+    const days = Number.isFinite(rawDays)
+        ? Math.max(1, Math.min(90, Math.floor(rawDays || 7)))
+        : 7;
+    const rawLimit = Number(request.query.limit ?? "10");
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(100, Math.floor(rawLimit || 10)))
+        : 10;
+    return reply.send({
+        data: await loadRecentRunMetrics({
+            services: getRuntimeServices(),
+            workspaceId: request.params.wsId,
+            days,
+            status: request.query.status,
             limit,
         }),
     });
