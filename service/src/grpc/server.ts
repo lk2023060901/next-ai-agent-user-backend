@@ -972,7 +972,10 @@ export function startGrpcServer(port: number): grpc.Server {
     },
     createRun(call: grpc.ServerUnaryCall<any, any>, callback: grpc.sendUnaryData<any>) {
       try {
-        assertWorkspaceMember(call.request.workspaceId, call.request.userContext?.userId);
+        // Runtime creates runs through an internal gRPC call after Gateway has
+        // already authorized the originating HTTP request. The proto does not
+        // carry userContext here, so rely on createRun()'s session/workspace
+        // validation instead of rejecting every request as UNAUTHENTICATED.
         const { runId } = createRun({
           sessionId: call.request.sessionId,
           workspaceId: call.request.workspaceId,

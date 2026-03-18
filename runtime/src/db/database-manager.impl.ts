@@ -68,6 +68,9 @@ export class DefaultDatabaseManager implements DatabaseManager {
     this.raw = new Database(options.dbPath);
     this.raw.pragma("journal_mode = WAL");
     this.raw.pragma("foreign_keys = ON");
+    // Create the base relational schema before instantiating stores that
+    // prepare statements eagerly in their constructors, such as sessions.
+    this.raw.exec(SCHEMA_SQL);
 
     // Use plugin overrides or built-in SQLite implementations
     this.memoryStore = options.memoryStore ?? new SqliteMemoryStore(this.raw);
@@ -87,7 +90,7 @@ export class DefaultDatabaseManager implements DatabaseManager {
     // 1. Load sqlite-vec extension
     sqliteVec.load(this.raw);
 
-    // 2. Create schema (idempotent)
+    // 2. Re-apply schema after extension load (idempotent)
     this.raw.exec(SCHEMA_SQL);
 
     // 3. Create vector tables (dimensions from config)

@@ -20,6 +20,8 @@ import {
   type CanonicalAgentStatus,
 } from "../agent-status.js";
 import { parseAgentConfigJson } from "../chat/agent-config.js";
+import { decryptSecretCompat } from "../../utils/crypto.js";
+import { config as appConfig } from "../../config.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -207,7 +209,7 @@ interface ResolvedLlmConfig {
 }
 
 function decryptKey(encrypted: string): string {
-  return Buffer.from(encrypted, "base64").toString("utf-8");
+  return decryptSecretCompat(encrypted, appConfig.encryptionSecret);
 }
 
 function toNonNegativeInt(value: unknown): number {
